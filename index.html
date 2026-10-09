@@ -1,0 +1,1230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Signal Desk</title>
+<style>
+:root{
+  --bg:#0F1319; --panel:#161B23; --line:#252C37;
+  --fg:#E4E9F0; --mid:#8A95A5; --low:#576273;
+  --up:#26A96C; --dn:#E05A47; --key:#4C9AFF; --warn:#E8B44A;
+  --m:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --s:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.5 var(--s)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+button{font:inherit;cursor:pointer;background:none;border:none;color:inherit}
+button:focus-visible,select:focus-visible{outline:2px solid var(--key);outline-offset:1px}
+table{border-collapse:collapse}
+.m{font-family:var(--m);font-variant-numeric:tabular-nums}
+.up{color:var(--up)}.dn{color:var(--dn)}.mid{color:var(--mid)}.low{color:var(--low)}
+
+/* top bar */
+header{display:flex;align-items:center;gap:16px;padding:10px 16px;
+  border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+header h1{font-size:15px;font-weight:600;letter-spacing:.02em}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:20px;
+  font:500 11px var(--m);border:1px solid var(--line)}
+.led{width:7px;height:7px;border-radius:50%;background:var(--low)}
+.led.on{background:var(--up);box-shadow:0 0 6px var(--up)}
+.led.err{background:var(--dn)}
+.btn{padding:6px 12px;border:1px solid var(--line);border-radius:6px;font-size:12px;color:var(--mid)}
+.btn:hover{border-color:var(--mid);color:var(--fg)}
+.btn.pri{background:var(--key);border-color:var(--key);color:#fff}
+.btn.on{background:var(--key);border-color:var(--key);color:#fff}
+
+/* shell */
+.shell{display:grid;grid-template-columns:210px 1fr 268px;height:calc(100vh - 49px)}
+@media(max-width:1180px){.shell{grid-template-columns:1fr;height:auto}}
+.col{overflow-y:auto;min-width:0}
+.watch{border-right:1px solid var(--line);background:var(--panel)}
+.side{border-left:1px solid var(--line);background:var(--panel)}
+.hd{padding:10px 14px 6px;font:600 10px/1 var(--s);letter-spacing:.12em;
+  text-transform:uppercase;color:var(--low)}
+
+/* watchlist */
+.wr{display:block;width:100%;text-align:left;padding:9px 14px;border-bottom:1px solid var(--line);
+  border-left:2px solid transparent}
+.wr:hover{background:#1B212B}
+.wr.on{background:#1B212B;border-left-color:var(--key)}
+.wr .t{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.wr .n{font-size:12.5px;font-weight:500}
+.wr .p{font:12px var(--m)}
+.wr .s{font:10px var(--m);color:var(--low);margin-top:2px}
+.badge{padding:1px 5px;border-radius:3px;font:600 9px var(--m);background:var(--key);color:#fff}
+
+/* chart */
+.ctop{display:flex;align-items:center;gap:10px;padding:10px 14px;flex-wrap:wrap;
+  border-bottom:1px solid var(--line)}
+.ctop h2{font-size:16px;font-weight:600}
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{padding:5px 10px;font:12px var(--m);color:var(--mid)}
+.seg button.on{background:var(--key);color:#fff}
+.rdo{display:flex;flex-wrap:wrap;gap:3px 14px;padding:7px 14px;font:11px var(--m);
+  border-bottom:1px solid var(--line);color:var(--low)}
+.rdo b{color:var(--fg);font-weight:500}
+#box{position:relative}
+#cv{display:block;width:100%;cursor:crosshair}
+#ohlc{position:absolute;left:10px;top:8px;display:flex;gap:12px;font:11px var(--m);
+  color:var(--mid);pointer-events:none;flex-wrap:wrap}
+#ohlc b{color:var(--fg);font-weight:500}
+.menu{position:relative}
+.pop{position:absolute;right:0;top:34px;z-index:30;background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;padding:8px;min-width:190px;
+  box-shadow:0 8px 28px rgba(0,0,0,.5)}
+.pop label{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:4px;
+  font-size:12px;cursor:pointer}
+.pop label:hover{background:#1B212B}
+.pop hr{border:none;border-top:1px solid var(--line);margin:6px 0}
+.sw{width:9px;height:9px;border-radius:2px;flex:none}
+
+/* signal panel */
+.sig{padding:14px}
+.sig h3{font-size:15px;font-weight:600;margin-bottom:2px}
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font:600 10px var(--m);letter-spacing:.06em}
+.lv{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;
+  border-bottom:1px solid var(--line);font:12px var(--m)}
+.lv span:first-child{color:var(--low);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase}
+.bar{height:5px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:5px}
+.bar i{display:block;height:5px;border-radius:3px}
+
+/* blotter */
+.blot{border-top:1px solid var(--line)}
+.tw{overflow:auto;max-height:340px}
+table.b{width:100%;min-width:1080px;font:11.5px var(--m)}
+table.b th{position:sticky;top:0;background:var(--panel);color:var(--low);text-align:left;
+  font:500 10px var(--s);letter-spacing:.08em;text-transform:uppercase;padding:8px 10px;
+  border-bottom:1px solid var(--line);white-space:nowrap;z-index:2}
+table.b td{padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.b tr{cursor:pointer}
+table.b tr:hover td{background:#1B212B}
+table.b tr.on td{background:rgba(76,154,255,.10)}
+
+/* option chain */
+.ovl{position:fixed;inset:0;z-index:60;background:rgba(8,10,14,.8);display:none;
+  align-items:flex-start;justify-content:center;padding:24px 12px;overflow-y:auto}
+.ovl.open{display:flex}
+.oc{width:100%;max-width:1180px;background:var(--bg);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.och{display:flex;align-items:center;gap:14px;padding:14px 18px;background:var(--panel);
+  border-bottom:1px solid var(--line);flex-wrap:wrap}
+.ocm{display:flex;gap:6px 22px;padding:9px 18px;font:11.5px var(--m);color:var(--mid);
+  border-bottom:1px solid var(--line);flex-wrap:wrap}
+.ocm b{color:var(--fg);font-weight:500}
+.ocw{overflow:auto;max-height:62vh}
+table.oct{width:100%;min-width:920px;font:11.5px var(--m)}
+table.oct th{position:sticky;top:0;background:var(--panel);color:var(--low);
+  font:500 9.5px var(--s);letter-spacing:.07em;text-transform:uppercase;
+  padding:7px 9px;text-align:right;border-bottom:1px solid var(--line);z-index:2}
+table.oct th.c{text-align:center}
+table.oct td{padding:5px 9px;text-align:right;border-bottom:1px solid #1C222B;position:relative}
+td.itm{background:rgba(232,180,74,.06)}
+td.k{text-align:center;font-weight:600;background:var(--panel);
+  border-left:1px solid var(--line);border-right:1px solid var(--line)}
+tr.atm td{background:rgba(76,154,255,.12)}
+tr.atm td.k{background:rgba(76,154,255,.22);color:var(--key)}
+tr.reco td.k{box-shadow:inset 0 0 0 1.5px var(--warn)}
+.oib{position:absolute;top:0;bottom:0;opacity:.14;pointer-events:none}
+.oib.c{right:0;background:var(--dn)}.oib.p{left:0;background:var(--up)}
+.z{position:relative;z-index:1}
+.spot td{background:var(--panel)!important;text-align:center;color:var(--warn);
+  font:600 10px var(--s);letter-spacing:.14em;padding:5px;
+  border-top:1px dashed var(--warn);border-bottom:1px dashed var(--warn)}
+
+/* setup / states */
+.mid-msg{padding:60px 24px;text-align:center;color:var(--mid)}
+.mid-msg h2{font-size:18px;color:var(--fg);margin-bottom:10px;font-weight:600}
+.mid-msg p{max-width:620px;margin:0 auto 14px;font-size:13.5px;line-height:1.75}
+.mid-msg code{font:12px var(--m);background:var(--panel);padding:2px 6px;border-radius:4px;color:var(--warn)}
+.field{display:flex;gap:8px;justify-content:center;margin-top:18px;flex-wrap:wrap}
+.field input{font:13px var(--m);padding:9px 12px;width:300px;background:var(--panel);
+  color:var(--fg);border:1px solid var(--line);border-radius:6px}
+.empty{padding:28px;text-align:center;color:var(--low);font-size:12.5px}
+.note{padding:10px 16px;font-size:11.5px;line-height:1.7;color:var(--mid);border-top:1px solid var(--line)}
+.risk{padding:7px 16px;background:rgba(224,90,71,.1);border-bottom:1px solid var(--line);
+  font:11.5px var(--m);color:#F0A498}
+.risk b{color:var(--dn)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Signal Desk</h1>
+  <span class="pill" id="conn"><span class="led" id="led"></span><span id="connTxt">Connecting…</span></span>
+  <span class="pill m" id="clock">--:--:--</span>
+  <div style="margin-left:auto;display:flex;gap:8px">
+    <button class="btn" id="cfgBtn">Feed settings</button>
+    <button class="btn" id="refreshBtn">Refresh</button>
+  </div>
+</header>
+
+<div class="risk"><b>Not risk-free.</b>&nbsp;Signals are algorithmic outputs, not advice. Every one can lose. Size so a stop-out is survivable.</div>
+
+<div id="setup" style="display:none">
+  <div class="mid-msg">
+    <h2>Waiting for the market data feed</h2>
+    <p>Candles and quotes come from Yahoo Finance (about 15 minutes delayed for NSE) and
+    the option chain from NSE, through the Signal Desk server. No account or key is
+    needed. The reason it could not connect is shown below.</p>
+    <div class="field">
+      <input id="apiInput" value="http://localhost:8787" spellcheck="false" aria-label="Server address" />
+      <button class="btn pri" id="apiSave">Try again</button>
+    </div>
+    <p style="margin-top:20px;font-size:12.5px" id="setupErr"></p>
+  </div>
+</div>
+
+<div class="shell" id="shell" style="display:none">
+  <aside class="col watch">
+    <div class="hd">Watchlist</div>
+    <div id="wl"></div>
+    <div class="note">Click any symbol to open its option chain.</div>
+  </aside>
+
+  <main class="col">
+    <div class="ctop">
+      <h2 id="symName">—</h2>
+      <span class="m mid" id="symMeta" style="font-size:12px"></span>
+      <div class="seg" id="tfs" style="margin-left:auto"></div>
+      <div class="menu">
+        <button class="btn" id="indBtn">Indicators ▾</button>
+        <div class="pop" id="indPop" style="display:none"></div>
+      </div>
+      <button class="btn" id="chainBtn">Option chain</button>
+    </div>
+    <div class="rdo" id="rdo"></div>
+    <div id="box"><canvas id="cv"></canvas><div id="ohlc"></div></div>
+
+    <div class="blot">
+      <div class="hd" style="display:flex;gap:12px;align-items:center">
+        <span id="blotTitle">Signals</span>
+        <div class="seg" id="stateSeg" style="margin-left:auto"></div>
+        <div class="seg" id="scopeSeg"></div>
+      </div>
+      <div class="tw"><table class="b"><thead><tr id="bh"></tr></thead><tbody id="bb"></tbody></table></div>
+      <div class="note" id="perf"></div>
+    </div>
+  </main>
+
+  <aside class="col side"><div id="sigPanel"></div></aside>
+</div>
+
+<div class="ovl" id="ovl">
+  <div class="oc">
+    <div class="och">
+      <h3 id="ocSym" style="font-size:16px;font-weight:600">—</h3>
+      <span class="m" id="ocSpot" style="font-size:15px"></span>
+      <span class="m" id="ocChg" style="font-size:12px"></span>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <select id="ocExp" class="btn m" style="padding:6px 10px"></select>
+        <button class="btn" id="ocClose">Close</button>
+      </div>
+    </div>
+    <div class="ocm" id="ocMeta"></div>
+    <div class="ocw"><table class="oct"><thead id="ocHead"></thead><tbody id="ocBody"></tbody></table></div>
+    <div class="note" id="ocNote"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================================
+   SIGNAL DESK — live intraday terminal for NSE / NFO / MCX
+   Feed -> indicators -> market structure -> confluence -> signals with levels
+   -> option leg -> ACTIVE/EXPIRED lifecycle.
+   All market data comes from the backend in server.js. Nothing here is
+   simulated; if the feed is down, the page says so rather than inventing data.
+   ========================================================================= */
+
+const C = {};
+["bg","panel","line","fg","mid","low","up","dn","key","warn"].forEach(k=>
+  C[k]=getComputedStyle(document.documentElement).getPropertyValue("--"+k).trim());
+
+const TF = [3,5,15,30,60];
+const RF = 0.065;                 // risk-free rate for option pricing
+const MAX_LIFE = 40;              // bars without T1 -> expired
+const store = {
+  get(k,d){ try{ return localStorage.getItem(k) ?? d; }catch(e){ return d; } },
+  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+};
+
+/* Hosted: the page and the data server share one address. Opened as a local
+   file: fall back to the server on this computer. */
+const HOSTED = /^https?:$/.test(location.protocol);
+const S = {
+  api: HOSTED ? location.origin : store.get("sd_api","http://localhost:8787"),
+  tf: 5, tkr: null, picked: null, scope:"ONE", state:"ALL",
+  universe: [], bars:{}, quotes:{}, sigs:{}, ind:{}, struct:{},
+  ready:false, lastErr:null, feed:null,
+  show:{ ema9:true, ema21:true, ema50:true, vwap:true, st:true, bb:false,
+         ob:true, liq:true, fvg:true, vol:true, rsi:true, macd:false, levels:true },
+};
+
+/* ------------------------------------------------------------------ feed -- */
+async function api(path){
+  const r = await fetch(S.api+path, {cache:"no-store"});
+  if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.error||("HTTP "+r.status)); }
+  return r.json();
+}
+function setConn(state, text){
+  const led=document.getElementById("led");
+  led.className = "led"+(state==="ok"?" on":state==="err"?" err":"");
+  document.getElementById("connTxt").textContent = text;
+}
+
+async function boot(){
+  try{
+    setConn("", "Connecting…");
+    const st = await api("/api/status");
+    if(!st.authenticated){
+      showSetup(st.error || "The server is running but its data feed is not ready.");
+      setConn("err","Not logged in"); return;
+    }
+    S.feed = st;
+    S.universe = await api("/api/instruments");
+    if(!S.universe.length) throw new Error("backend returned an empty instrument list");
+    S.tkr = S.tkr || S.universe[0].tkr;
+    document.getElementById("setup").style.display="none";
+    document.getElementById("shell").style.display="";
+    S.ready = true;
+    await refreshAll();
+    setConn("ok", liveLabel());
+    startPolling();
+  }catch(e){
+    showSetup("Couldn't reach the server at "+S.api+" — "+e.message+
+      (HOSTED ? ". If the site was asleep, wait a minute and try again."
+              : ". Make sure server.js is running and the address is right."));
+    setConn("err","Offline");
+  }
+}
+/* The feed tells us whether it is real-time or delayed — say so plainly rather
+   than labelling delayed data "Live". */
+function liveLabel(){
+  const f=S.feed||{};
+  return f.delayed ? "Delayed "+(f.delayNote||"") : "Live";
+}
+function showSetup(msg){
+  document.getElementById("shell").style.display="none";
+  document.getElementById("setup").style.display="";
+  document.getElementById("setupErr").textContent = msg||"";
+  document.getElementById("apiInput").value = S.api;
+  document.getElementById("apiInput").hidden = HOSTED;   // hosted: the address is this site
+}
+
+let pollTimer=null;
+function startPolling(){
+  if(pollTimer) clearInterval(pollTimer);
+  let busy=false, turn=0;
+  pollTimer = setInterval(async ()=>{
+    if(busy || document.hidden) return;         // never stack requests; rest when the tab is hidden
+    busy=true;
+    try{
+      const q = await api("/api/quotes"); S.quotes = q.quotes;
+      await loadCandles(S.tkr);                 // active symbol on every tick
+      recompute(S.tkr);
+      // one other symbol per tick, in rotation, so the whole watchlist's signals stay current
+      const rest=S.universe.filter(u=>u.tkr!==S.tkr);
+      if(rest.length){ const o=rest[turn++%rest.length];
+        try{ await loadCandles(o.tkr); recompute(o.tkr); }catch(e){} }
+      renderLive();
+      setConn("ok", liveLabel()); S.lastErr=null;
+    }catch(e){ setConn("err","Feed error"); S.lastErr=e.message; }
+    finally{ busy=false; }
+  }, (S.feed&&S.feed.pollMs)||5000);
+}
+
+async function loadCandles(tkr){
+  const d = await api("/api/candles?tkr="+encodeURIComponent(tkr)+"&interval="+S.tf);
+  S.bars[tkr] = d.candles.map(c=>{
+    const dt = new Date(c[0] + 19800000);       // shift to IST (UTC+5:30)
+    return { ts:c[0], t:dt.getUTCHours()*60+dt.getUTCMinutes(), day:dt.toISOString().slice(0,10),
+             o:c[1], h:c[2], l:c[3], c:c[4], v:c[5] };
+  });
+}
+async function refreshAll(){
+  const q = await api("/api/quotes"); S.quotes=q.quotes;
+  await loadCandles(S.tkr);
+  // background-load the rest so the watchlist shows signal counts
+  for(const u of S.universe){
+    if(u.tkr===S.tkr) continue;
+    try{ await loadCandles(u.tkr); recompute(u.tkr); }catch(e){}
+  }
+  recompute(S.tkr); renderAll();
+}
+
+/* ------------------------------------------------------------ indicators -- */
+const ema=(v,p)=>{const k=2/(p+1),o=Array(v.length).fill(null);let x=null;
+  for(let i=0;i<v.length;i++){if(i<p-1)continue;
+    if(x===null){let s=0;for(let j=0;j<p;j++)s+=v[i-j];x=s/p;}else x=v[i]*k+x*(1-k);o[i]=x;}return o;};
+const sma=(v,p)=>{const o=Array(v.length).fill(null);let s=0;
+  for(let i=0;i<v.length;i++){s+=v[i];if(i>=p)s-=v[i-p];if(i>=p-1)o[i]=s/p;}return o;};
+function rsi(v,p){p=p||14;const o=Array(v.length).fill(null);let g=0,l=0;
+  for(let i=1;i<v.length;i++){const d=v[i]-v[i-1],u=Math.max(d,0),w=Math.max(-d,0);
+    if(i<=p){g+=u/p;l+=w/p;if(i===p)o[i]=l===0?100:100-100/(1+g/l);}
+    else{g=(g*(p-1)+u)/p;l=(l*(p-1)+w)/p;o[i]=l===0?100:100-100/(1+g/l);}}return o;}
+function atr(b,p){p=p||14;const tr=b.map((x,i)=>i===0?x.h-x.l:
+  Math.max(x.h-x.l,Math.abs(x.h-b[i-1].c),Math.abs(x.l-b[i-1].c)));
+  const o=Array(b.length).fill(null);let x=null;
+  for(let i=0;i<b.length;i++){if(i<p-1)continue;
+    if(x===null){let s=0;for(let j=0;j<p;j++)s+=tr[i-j];x=s/p;}else x=(x*(p-1)+tr[i])/p;o[i]=x;}return o;}
+/** Session-anchored VWAP — resets each trading day, as it must for intraday. */
+function vwap(b){const m=[],u=[],d=[];let day=null,pv=0,vv=0,p2=0;
+  for(const x of b){ if(x.day!==day){day=x.day;pv=0;vv=0;p2=0;}
+    const tp=(x.h+x.l+x.c)/3, vol=x.v||1;
+    pv+=tp*vol; vv+=vol; p2+=tp*tp*vol;
+    const mm=pv/vv, sd=Math.sqrt(Math.max(p2/vv-mm*mm,0));
+    m.push(mm); u.push(mm+sd); d.push(mm-sd); }
+  return {mid:m,up:u,dn:d};}
+function macd(v){const f=ema(v,12),s=ema(v,26);
+  const line=v.map((_,i)=>(f[i]!=null&&s[i]!=null)?f[i]-s[i]:null);
+  const sig=ema(line.map(x=>x==null?0:x),9);
+  return line.map((l,i)=>(l==null||sig[i]==null)?null:{line:l,sig:sig[i],hist:l-sig[i]});}
+function supertrend(b,p,k){p=p||10;k=k||3;const a=atr(b,p),o=Array(b.length).fill(null);
+  let up=null,dn=null,dir=1;
+  for(let i=0;i<b.length;i++){ if(a[i]==null)continue;
+    const mid=(b[i].h+b[i].l)/2; let bu=mid-k*a[i],bd=mid+k*a[i];
+    if(up!=null&&b[i-1].c>up)bu=Math.max(bu,up);
+    if(dn!=null&&b[i-1].c<dn)bd=Math.min(bd,dn);
+    if(dn!=null&&b[i].c>dn)dir=1; else if(up!=null&&b[i].c<up)dir=-1;
+    up=bu;dn=bd;o[i]={dir,band:dir===1?bu:bd};}return o;}
+function adx(b,p){p=p||14;const o=Array(b.length).fill(null);
+  let sp=0,sm=0,st=0,prev=null,n=0,sum=0;
+  for(let i=1;i<b.length;i++){
+    const um=b[i].h-b[i-1].h, dm=b[i-1].l-b[i].l;
+    const pd=(um>dm&&um>0)?um:0, md=(dm>um&&dm>0)?dm:0;
+    const tr=Math.max(b[i].h-b[i].l,Math.abs(b[i].h-b[i-1].c),Math.abs(b[i].l-b[i-1].c));
+    if(i<=p){sp+=pd;sm+=md;st+=tr;continue;}
+    sp=sp-sp/p+pd; sm=sm-sm/p+md; st=st-st/p+tr;
+    if(st===0)continue;
+    const di=(Math.abs(sp/st-sm/st)/((sp/st+sm/st)||1))*100;
+    if(n<p){sum+=di;n++;if(n===p)prev=sum/p;}else prev=(prev*(p-1)+di)/p;
+    o[i]=prev;}return o;}
+function boll(v,p,k){p=p||20;k=k||2;const m=sma(v,p),u=Array(v.length).fill(null),d=Array(v.length).fill(null);
+  for(let i=p-1;i<v.length;i++){let s=0;for(let j=0;j<p;j++){const x=v[i-j]-m[i];s+=x*x;}
+    const sd=Math.sqrt(s/p);u[i]=m[i]+k*sd;d[i]=m[i]-k*sd;}return {mid:m,up:u,dn:d};}
+
+function indicators(b){
+  const c=b.map(x=>x.c), vw=vwap(b);
+  return { e9:ema(c,9), e21:ema(c,21), e50:ema(c,50), vwap:vw.mid, vwUp:vw.up, vwDn:vw.dn,
+    rsi:rsi(c,14), atr:atr(b,14), macd:macd(c), st:supertrend(b), adx:adx(b), bb:boll(c,20,2),
+    volMA:b.map((_,i)=> i<20?null:b.slice(i-19,i+1).reduce((s,x)=>s+(x.v||0),0)/20) };
+}
+
+/* -------------------------------------------------- market structure (SMC) -- */
+/** Swing pivots, order blocks, fair-value gaps and liquidity pools.
+ *
+ *  Order block: the last opposite-colour candle before an impulsive move that
+ *  displaces more than 1.2 ATR and takes out the prior swing. It marks where
+ *  size was absorbed, and stays "unmitigated" until price trades back into it.
+ *
+ *  Liquidity pool: two or more swing highs (or lows) within 0.15 ATR of each
+ *  other — resting stops. A pool is "swept" when a wick takes it out and the
+ *  candle closes back inside, which is the trap that often precedes reversal.
+ */
+function structure(b, ind){
+  const n=b.length, A=ind.atr;
+  const piv={hi:[],lo:[]};
+  for(let i=2;i<n-2;i++){
+    if(b[i].h>b[i-1].h&&b[i].h>b[i-2].h&&b[i].h>b[i+1].h&&b[i].h>b[i+2].h) piv.hi.push(i);
+    if(b[i].l<b[i-1].l&&b[i].l<b[i-2].l&&b[i].l<b[i+1].l&&b[i].l<b[i+2].l) piv.lo.push(i);
+  }
+
+  // ---- order blocks
+  const obs=[];
+  for(let i=3;i<n-2;i++){
+    const a=A[i]; if(!a) continue;
+    const bull=b[i].c<b[i].o, bear=b[i].c>b[i].o;
+    const move3=(k)=>{ let hi=-Infinity,lo=Infinity;
+      for(let j=i+1;j<=Math.min(i+3,n-1);j++){hi=Math.max(hi,b[j].h);lo=Math.min(lo,b[j].l);}
+      return k===1?hi-b[i].l:b[i].h-lo; };
+    const priorHi=Math.max.apply(null,b.slice(Math.max(0,i-10),i).map(x=>x.h));
+    const priorLo=Math.min.apply(null,b.slice(Math.max(0,i-10),i).map(x=>x.l));
+    const upBreak=b.slice(i+1,Math.min(i+4,n)).some(x=>x.c>priorHi);
+    const dnBreak=b.slice(i+1,Math.min(i+4,n)).some(x=>x.c<priorLo);
+    if(bull && upBreak && move3(1)>1.2*a) obs.push({i, dir:1, top:Math.max(b[i].o,b[i].c), bot:b[i].l});
+    if(bear && dnBreak && move3(-1)>1.2*a) obs.push({i, dir:-1, top:b[i].h, bot:Math.min(b[i].o,b[i].c)});
+  }
+  // mitigation: first later candle to trade back into the zone
+  obs.forEach(o=>{
+    o.mitigated=null;
+    for(let j=o.i+2;j<n;j++){
+      if(o.dir===1 ? b[j].l<=o.top : b[j].h>=o.bot){ o.mitigated=j; break; }
+    }
+  });
+  const liveObs = obs.filter(o=>o.mitigated===null).slice(-6)
+    .concat(obs.filter(o=>o.mitigated!==null).slice(-3));
+
+  // ---- fair value gaps (3-candle imbalance)
+  const fvg=[];
+  for(let i=2;i<n;i++){
+    const a=A[i]; if(!a) continue;
+    if(b[i].l>b[i-2].h && b[i].l-b[i-2].h>0.25*a) fvg.push({i,dir:1,top:b[i].l,bot:b[i-2].h});
+    if(b[i].h<b[i-2].l && b[i-2].l-b[i].h>0.25*a) fvg.push({i,dir:-1,top:b[i-2].l,bot:b[i].h});
+  }
+  fvg.forEach(f=>{ f.filled=null;
+    for(let j=f.i+1;j<n;j++){ if(f.dir===1? b[j].l<=f.bot : b[j].h>=f.top){f.filled=j;break;} } });
+  const liveFvg = fvg.filter(f=>f.filled===null).slice(-5);
+
+  // ---- liquidity pools + sweeps
+  const pool=(idxs,key)=>{
+    const out=[];
+    for(let x=0;x<idxs.length;x++){
+      const base=b[idxs[x]][key], grp=[idxs[x]];
+      for(let y=x+1;y<idxs.length;y++){
+        const a=A[idxs[y]]||A[idxs[x]]; if(!a) continue;
+        if(Math.abs(b[idxs[y]][key]-base)<=0.15*a) grp.push(idxs[y]);
+      }
+      if(grp.length>=2){ out.push({px:base, from:grp[0], to:grp[grp.length-1], n:grp.length}); x+=grp.length-1; }
+    }
+    return out.slice(-4);
+  };
+  const bsl=pool(piv.hi,"h"), ssl=pool(piv.lo,"l");
+  [...bsl.map(p=>({p,up:true})),...ssl.map(p=>({p,up:false}))].forEach(({p,up})=>{
+    p.swept=null;
+    for(let j=p.to+1;j<n;j++){
+      if(up ? (b[j].h>p.px && b[j].c<p.px) : (b[j].l<p.px && b[j].c>p.px)){ p.swept=j; break; }
+    }
+  });
+  return { piv, obs:liveObs, fvg:liveFvg, bsl, ssl };
+}
+
+/* --------------------------------------------------------- option pricing -- */
+const ncdf=x=>{const t=1/(1+0.2316419*Math.abs(x)),d=0.3989423*Math.exp(-x*x/2);
+  const p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;};
+const npdf=x=>0.3989423*Math.exp(-x*x/2);
+function bs(Sp,K,T,sg,ty){
+  T=Math.max(T,1/(365*24)); sg=Math.max(sg,0.005);
+  const st=sg*Math.sqrt(T), d1=(Math.log(Sp/K)+(RF+sg*sg/2)*T)/st, d2=d1-st, df=Math.exp(-RF*T);
+  return ty==="CE"
+    ? {px:Math.max(Sp*ncdf(d1)-K*df*ncdf(d2),0), delta:ncdf(d1),
+       theta:(-Sp*npdf(d1)*sg/(2*Math.sqrt(T))-RF*K*df*ncdf(d2))/365}
+    : {px:Math.max(K*df*ncdf(-d2)-Sp*ncdf(-d1),0), delta:ncdf(d1)-1,
+       theta:(-Sp*npdf(d1)*sg/(2*Math.sqrt(T))+RF*K*df*ncdf(-d2))/365};
+}
+/** Implied vol from a live premium, by bisection — the chain gives us price,
+ *  not IV, so we back it out. */
+function impliedVol(mktPx,Sp,K,T,ty){
+  if(!(mktPx>0)||!(Sp>0)||!(K>0)) return null;
+  const intrinsic = ty==="CE" ? Math.max(Sp-K,0) : Math.max(K-Sp,0);
+  if(mktPx<=intrinsic) return null;            // no time value left to solve for
+  let lo=0.01, hi=4;
+  for(let i=0;i<60;i++){
+    const m=(lo+hi)/2;
+    if(bs(Sp,K,T,m,ty).px > mktPx) hi=m; else lo=m;
+  }
+  const iv=(lo+hi)/2;
+  return (iv>0.015 && iv<3.9) ? iv : null;     // solver hit a rail — reject it
+}
+
+/* ---------------------------------------------------------- signal engine -- */
+const CHECKS=[
+  {id:"trend", w:14, l:"EMA 9 above EMA 21"},
+  {id:"cross", w:11, l:"Fresh EMA crossover"},
+  {id:"struct",w:9,  l:"Price above EMA 50"},
+  {id:"vwap",  w:12, l:"Price above session VWAP"},
+  {id:"rsi",   w:10, l:"RSI in momentum band"},
+  {id:"macd",  w:10, l:"MACD histogram expanding"},
+  {id:"st",    w:12, l:"Supertrend aligned"},
+  {id:"vol",   w:6,  l:"Volume above 1.3× average"},
+  {id:"adx",   w:8,  l:"ADX above 20"},
+  {id:"ob",    w:5,  l:"Order block support below"},
+  {id:"liq",   w:3,  l:"Liquidity swept before entry"},
+];
+
+function trendMarks(b,ind){
+  const out=[];
+  for(let i=4;i<b.length;i++){
+    if(!ind.st[i]||!ind.st[i-1]||ind.e9[i]==null||ind.e9[i-3]==null) continue;
+    const up=(ind.e9[i]>ind.e21[i]&&ind.e9[i-3]<=ind.e21[i-3])||(ind.st[i].dir===1&&ind.st[i-1].dir===-1);
+    const dn=(ind.e9[i]<ind.e21[i]&&ind.e9[i-3]>=ind.e21[i-3])||(ind.st[i].dir===-1&&ind.st[i-1].dir===1);
+    if(up) out.push({i,dir:1}); else if(dn) out.push({i,dir:-1});
+  }
+  return out;
+}
+
+function engine(u, b, ind, str){
+  const n=b.length; if(n<60) return [];
+  const {e9,e21,e50,rsi:R,atr:A,vwap:VW,macd:M,st:ST,adx:AX,volMA:VM}=ind;
+  const out=[]; let last=-99;
+  const cooldown=Math.max(5,Math.round(40/S.tf));
+  const today=b[n-1].day;
+  const CL=u.close||930;                      // session close, minutes after midnight IST
+
+  for(let i=55;i<n-1;i++){                    // last bar is still forming
+    if(b[i].day!==today) continue;            // only today's signals are live
+    if(i-last<cooldown) continue;
+    if(e50[i]==null||A[i]==null||!M[i]||!ST[i]||VM[i]==null||AX[i]==null) continue;
+    if(b[i].t>=CL-25) continue;               // no entries in the last 25 min
+
+    for(const side of ["BUY","SELL"]){
+      const L=side==="BUY";
+      const cross=L?(e9[i]>e21[i]&&e9[i-3]<=e21[i-3]):(e9[i]<e21[i]&&e9[i-3]>=e21[i-3]);
+      const flip=ST[i-1]&&ST[i].dir!==ST[i-1].dir&&ST[i].dir===(L?1:-1);
+      if(!cross&&!flip) continue;             // a trigger is mandatory
+
+      const nearOb=str.obs.some(o=>o.dir===(L?1:-1)&&o.i<i&&o.mitigated===null&&
+        Math.abs(b[i].c-(L?o.top:o.bot))<1.6*A[i]);
+      const swept=(L?str.ssl:str.bsl).some(p=>p.swept!=null&&i-p.swept>=0&&i-p.swept<=6);
+
+      const P={
+        trend: L?e9[i]>e21[i]:e9[i]<e21[i],
+        cross, struct: L?b[i].c>e50[i]:b[i].c<e50[i],
+        vwap: L?b[i].c>VW[i]:b[i].c<VW[i],
+        rsi: L?(R[i]>=52&&R[i]<=72):(R[i]<=48&&R[i]>=28),
+        macd: L?(M[i].hist>0&&M[i].hist>M[i-1].hist):(M[i].hist<0&&M[i].hist<M[i-1].hist),
+        st: ST[i].dir===(L?1:-1),
+        vol: (b[i].v||0)>VM[i]*1.3,
+        adx: AX[i]>20, ob:nearOb, liq:swept };
+      const score=CHECKS.reduce((s,c)=>s+(P[c.id]?c.w:0),0);
+      if(score<60) continue;
+
+      const entry=b[i].c;
+      const swing=L?Math.min.apply(null,b.slice(i-3,i+1).map(x=>x.l))-0.3*A[i]
+                   :Math.max.apply(null,b.slice(i-3,i+1).map(x=>x.h))+0.3*A[i];
+      const sl=L?Math.max(swing,entry-1.8*A[i]):Math.min(swing,entry+1.8*A[i]);
+      const risk=Math.abs(entry-sl);
+      if(risk<=0||risk/entry>0.03) continue;
+
+      const d=L?1:-1;
+      const s={ id:u.tkr.slice(0,4)+"-"+String(1000+i).slice(-4), tkr:u.tkr, sym:u.sym,
+        seg:u.seg, closeT:CL, side, i, ts:b[i].ts, entry, sl,
+        t1:entry+d*risk, t2:entry+d*risk*2, t3:entry+d*risk*3,
+        risk, conf:score, checks:P, atr:A[i], rsi:R[i], adx:AX[i], vwap:VW[i] };
+      s.opt = optionLeg(u, s);
+      s.res = track(b, s);
+      out.push(s); last=i; break;
+    }
+  }
+  return out;
+}
+
+/** Walk forward to the live edge. The stop is checked before targets inside the
+ *  same bar — intrabar sequence is unknowable, so assume the worse path.
+ *  Stop trails to breakeven after T1, to T1 after T2. */
+function track(b,s){
+  const L=s.side==="BUY"; let stop=s.sl, hit=0;
+  const fin=(status,j,px)=>({state:"EXPIRED",status,exit:j,px,hit,R:((px-s.entry)*(L?1:-1))/s.risk});
+  for(let j=s.i+1;j<b.length;j++){
+    if(L? b[j].l<=stop : b[j].h>=stop)
+      return fin(hit===0?"Stopped out":hit===1?"Breakeven stop":"Trailed from T"+hit, j, stop);
+    if(hit<1&&(L?b[j].h>=s.t1:b[j].l<=s.t1)){hit=1;stop=s.entry;}
+    if(hit<2&&(L?b[j].h>=s.t2:b[j].l<=s.t2)){hit=2;stop=s.t1;}
+    if(hit<3&&(L?b[j].h>=s.t3:b[j].l<=s.t3)) return fin("T3 achieved",j,s.t3);
+  }
+  const last=b[b.length-1], R=((last.c-s.entry)*(L?1:-1))/s.risk, age=b.length-1-s.i;
+  if(last.t>=(s.closeT||930)-5) return fin("Closed at session end", b.length-1, last.c);
+  if(hit===0&&age>MAX_LIFE)
+    return {state:"EXPIRED",status:"No follow-through",exit:b.length-1,px:last.c,hit,R};
+  return {state:"ACTIVE",status:hit===0?"Working":"T"+hit+" booked, trailing",exit:null,px:last.c,hit,R};
+}
+
+function optionLeg(u,s){
+  if(!u.fo||!u.step) return null;
+  const ty=s.side==="BUY"?"CE":"PE";
+  const atm=Math.round(s.entry/u.step)*u.step;
+  const strike = s.conf>=78 ? (ty==="CE"?atm-u.step:atm+u.step) : atm;
+  const ch=S.chainCache&&S.chainCache[u.tkr];
+  const T=(ch?ch.daysOut:3)/365;
+  // Prefer the live chain's own IV for that strike; fall back to a rough guess
+  const iv=(ch&&ch.ivAt&&ch.ivAt[strike+ty]) || (u.seg==="IDX"?0.13:0.26);
+  const dec=Math.max(T-0.35/365,1/(365*24));
+  const at=bs(s.entry,strike,T,iv,ty);
+  const g=p=>Math.max(bs(p,strike,dec,iv,ty).px,0.05);
+  return { ty, strike, moneyness: strike===atm?"ATM":"ITM-1", iv, lot:u.lot||null,
+    delta:at.delta, theta:at.theta, entry:at.px, sl:g(s.sl), t1:g(s.t1), t2:g(s.t2), t3:g(s.t3),
+    outlay: u.lot? at.px*u.lot : null, live: !!(ch&&ch.ivAt) };
+}
+
+function recompute(tkr){
+  const b=S.bars[tkr], u=S.universe.find(x=>x.tkr===tkr);
+  if(!b||b.length<60||!u){ S.sigs[tkr]=[]; return; }
+  const ind=indicators(b); S.ind[tkr]=ind;
+  const str=structure(b,ind); S.struct[tkr]=str;
+  S.sigs[tkr]=engine(u,b,ind,str);
+  S.marks=S.marks||{}; S.marks[tkr]=trendMarks(b,ind);
+}
+
+/* ------------------------------------------------------------- formatting -- */
+const nf=(v,d)=>(v==null||!isFinite(v))?"—":v.toLocaleString("en-IN",{minimumFractionDigits:d==null?2:d,maximumFractionDigits:d==null?2:d});
+const kf=v=>v==null?"—":v>=1e7?(v/1e7).toFixed(2)+"Cr":v>=1e5?(v/1e5).toFixed(2)+"L":v>=1e3?(v/1e3).toFixed(1)+"K":String(Math.round(v));
+const hhmm=ts=>new Date(ts).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour:"2-digit",minute:"2-digit",hour12:false});
+const hms=ts=>new Date(ts).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
+function ago(ts){const m=Math.floor((Date.now()-ts)/60000);
+  return m<1?"just now":m<60?m+"m ago":Math.floor(m/60)+"h "+(m%60)+"m ago";}
+const tone=r=>r.state==="ACTIVE"?(r.hit>0?C.up:C.warn):
+  (r.status.startsWith("T3")||r.status.startsWith("Trailed"))?C.up:
+  r.status.startsWith("Stopped")?C.dn:C.mid;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const px=(v,u)=>nf(v, (u&&u.step>=50)?1:2);
+
+/* ---------------------------------------------------------------- chart -- */
+const cv=document.getElementById("cv"), cx=cv.getContext("2d");
+let W=900,H=520,hover=null,hits=[],drag=null;
+const view={n:110, off:0};                    // off = bars back from the live edge
+const PL=8,PR=72,PT=14,PB=24,G=8;
+const F=' -apple-system, ui-monospace, monospace';
+
+function panes(){
+  const sub=[];
+  if(S.show.vol) sub.push({k:"vol",h:46});
+  if(S.show.rsi) sub.push({k:"rsi",h:56});
+  if(S.show.macd)sub.push({k:"macd",h:56});
+  const price=310;
+  let y=PT+price; sub.forEach(p=>{y+=G;p.top=y;y+=p.h;});
+  return {price,sub,total:PT+price+sub.reduce((s,p)=>s+p.h+G,0)+PB};
+}
+
+function draw(){
+  const b=S.bars[S.tkr], ind=S.ind[S.tkr], str=S.struct[S.tkr], u=uni(S.tkr);
+  if(!b||!b.length||!ind) return;
+  const lay=panes(); H=lay.total;
+  const n=Math.max(30,Math.min(view.n,b.length));
+  const end=Math.max(n, b.length-view.off), start=Math.max(0,end-n);
+  const vis=b.slice(start,end); if(!vis.length) return;
+
+  const dpr=window.devicePixelRatio||1;
+  cv.width=W*dpr; cv.height=H*dpr; cv.style.height=H+"px";
+  cx.setTransform(dpr,0,0,dpr,0,0); cx.clearRect(0,0,W,H);
+
+  const sel=S.picked&&S.picked.tkr===S.tkr?S.picked:null;
+  let lo=Math.min(...vis.map(x=>x.l)), hi=Math.max(...vis.map(x=>x.h));
+  if(sel&&sel.i>=start&&sel.i<end&&S.show.levels){lo=Math.min(lo,sel.sl,sel.t3);hi=Math.max(hi,sel.sl,sel.t3);}
+  const pad=(hi-lo)*0.07; lo-=pad; hi+=pad;
+  const cw=(W-PL-PR)/vis.length, bw=Math.max(cw*0.6,1);
+  const X=i=>PL+(i-start+0.5)*cw;
+  const Y=p=>PT+(1-(p-lo)/(hi-lo))*lay.price;
+  const inV=i=>i>=start&&i<end;
+  cx.textBaseline="alphabetic"; cx.font="10px"+F;
+
+  // grid
+  for(let k=0;k<=5;k++){
+    const p=lo+((hi-lo)*k)/5, y=Math.round(Y(p))+.5;
+    cx.strokeStyle=C.line; cx.lineWidth=.5; cx.beginPath(); cx.moveTo(PL,y); cx.lineTo(W-PR,y); cx.stroke();
+    cx.fillStyle=C.low; cx.textAlign="left"; cx.fillText(px(p,u), W-PR+6, y+3);
+  }
+  cx.textAlign="center";
+  let lastDay=null;
+  vis.forEach((x,k)=>{
+    const g=start+k, newDay=x.day!==lastDay; lastDay=x.day;
+    if(!newDay && x.t%60!==0) return;
+    cx.strokeStyle=C.line; cx.globalAlpha=newDay?1:.6; cx.lineWidth=newDay?1:.5;
+    cx.beginPath(); cx.moveTo(Math.round(X(g))+.5,PT); cx.lineTo(Math.round(X(g))+.5,H-PB); cx.stroke();
+    cx.globalAlpha=1; cx.fillStyle=C.low;
+    cx.fillText(newDay?new Date(x.ts).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short"}):hhmm(x.ts), X(g), H-PB+14);
+  });
+
+  /* ---- order blocks: shaded zones extending to the right until mitigated -- */
+  if(S.show.ob) str.obs.forEach(o=>{
+    if(o.i>=end) return;
+    const x0=Math.max(X(Math.max(o.i,start)),PL);
+    const x1=o.mitigated!=null&&o.mitigated<end?X(o.mitigated):W-PR;
+    if(x1<=x0) return;
+    const col=o.dir===1?C.up:C.dn, live=o.mitigated===null;
+    cx.fillStyle=col; cx.globalAlpha=live?.15:.06;
+    cx.fillRect(x0,Y(o.top),x1-x0,Math.abs(Y(o.bot)-Y(o.top)));
+    cx.globalAlpha=live?.75:.3; cx.strokeStyle=col; cx.lineWidth=1;
+    cx.setLineDash(live?[]:[3,3]);
+    cx.strokeRect(x0,Y(o.top),x1-x0,Math.abs(Y(o.bot)-Y(o.top))); cx.setLineDash([]);
+    if(live&&x1-x0>44){ cx.globalAlpha=1; cx.fillStyle=col; cx.textAlign="left";
+      cx.font="600 8.5px"+F; cx.fillText("OB", x0+4, Y(o.top)+10); cx.font="10px"+F; }
+    cx.globalAlpha=1;
+  });
+
+  /* ---- fair value gaps: unfilled imbalance -------------------------------- */
+  if(S.show.fvg) str.fvg.forEach(f=>{
+    if(f.i>=end) return;
+    const x0=Math.max(X(Math.max(f.i,start)),PL);
+    cx.fillStyle=f.dir===1?C.up:C.dn; cx.globalAlpha=.10;
+    cx.fillRect(x0,Y(f.top),Math.max(W-PR-x0,0),Math.abs(Y(f.bot)-Y(f.top)));
+    cx.globalAlpha=1;
+  });
+
+  /* ---- liquidity pools: resting stops, and where they got swept ----------- */
+  if(S.show.liq){
+    const pools=[...str.bsl.map(p=>({p,up:true})),...str.ssl.map(p=>({p,up:false}))];
+    pools.forEach(({p,up})=>{
+      if(p.px<lo||p.px>hi) return;
+      const y=Math.round(Y(p.px))+.5, x0=Math.max(X(Math.max(p.from,start)),PL);
+      cx.strokeStyle=p.swept!=null?C.low:C.warn; cx.lineWidth=1;
+      cx.setLineDash([2,4]); cx.globalAlpha=p.swept!=null?.5:.9;
+      cx.beginPath(); cx.moveTo(x0,y); cx.lineTo(W-PR,y); cx.stroke(); cx.setLineDash([]);
+      cx.fillStyle=p.swept!=null?C.low:C.warn; cx.textAlign="left"; cx.font="600 8.5px"+F;
+      cx.fillText((up?"BSL":"SSL")+(p.swept!=null?" swept":" ×"+p.n), x0+4, y-4);
+      cx.font="10px"+F; cx.globalAlpha=1;
+      if(p.swept!=null&&inV(p.swept)){       // mark the sweep candle itself
+        cx.fillStyle=C.warn; cx.globalAlpha=.85; cx.beginPath();
+        cx.arc(X(p.swept), up?Y(b[p.swept].h)-9:Y(b[p.swept].l)+9, 3, 0, 7); cx.fill(); cx.globalAlpha=1;
+      }
+    });
+  }
+
+  /* ---- selected trade's levels ------------------------------------------- */
+  if(sel&&S.show.levels&&inV(sel.i)){
+    const x0=X(sel.i), x1=sel.res.exit!=null&&inV(sel.res.exit)?X(sel.res.exit):W-PR;
+    cx.fillStyle=C.dn; cx.globalAlpha=.09;
+    cx.fillRect(x0,Y(Math.max(sel.entry,sel.sl)),Math.max(W-PR-x0,0),Math.abs(Y(sel.sl)-Y(sel.entry)));
+    cx.fillStyle=C.up; cx.globalAlpha=.07;
+    cx.fillRect(x0,Y(Math.max(sel.entry,sel.t3)),Math.max(W-PR-x0,0),Math.abs(Y(sel.t3)-Y(sel.entry)));
+    cx.globalAlpha=1;
+    [["SL",sel.sl,C.dn],["ENTRY",sel.entry,C.key],["T1",sel.t1,C.up],["T2",sel.t2,C.up],["T3",sel.t3,C.up]]
+    .forEach(([lb,p,col])=>{
+      const y=Math.round(Y(p))+.5;
+      cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash(lb==="ENTRY"?[]:[5,4]);
+      cx.beginPath(); cx.moveTo(x0,y); cx.lineTo(x1,y); cx.stroke(); cx.setLineDash([]);
+      cx.fillStyle=col; cx.fillRect(W-PR-2,y-8,PR,16);
+      cx.fillStyle="#fff"; cx.textAlign="left"; cx.font="600 9px"+F;
+      cx.fillText(lb+" "+px(p,u), W-PR+2, y+3); cx.font="10px"+F;
+    });
+  }
+
+  /* ---- overlays ---------------------------------------------------------- */
+  const line=(arr,col,dash,alpha,lw)=>{
+    cx.strokeStyle=col; cx.lineWidth=lw||1.2; cx.globalAlpha=alpha==null?.95:alpha;
+    cx.setLineDash(dash||[]); cx.beginPath(); let on=false;
+    for(let k=0;k<vis.length;k++){const g=start+k,v=arr[g];
+      if(v==null){on=false;continue;} on?cx.lineTo(X(g),Y(v)):(cx.moveTo(X(g),Y(v)),on=true);}
+    cx.stroke(); cx.setLineDash([]); cx.globalAlpha=1;
+  };
+  if(S.show.bb){ line(ind.bb.up,C.mid,[3,3],.4); line(ind.bb.dn,C.mid,[3,3],.4); }
+  if(S.show.st){
+    let seg=[],dir=null;
+    const flush=()=>{ if(seg.length>1){cx.strokeStyle=dir===1?C.up:C.dn;cx.lineWidth=1.4;cx.globalAlpha=.6;
+      cx.beginPath();seg.forEach((p,i)=>i?cx.lineTo(p[0],p[1]):cx.moveTo(p[0],p[1]));cx.stroke();cx.globalAlpha=1;} seg=[]; };
+    for(let k=0;k<vis.length;k++){const g=start+k,s=ind.st[g];
+      if(!s){flush();dir=null;continue;} if(dir!==null&&s.dir!==dir)flush(); dir=s.dir; seg.push([X(g),Y(s.band)]);}
+    flush();
+  }
+  if(S.show.ema50) line(ind.e50,"#8B7FD4");
+  if(S.show.ema21) line(ind.e21,C.key);
+  if(S.show.ema9)  line(ind.e9,C.warn);
+  if(S.show.vwap)  line(ind.vwap,C.fg,[5,3],.8,1.4);
+
+  /* ---- candles ----------------------------------------------------------- */
+  vis.forEach((x,k)=>{
+    const g=start+k,up=x.c>=x.o,col=up?C.up:C.dn,px0=X(g);
+    cx.strokeStyle=col; cx.lineWidth=1;
+    cx.beginPath(); cx.moveTo(px0,Y(x.h)); cx.lineTo(px0,Y(x.l)); cx.stroke();
+    const top=Y(Math.max(x.o,x.c)), h=Math.max(Math.abs(Y(x.o)-Y(x.c)),1);
+    if(up){cx.strokeRect(px0-bw/2,top,bw,h);} else {cx.fillStyle=col;cx.fillRect(px0-bw/2,top,bw,h);}
+  });
+
+  // live price
+  const lb=b[b.length-1];
+  if(inV(b.length-1)){
+    const y=Math.round(Y(lb.c))+.5;
+    cx.strokeStyle=C.warn; cx.globalAlpha=.5; cx.setLineDash([2,4]); cx.lineWidth=1;
+    cx.beginPath(); cx.moveTo(PL,y); cx.lineTo(W-PR,y); cx.stroke(); cx.setLineDash([]); cx.globalAlpha=1;
+    cx.fillStyle=C.warn; cx.fillRect(W-PR-2,y-8,PR,16);
+    cx.fillStyle="#000"; cx.textAlign="left"; cx.font="600 9.5px"+F; cx.fillText(px(lb.c,u), W-PR+2, y+3);
+  }
+
+  /* ---- trend arrows + signal arrows --------------------------------------- */
+  hits=[];
+  const sigAt={}; (S.sigs[S.tkr]||[]).forEach(s=>sigAt[s.i]=s);
+  (S.marks&&S.marks[S.tkr]||[]).forEach(m=>{
+    if(!inV(m.i)||sigAt[m.i]) return;
+    const up=m.dir===1, col=up?C.up:C.dn, x=X(m.i);
+    const y=up?Y(b[m.i].l)+10:Y(b[m.i].h)-10;
+    cx.strokeStyle=col; cx.globalAlpha=.4; cx.lineWidth=1.3; cx.beginPath();
+    if(up){cx.moveTo(x-4,y+3);cx.lineTo(x,y-3);cx.lineTo(x+4,y+3);}
+    else{cx.moveTo(x-4,y-3);cx.lineTo(x,y+3);cx.lineTo(x+4,y-3);}
+    cx.stroke(); cx.globalAlpha=1;
+  });
+  (S.sigs[S.tkr]||[]).forEach(s=>{
+    if(!inV(s.i)) return;
+    const up=s.side==="BUY", col=up?C.up:C.dn, x=X(s.i);
+    const y=up?Y(b[s.i].l)+17:Y(b[s.i].h)-17;
+    const on=sel&&sel.id===s.id, dim=s.res.state==="EXPIRED"&&!on;
+    cx.globalAlpha=dim?.45:1; cx.fillStyle=col; cx.strokeStyle=col; cx.lineWidth=1.5;
+    cx.beginPath();
+    if(up){cx.moveTo(x,y-9);cx.lineTo(x-6,y+4);cx.lineTo(x+6,y+4);}
+    else{cx.moveTo(x,y+9);cx.lineTo(x-6,y-4);cx.lineTo(x+6,y-4);}
+    cx.closePath(); cx.fill();
+    if(cw>7){                                  // tag: side + entry, on the arrow
+      const tag=s.side+" "+px(s.entry,u);
+      cx.font="600 9px"+F; cx.textAlign="center";
+      const tw=cx.measureText(tag).width+10, ty=up?y+8:y-21;
+      cx.fillStyle=col; cx.globalAlpha=dim?.35:.95;
+      cx.beginPath();
+      if(cx.roundRect) cx.roundRect(x-tw/2,ty,tw,13,3); else cx.rect(x-tw/2,ty,tw,13);
+      cx.fill();
+      cx.fillStyle="#fff"; cx.globalAlpha=1; cx.fillText(tag,x,ty+9.5); cx.font="10px"+F;
+    }
+    if(on){cx.fillStyle=C.key;cx.beginPath();cx.arc(x,Y(s.entry),4,0,7);cx.fill();
+      cx.strokeStyle=C.bg;cx.lineWidth=1.5;cx.stroke();}
+    cx.globalAlpha=1;
+    hits.push({x,y,id:s.id});
+  });
+
+  /* ---- subpanes ----------------------------------------------------------- */
+  lay.sub.forEach(p=>{
+    cx.strokeStyle=C.line; cx.lineWidth=.5; cx.beginPath();
+    cx.moveTo(PL,p.top-G/2+.5); cx.lineTo(W-PR,p.top-G/2+.5); cx.stroke();
+    cx.textAlign="left"; cx.fillStyle=C.low; cx.font="9px"+F;
+    if(p.k==="vol"){
+      const mv=Math.max(...vis.map(x=>x.v||0))||1;
+      vis.forEach((x,k)=>{const g=start+k,h=((x.v||0)/mv)*p.h;
+        cx.fillStyle=x.c>=x.o?C.up:C.dn; cx.globalAlpha=.35;
+        cx.fillRect(X(g)-bw/2,p.top+p.h-h,bw,h);});
+      cx.globalAlpha=1; cx.fillStyle=C.low; cx.fillText("Volume",PL+3,p.top+9);
+    }
+    if(p.k==="rsi"){
+      const ry=v=>p.top+(1-v/100)*p.h;
+      [30,70].forEach(l=>{cx.strokeStyle=C.line;cx.setLineDash([3,3]);cx.beginPath();
+        cx.moveTo(PL,Math.round(ry(l))+.5);cx.lineTo(W-PR,Math.round(ry(l))+.5);cx.stroke();cx.setLineDash([]);
+        cx.fillStyle=C.low;cx.fillText(String(l),W-PR+6,ry(l)+3);});
+      cx.strokeStyle="#8B7FD4";cx.lineWidth=1.3;cx.beginPath();let on=false;
+      for(let k=0;k<vis.length;k++){const g=start+k,v=ind.rsi[g];
+        if(v==null){on=false;continue;} on?cx.lineTo(X(g),ry(v)):(cx.moveTo(X(g),ry(v)),on=true);}
+      cx.stroke(); cx.fillStyle=C.low; cx.fillText("RSI 14",PL+3,p.top+9);
+    }
+    if(p.k==="macd"){
+      let mx=0; for(let k=0;k<vis.length;k++){const m=ind.macd[start+k];
+        if(m)mx=Math.max(mx,Math.abs(m.hist),Math.abs(m.line));}
+      mx=mx||1; const my=v=>p.top+p.h/2-(v/mx)*(p.h/2-4);
+      vis.forEach((_,k)=>{const g=start+k,m=ind.macd[g];if(!m)return;
+        cx.fillStyle=m.hist>=0?C.up:C.dn;cx.globalAlpha=.5;
+        const h=my(m.hist)-my(0); cx.fillRect(X(g)-bw/2,h>=0?my(0):my(m.hist),bw,Math.abs(h)||1);});
+      cx.globalAlpha=1;
+      [["line",C.key],["sig",C.warn]].forEach(([kk,col])=>{cx.strokeStyle=col;cx.lineWidth=1;cx.beginPath();let on=false;
+        for(let k=0;k<vis.length;k++){const m=ind.macd[start+k];
+          if(!m){on=false;continue;} on?cx.lineTo(X(start+k),my(m[kk])):(cx.moveTo(X(start+k),my(m[kk])),on=true);}
+        cx.stroke();});
+      cx.fillStyle=C.low; cx.fillText("MACD",PL+3,p.top+9);
+    }
+  });
+
+  if(hover!=null&&inV(hover)){
+    cx.strokeStyle=C.mid; cx.lineWidth=.6; cx.setLineDash([2,3]);
+    cx.beginPath(); cx.moveTo(X(hover),PT); cx.lineTo(X(hover),H-PB); cx.stroke(); cx.setLineDash([]);
+  }
+  const hb=(hover!=null&&b[hover])?b[hover]:lb;
+  document.getElementById("ohlc").innerHTML=
+    `<span>O <b>${px(hb.o,u)}</b></span><span>H <b>${px(hb.h,u)}</b></span>`+
+    `<span>L <b>${px(hb.l,u)}</b></span>`+
+    `<span>C <b style="color:${hb.c>=hb.o?C.up:C.dn}">${px(hb.c,u)}</b></span>`+
+    `<span>Vol <b>${kf(hb.v)}</b></span><span style="color:${C.low}">${hhmm(hb.ts)}</span>`;
+  readout((hover!=null&&b[hover])?hover:b.length-1);
+}
+
+function readout(i){
+  const ind=S.ind[S.tkr], b=S.bars[S.tkr], u=uni(S.tkr), x=b[i];
+  const it=(k,v,c)=>`<span>${k} <b style="color:${c||C.fg}">${v}</b></span>`;
+  const st=ind.st[i], m=ind.macd[i], r=ind.rsi[i], str=S.struct[S.tkr];
+  const liveOb=str.obs.filter(o=>o.mitigated===null).length;
+  const openLiq=[...str.bsl,...str.ssl].filter(p=>p.swept==null).length;
+  document.getElementById("rdo").innerHTML=
+    it("EMA9",px(ind.e9[i],u),C.warn)+it("EMA21",px(ind.e21[i],u),C.key)+
+    it("EMA50",px(ind.e50[i],u),"#8B7FD4")+
+    it("VWAP",px(ind.vwap[i],u), ind.vwap[i]==null?C.mid:(x.c>ind.vwap[i]?C.up:C.dn))+
+    it("RSI",r==null?"—":r.toFixed(1), r==null?C.mid:r>70?C.dn:r<30?C.up:C.fg)+
+    it("ATR",px(ind.atr[i],u))+
+    it("ADX",ind.adx[i]==null?"—":ind.adx[i].toFixed(1), ind.adx[i]>20?C.up:C.mid)+
+    it("MACD",m?m.hist.toFixed(2):"—", m?(m.hist>0?C.up:C.dn):C.mid)+
+    it("Trend",st?(st.dir===1?"Up":"Down"):"—", st?(st.dir===1?C.up:C.dn):C.mid)+
+    it("Order blocks",liveOb+" live",C.fg)+it("Liquidity",openLiq+" open",C.warn);
+}
+
+function fit(){ W=document.getElementById("box").clientWidth||900; cv.style.width="100%"; draw(); }
+window.addEventListener("resize",fit);
+cv.addEventListener("mousemove",e=>{
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, b=S.bars[S.tkr]; if(!b)return;
+  if(drag){ const cw=(W-PL-PR)/view.n;
+    view.off=Math.max(0,Math.min(drag.off+Math.round((mx-drag.x)/cw), b.length-view.n)); draw(); return; }
+  const cw=(W-PL-PR)/view.n;
+  const end=Math.max(view.n,b.length-view.off), start=Math.max(0,end-view.n);
+  const g=start+Math.floor((mx-PL)/cw);
+  hover=(g>=start&&g<end&&b[g])?g:null;
+  cv.style.cursor=hits.some(h=>Math.abs(h.x-mx)<10)?"pointer":"crosshair";
+  draw();
+});
+cv.addEventListener("mousedown",e=>{
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+  const h=hits.find(h=>Math.abs(h.x-mx)<11&&Math.abs(h.y-my)<22);
+  if(h){ S.picked=(S.sigs[S.tkr]||[]).find(s=>s.id===h.id); renderLive(); return; }
+  drag={x:mx,off:view.off};
+});
+window.addEventListener("mouseup",()=>drag=null);
+cv.addEventListener("mouseleave",()=>{hover=null;drag=null;draw();});
+cv.addEventListener("wheel",e=>{e.preventDefault();
+  const b=S.bars[S.tkr]; if(!b)return;
+  view.n=Math.round(Math.max(30,Math.min(b.length, view.n*(e.deltaY>0?1.15:0.87)))); draw();
+},{passive:false});
+
+/* ------------------------------------------------------------------- UI -- */
+const uni=t=>S.universe.find(x=>x.tkr===t)||{};
+function seg(el,items,isOn,click){
+  el.innerHTML="";
+  items.forEach(it=>{ const b=document.createElement("button");
+    b.className=isOn(it)?"on":""; b.textContent=it.l; b.onclick=()=>click(it); el.appendChild(b); });
+}
+function buildChrome(){
+  seg(document.getElementById("tfs"), TF.map(m=>({l:m+"m",v:m})), it=>S.tf===it.v,
+    async it=>{ S.tf=it.v; S.picked=null; await refreshAll(); });
+  seg(document.getElementById("stateSeg"),
+    [{l:"All",v:"ALL"},{l:"Active",v:"ACTIVE"},{l:"Expired",v:"EXPIRED"}],
+    it=>S.state===it.v, it=>{S.state=it.v; renderBlotter();});
+  seg(document.getElementById("scopeSeg"),
+    [{l:"This symbol",v:"ONE"},{l:"All",v:"ALL"}],
+    it=>S.scope===it.v, it=>{S.scope=it.v; renderBlotter();});
+
+  const groups=[
+    ["Overlays",[["ema9","EMA 9",C.warn],["ema21","EMA 21",C.key],["ema50","EMA 50","#8B7FD4"],
+      ["vwap","VWAP",C.fg],["st","Supertrend",C.up],["bb","Bollinger",C.mid]]],
+    ["Smart money",[["ob","Order blocks",C.up],["liq","Liquidity pools",C.warn],["fvg","Fair value gaps",C.key]]],
+    ["Panes",[["vol","Volume",C.mid],["rsi","RSI",C.mid],["macd","MACD",C.mid]]],
+    ["Trade",[["levels","Signal levels",C.key]]],
+  ];
+  document.getElementById("indPop").innerHTML = groups.map(([g,items],gi)=>
+    (gi?'<hr>':'')+`<div style="font:600 9.5px system-ui;letter-spacing:.1em;text-transform:uppercase;color:${C.low};padding:4px 6px">${g}</div>`+
+    items.map(([k,l,c])=>`<label><input type="checkbox" data-k="${k}"${S.show[k]?" checked":""}>`+
+      `<span class="sw" style="background:${c}"></span>${l}</label>`).join("")).join("");
+  document.getElementById("indPop").querySelectorAll("input").forEach(inp=>{
+    inp.onchange=()=>{ S.show[inp.dataset.k]=inp.checked; fit(); };
+  });
+}
+document.getElementById("indBtn").onclick=e=>{
+  e.stopPropagation();
+  const p=document.getElementById("indPop"); p.style.display=p.style.display==="none"?"":"none";
+};
+document.addEventListener("click",()=>document.getElementById("indPop").style.display="none");
+document.getElementById("indPop").addEventListener("click",e=>e.stopPropagation());
+
+function renderWatch(){
+  const el=document.getElementById("wl"); el.innerHTML="";
+  S.universe.forEach(u=>{
+    const q=S.quotes[u.tkr]||{}, act=(S.sigs[u.tkr]||[]).filter(s=>s.res.state==="ACTIVE").length;
+    const b=document.createElement("button");
+    b.className="wr"+(u.tkr===S.tkr?" on":"");
+    b.innerHTML=`<div class="t"><span class="n">${esc(u.sym)}</span>`+
+      `<span class="p">${q.ltp!=null?nf(q.ltp,u.step>=50?1:2):"—"}</span></div>`+
+      `<div class="t"><span class="s">${u.seg}${act?' <span class="badge">'+act+' live</span>':''}</span>`+
+      `<span class="p ${q.chg>=0?'up':'dn'}" style="font-size:11px">`+
+      `${q.chg!=null?(q.chg>=0?"+":"")+q.chg.toFixed(2)+"%":""}</span></div>`;
+    b.onclick=async()=>{
+      S.tkr=u.tkr; S.picked=null; view.off=0;
+      if(!S.bars[u.tkr]){ try{ await loadCandles(u.tkr); recompute(u.tkr);}catch(e){} }
+      renderAll(); openChain(u.tkr);
+    };
+    el.appendChild(b);
+  });
+}
+
+function renderSide(){
+  const el=document.getElementById("sigPanel"), s=S.picked;
+  if(!s){ el.innerHTML=`<div class="hd">Trade plan</div><div class="empty">`+
+    `Select a signal — a ▲▼ arrow on the chart, or a row in the table below.</div>`; return; }
+  const u=uni(s.tkr), col=s.side==="BUY"?C.up:C.dn, t=tone(s.res), o=s.opt;
+  const lv=(k,v,c)=>`<div class="lv"><span>${k}</span><span style="color:${c||C.fg}">${v}</span></div>`;
+  el.innerHTML=`<div class="hd">Trade plan</div><div class="sig">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span class="tag" style="background:${col};color:#fff">${s.side}</span>
+      <h3>${esc(s.sym)}</h3></div>
+    <div class="m" style="font-size:11px;color:${C.low};margin-bottom:10px">
+      ${esc(s.id)} · posted ${hms(s.ts)} · ${ago(s.ts)}</div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <span class="tag" style="border:1px solid ${t};color:${t}">${s.res.state}</span>
+      <span class="m" style="font-size:11px;color:${t};align-self:center">${s.res.status}</span></div>
+    ${lv("Entry",px(s.entry,u),C.key)}${lv("Stop loss",px(s.sl,u),C.dn)}
+    ${lv("Target 1",px(s.t1,u),s.res.hit>=1?C.up:C.mid)}
+    ${lv("Target 2",px(s.t2,u),s.res.hit>=2?C.up:C.mid)}
+    ${lv("Target 3",px(s.t3,u),s.res.hit>=3?C.up:C.mid)}
+    ${lv("Risk / share",px(s.risk,u))}${lv("Risk : reward","1 : 3.0",C.up)}
+    ${lv("Open P&L",(s.res.R>=0?"+":"")+s.res.R.toFixed(2)+"R", s.res.R>=0?C.up:C.dn)}
+    <div style="margin-top:12px">
+      <div class="m" style="font-size:10.5px;color:${C.low};display:flex;justify-content:space-between">
+        <span>CONFIDENCE</span><span style="color:${C.fg}">${s.conf}/100</span></div>
+      <div class="bar"><i style="width:${s.conf}%;background:${s.conf>=78?C.up:C.warn}"></i></div>
+    </div>
+    ${o?`<div style="margin-top:14px">
+      <div class="hd" style="padding:0 0 6px">Option leg${o.live?"":" (estimated IV)"}</div>
+      <div class="m" style="font-size:13px;margin-bottom:6px">${esc(s.tkr)}
+        <b style="color:${col}">${o.strike} ${o.ty}</b>
+        <span style="color:${C.low};font-size:11px"> ${o.moneyness}</span></div>
+      ${lv("Premium entry","₹"+nf(o.entry),C.key)}${lv("Premium stop","₹"+nf(o.sl),C.dn)}
+      ${lv("Premium targets","₹"+nf(o.t1,1)+" / "+nf(o.t2,1)+" / "+nf(o.t3,1),C.up)}
+      ${o.lot?lv("Outlay per lot","₹"+nf(o.outlay,0)):""}
+      ${lv("Delta / IV",o.delta.toFixed(2)+" / "+(o.iv*100).toFixed(1)+"%",C.mid)}
+      <button class="btn" style="margin-top:10px;width:100%" onclick="openChain('${s.tkr}')">Open option chain</button>
+    </div>`:""}
+    <div style="margin-top:14px">
+      <div class="hd" style="padding:0 0 6px">Why it fired</div>
+      ${CHECKS.map(c=>`<div class="m" style="display:flex;gap:8px;font-size:10.5px;padding:1.5px 0">
+        <span style="color:${s.checks[c.id]?C.up:C.low};width:10px">${s.checks[c.id]?"✓":"·"}</span>
+        <span style="flex:1;color:${s.checks[c.id]?C.fg:C.low}">${c.l}</span>
+        <span style="color:${s.checks[c.id]?C.warn:C.low}">${s.checks[c.id]?"+"+c.w:"0"}</span></div>`).join("")}
+    </div></div>`;
+}
+
+const COLS=["Symbol","Side","Posted","Age","Entry","Stop","T1","T2","T3","R:R","Conf","Option","State","Status","R"];
+function rows(){
+  let r = S.scope==="ONE" ? (S.sigs[S.tkr]||[])
+    : S.universe.reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);
+  if(S.state!=="ALL") r=r.filter(s=>s.res.state===S.state);
+  return r.slice().sort((a,b)=>b.ts-a.ts);
+}
+function renderBlotter(){
+  const r=rows();
+  document.getElementById("blotTitle").textContent="Signals · "+r.length;
+  document.getElementById("bh").innerHTML=COLS.map(c=>`<th>${c}</th>`).join("");
+  const tb=document.getElementById("bb");
+  if(!r.length){ tb.innerHTML=`<tr><td colspan="15" class="empty">`+
+    `No signals match these filters. Signals fire only on confirmed setups — a quiet tape produces none, `+
+    `and that is a valid result rather than a fault.</td></tr>`; return; }
+  tb.innerHTML=r.map(s=>{
+    const u=uni(s.tkr), col=s.side==="BUY"?C.up:C.dn, t=tone(s.res);
+    return `<tr class="${S.picked&&S.picked.id===s.id?"on":""}" data-id="${s.id}" data-tkr="${s.tkr}">
+      <td style="color:${C.fg}">${esc(s.sym)}</td>
+      <td><span class="tag" style="background:${col};color:#fff">${s.side}</span></td>
+      <td>${hms(s.ts)}</td><td class="low">${ago(s.ts)}</td>
+      <td style="color:${C.key}">${px(s.entry,u)}</td>
+      <td style="color:${C.dn}">${px(s.sl,u)}</td>
+      <td style="color:${s.res.hit>=1?C.up:C.mid}">${px(s.t1,u)}</td>
+      <td style="color:${s.res.hit>=2?C.up:C.mid}">${px(s.t2,u)}</td>
+      <td style="color:${s.res.hit>=3?C.up:C.mid}">${px(s.t3,u)}</td>
+      <td>1:3.0</td><td>${s.conf}</td>
+      <td>${s.opt?esc(s.tkr)+" "+s.opt.strike+" "+s.opt.ty:"—"}</td>
+      <td><span class="tag" style="border:1px solid ${t};color:${t}">${s.res.state}</span></td>
+      <td style="color:${t}">${s.res.status}</td>
+      <td style="color:${s.res.R>=0?C.up:C.dn}">${(s.res.R>=0?"+":"")+s.res.R.toFixed(2)}</td></tr>`;
+  }).join("");
+  tb.querySelectorAll("tr[data-id]").forEach(tr=>tr.onclick=async()=>{
+    if(tr.dataset.tkr!==S.tkr){ S.tkr=tr.dataset.tkr; view.off=0;
+      if(!S.bars[S.tkr]){try{await loadCandles(S.tkr);recompute(S.tkr);}catch(e){}} }
+    S.picked=(S.sigs[tr.dataset.tkr]||[]).find(s=>s.id===tr.dataset.id);
+    renderAll();
+  });
+}
+
+function renderPerf(){
+  const all=S.universe.reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);
+  const done=all.filter(s=>s.res.state==="EXPIRED"), act=all.length-done.length;
+  const wins=done.filter(s=>s.res.R>0.05).length;
+  const tot=done.reduce((s,x)=>s+x.res.R,0);
+  const wr=done.length?(wins/done.length*100).toFixed(0):"—";
+  const ex=done.length?(tot/done.length).toFixed(2):"—";
+  document.getElementById("perf").innerHTML=
+    `Today: <b style="color:${C.fg}">${all.length}</b> signals · `+
+    `<b style="color:${C.warn}">${act}</b> active · <b>${done.length}</b> resolved · `+
+    `hit rate <b style="color:${wr!=="—"&&+wr>=50?C.up:C.dn}">${wr}%</b> · `+
+    `expectancy <b style="color:${ex!=="—"&&+ex>=0?C.up:C.dn}">${ex}R</b>. `+
+    `Stops are assumed to fill before targets within a bar. Slippage, brokerage and STT are not deducted — `+
+    `net results will be lower. A hit rate near 40% is normal at 1:3 R:R and can still be profitable.`+
+    (S.feed&&S.feed.delayed?` <b style="color:${C.warn}">Candles are delayed ${esc(S.feed.delayNote||"")}</b> — `+
+      `signal times are candle times, not the moment you could have traded. The option chain is live.`:"");
+}
+
+/* ---------------------------------------------------------- option chain -- */
+S.chainCache={};
+async function openChain(tkr){
+  S.chainTkr=tkr;
+  document.getElementById("ovl").classList.add("open");
+  document.getElementById("ocSym").textContent=uni(tkr).sym||tkr;
+  document.getElementById("ocBody").innerHTML=`<tr><td colspan="13" class="empty">Loading chain…</td></tr>`;
+  try{
+    const e=await api("/api/expiries?tkr="+encodeURIComponent(tkr));
+    const sel=document.getElementById("ocExp");
+    sel.innerHTML=e.expiries.map(x=>`<option value="${x}">${new Date(x).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"2-digit"})}</option>`).join("");
+    S.chainExp=e.expiries[0];
+    await loadChain(tkr,S.chainExp);
+  }catch(err){
+    document.getElementById("ocBody").innerHTML=`<tr><td colspan="13" class="empty">Couldn't load the chain — ${esc(err.message)}</td></tr>`;
+  }
+}
+document.getElementById("ocExp").onchange=e=>{S.chainExp=e.target.value; loadChain(S.chainTkr,S.chainExp);};
+document.getElementById("ocClose").onclick=()=>document.getElementById("ovl").classList.remove("open");
+document.getElementById("ovl").onclick=e=>{ if(e.target.id==="ovl") e.currentTarget.classList.remove("open"); };
+window.addEventListener("keydown",e=>{ if(e.key==="Escape") document.getElementById("ovl").classList.remove("open"); });
+
+async function loadChain(tkr,expiry){
+  const d=await api("/api/chain?tkr="+encodeURIComponent(tkr)+(expiry?"&expiry="+expiry:""));
+  const T=d.daysOut/365, ivAt={};
+  // NSE publishes IV per strike, so prefer it. Solve from the premium only for
+  // strikes where the feed left it blank (usually illiquid far-OTM ones).
+  d.rows.forEach(r=>{
+    if(r.ce.iv==null) r.ce.iv=impliedVol(r.ce.ltp,d.spot,r.strike,T,"CE");
+    if(r.pe.iv==null) r.pe.iv=impliedVol(r.pe.ltp,d.spot,r.strike,T,"PE");
+    if(r.ce.iv) ivAt[r.strike+"CE"]=r.ce.iv;
+    if(r.pe.iv) ivAt[r.strike+"PE"]=r.pe.iv;
+  });
+  d.ivAt=ivAt; S.chainCache[tkr]=d;
+  drawChain(d);
+}
+function drawChain(d){
+  const u=uni(d.tkr);
+  const maxCe=Math.max(...d.rows.map(r=>r.ce.oi))||1, maxPe=Math.max(...d.rows.map(r=>r.pe.oi))||1;
+  const ceOI=d.rows.reduce((s,r)=>s+r.ce.oi,0), peOI=d.rows.reduce((s,r)=>s+r.pe.oi,0);
+  let maxPain=d.atm, best=Infinity;
+  d.rows.forEach(t=>{ const pay=d.rows.reduce((s,r)=>
+    s+r.ce.oi*Math.max(t.strike-r.strike,0)+r.pe.oi*Math.max(r.strike-t.strike,0),0);
+    if(pay<best){best=pay;maxPain=t.strike;} });
+  const chg=d.prevClose?((d.spot-d.prevClose)/d.prevClose)*100:0;
+  const live=(S.sigs[d.tkr]||[]).filter(s=>s.res.state==="ACTIVE");
+  const reco=live.length?live[live.length-1].opt:null;
+
+  document.getElementById("ocSpot").textContent=nf(d.spot,u.step>=50?1:2);
+  document.getElementById("ocChg").innerHTML=`<span style="color:${chg>=0?C.up:C.dn}">${chg>=0?"+":""}${chg.toFixed(2)}%</span>`;
+  document.getElementById("ocMeta").innerHTML=
+    `<span>ATM <b>${d.atm}</b></span><span>PCR <b style="color:${peOI/ceOI>1?C.up:C.dn}">${(peOI/ceOI).toFixed(2)}</b></span>`+
+    `<span>Max pain <b>${maxPain}</b></span><span>Call OI <b>${kf(ceOI)}</b></span>`+
+    `<span>Put OI <b>${kf(peOI)}</b></span><span>Lot <b>${d.lot||"—"}</b></span>`+
+    (reco?`<span>Signal strike <b style="color:${C.warn}">${reco.strike} ${reco.ty}</b></span>`:"");
+  const cols=["OI","Chg OI","Volume","IV","LTP","Chg"];
+  document.getElementById("ocHead").innerHTML=
+    `<tr><th class="c" colspan="6" style="color:${C.dn}">Calls</th><th class="c">Strike</th>`+
+    `<th class="c" colspan="6" style="color:${C.up}">Puts</th></tr>`+
+    `<tr>${cols.map(c=>`<th>${c}</th>`).join("")}<th class="c">Price</th>`+
+    `${cols.slice().reverse().map(c=>`<th>${c}</th>`).join("")}</tr>`;
+
+  const z=(v,c)=>`<span class="z" style="color:${c||C.fg}">${v}</span>`;
+  const sg=v=>z((v>=0?"+":"−")+kf(Math.abs(v)), v>=0?C.up:C.dn);
+  let html="", placed=false;
+  d.rows.forEach(r=>{
+    if(!placed&&r.strike>d.spot){ html+=`<tr class="spot"><td colspan="13">Spot ${nf(d.spot,u.step>=50?1:2)}</td></tr>`; placed=true; }
+    const ci=r.strike<d.spot?' class="itm"':'', pi=r.strike>d.spot?' class="itm"':'';
+    html+=`<tr class="${r.strike===d.atm?"atm ":""}${reco&&reco.strike===r.strike?"reco":""}">
+      <td${ci}><span class="oib c" style="width:${r.ce.oi/maxCe*100}%"></span>${z(kf(r.ce.oi))}</td>
+      <td${ci}>${sg(r.ce.chgOi)}</td><td${ci}>${z(kf(r.ce.vol),C.mid)}</td>
+      <td${ci}>${z(r.ce.iv?(r.ce.iv*100).toFixed(1):"—",C.mid)}</td>
+      <td${ci}>${z(nf(r.ce.ltp))}</td>
+      <td${ci}>${z((r.ce.chg>=0?"+":"")+nf(r.ce.chg), r.ce.chg>=0?C.up:C.dn)}</td>
+      <td class="k">${r.strike}</td>
+      <td${pi}>${z((r.pe.chg>=0?"+":"")+nf(r.pe.chg), r.pe.chg>=0?C.up:C.dn)}</td>
+      <td${pi}>${z(nf(r.pe.ltp))}</td>
+      <td${pi}>${z(r.pe.iv?(r.pe.iv*100).toFixed(1):"—",C.mid)}</td>
+      <td${pi}>${z(kf(r.pe.vol),C.mid)}</td><td${pi}>${sg(r.pe.chgOi)}</td>
+      <td${pi}><span class="oib p" style="width:${r.pe.oi/maxPe*100}%"></span>${z(kf(r.pe.oi))}</td></tr>`;
+  });
+  document.getElementById("ocBody").innerHTML=html;
+  document.getElementById("ocNote").textContent=
+    "LTP, open interest, volume and IV come from NSE's own published chain. "+
+    "ITM strikes are tinted, the ATM row highlighted, and the strike your current signal recommends is outlined.";
+}
+
+/* ------------------------------------------------------------------ boot -- */
+function renderLive(){
+  document.getElementById("clock").textContent=new Date().toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour12:false})+" IST";
+  renderWatch(); renderSide(); renderBlotter(); renderPerf(); draw();
+}
+function renderAll(){
+  const u=uni(S.tkr);
+  document.getElementById("symName").textContent=u.sym||"—";
+  document.getElementById("symMeta").textContent=
+    [S.tf+"m", u.seg, u.lot?"lot "+u.lot+(u.lotFromFeed?"":" (check with broker)"):null, u.step?"strike step "+u.step:null].filter(Boolean).join(" · ");
+  buildChrome(); renderLive(); fit();
+}
+document.getElementById("chainBtn").onclick=()=>openChain(S.tkr);
+document.getElementById("cfgBtn").onclick=()=>showSetup("");
+document.getElementById("refreshBtn").onclick=()=>refreshAll().catch(e=>setConn("err","Feed error"));
+document.getElementById("apiSave").onclick=()=>{
+  S.api=document.getElementById("apiInput").value.replace(/\/+$/,"");
+  store.set("sd_api",S.api); boot();
+};
+setInterval(()=>{ if(S.ready) document.getElementById("clock").textContent=
+  new Date().toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour12:false})+" IST"; },1000);
+boot();
+</script>
+</body>
+</html>

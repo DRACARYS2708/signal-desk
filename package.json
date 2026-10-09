@@ -1,0 +1,16 @@
+{
+  "name": "signal-desk-free",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Live NSE intraday signal terminal — free data, no API key or subscription",
+  "main": "server.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "web": "npx --yes serve -l 5173 ."
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}
