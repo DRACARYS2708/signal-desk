@@ -1,16 +1,10 @@
 {
-  "name": "signal-desk-free",
-  "version": "1.0.0",
+  "name": "signal-desk",
+  "version": "2.0.0",
   "private": true,
-  "description": "Live NSE intraday signal terminal — free data, no API key or subscription",
+  "description": "Real-time NSE and MCX intraday signal terminal on the free Fyers data feed",
   "main": "server.js",
   "engines": { "node": ">=18" },
-  "scripts": {
-    "start": "node server.js",
-    "web": "npx --yes serve -l 5173 ."
-  },
-  "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.19.2"
-  }
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "cors": "^2.8.5", "express": "^4.19.2" }
 }

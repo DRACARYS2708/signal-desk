@@ -7,7 +7,7 @@
 <style>
 :root{
   --bg:#0F1319; --panel:#161B23; --line:#252C37;
-  --fg:#E4E9F0; --mid:#8A95A5; --low:#576273;
+  --fg:#E4E9F0; --mid:#A3ADBA; --low:#7F8A9A;
   --up:#26A96C; --dn:#E05A47; --key:#4C9AFF; --warn:#E8B44A;
   --m:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
   --s:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -146,6 +146,60 @@ tr.reco td.k{box-shadow:inset 0 0 0 1.5px var(--warn)}
 .risk{padding:7px 16px;background:rgba(224,90,71,.1);border-bottom:1px solid var(--line);
   font:11.5px var(--m);color:#F0A498}
 .risk b{color:var(--dn)}
+
+/* ---------- simple view (the default): fewer things, bigger type ---------- */
+body.simple{font-size:16px}
+body.simple .adv{display:none!important}
+body:not(.simple) .simple-only{display:none!important}
+body.simple .shell{display:block;height:auto;max-width:1120px;margin:0 auto}
+body.simple .col{overflow:visible}
+body.simple .btn{font-size:14.5px;padding:8px 14px;min-height:42px}
+body.simple .seg button{font-size:15px;padding:9px 14px;min-height:42px}
+body.simple .pill{font-size:13px;padding:5px 12px}
+body.simple header h1{font-size:18px}
+body.simple .risk{font:13.5px/1.5 var(--s);padding:9px 16px}
+body.simple .ctop{gap:12px 14px;padding:14px 16px}
+.symsel{font:600 18px var(--s);padding:9px 12px;min-height:46px;background:var(--panel);color:var(--fg);
+  border:1px solid var(--line);border-radius:8px;max-width:100%}
+.symsel:focus-visible{outline:2px solid var(--key);outline-offset:1px}
+.bigpx{display:flex;align-items:baseline;gap:10px}
+#bigPx{font-size:26px;font-weight:600}
+#bigChg{font-size:16px}
+#cv{touch-action:pan-y}
+.zoom{position:absolute;left:12px;bottom:36px;display:flex;gap:6px}
+.zoom button{width:40px;height:40px;border-radius:8px;background:var(--panel);border:1px solid var(--line);
+  font-size:21px;line-height:1;color:var(--fg);opacity:.92}
+.zoom button:hover{border-color:var(--mid)}
+.cards-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:18px 16px 10px;border-top:1px solid var(--line)}
+.cards-hd h3{font-size:19px;font-weight:600;margin-right:auto}
+#cards{display:grid;align-items:start;gap:12px;padding:2px 16px 8px;grid-template-columns:repeat(auto-fill,minmax(min(100%,440px),1fr))}
+.card{text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:14px 16px;display:block;width:100%;min-width:0}
+.card:hover{border-color:var(--mid)}
+.card.on{border-color:var(--key);box-shadow:0 0 0 1px var(--key)}
+.card .c1{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.card .sd{padding:4px 12px;border-radius:6px;font:700 15px var(--s);color:#fff;letter-spacing:.04em}
+.card .nm{font-size:18px;font-weight:600}
+.card .st{margin-left:auto;padding:3px 11px;border-radius:20px;font:600 12.5px var(--s);border:1px solid}
+.card .c2{font-size:13.5px;color:var(--mid);margin:7px 0 12px}
+.lvls{display:grid;grid-template-columns:repeat(5,1fr);gap:10px 8px}
+.lvls div{min-width:0}
+.lvls span{display:block;font-size:12px;color:var(--low);letter-spacing:.04em;text-transform:uppercase}
+.lvls b{font:600 16.5px var(--m);font-variant-numeric:tabular-nums}
+.card .more{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:14px;color:var(--mid);line-height:1.65}
+.card .opt{margin-top:11px;font-size:14.5px;color:var(--mid)}
+.card .opt b{font-weight:700}
+button.pick{font:inherit;color:inherit;text-decoration:underline dotted;text-underline-offset:3px;padding:2px 4px;border-radius:4px}
+button.pick:hover{background:var(--key);color:#fff;text-decoration:none}
+.simple-note{padding:8px 16px 32px;font-size:13.5px;color:var(--mid);line-height:1.6}
+@media(max-width:560px){
+  .lvls{grid-template-columns:repeat(3,1fr)}
+  #bigPx{font-size:23px}
+  header{gap:10px;padding:10px 12px}
+  body.simple .ctop{padding:12px}
+  .symsel{flex:1 1 100%}
+  #cards,.cards-hd,.simple-note{padding-left:12px;padding-right:12px}
+}
 </style>
 </head>
 <body>
@@ -154,8 +208,9 @@ tr.reco td.k{box-shadow:inset 0 0 0 1.5px var(--warn)}
   <h1>Signal Desk</h1>
   <span class="pill" id="conn"><span class="led" id="led"></span><span id="connTxt">Connecting…</span></span>
   <span class="pill m" id="clock">--:--:--</span>
-  <div style="margin-left:auto;display:flex;gap:8px">
-    <button class="btn" id="cfgBtn">Feed settings</button>
+  <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+    <div class="seg" id="modeSeg" aria-label="View"></div>
+    <button class="btn adv" id="cfgBtn">Feed settings</button>
     <button class="btn" id="refreshBtn">Refresh</button>
   </div>
 </header>
@@ -165,9 +220,10 @@ tr.reco td.k{box-shadow:inset 0 0 0 1.5px var(--warn)}
 <div id="setup" style="display:none">
   <div class="mid-msg">
     <h2>Waiting for the market data feed</h2>
-    <p>Candles and quotes come from Yahoo Finance (about 15 minutes delayed for NSE) and
-    the option chain from NSE, through the Signal Desk server. No account or key is
-    needed. The reason it could not connect is shown below.</p>
+    <p>Prices, candles and the option chain come in real time from your Fyers account.
+    Fyers asks you to log in again from time to time; after that the chart opens by itself.</p>
+    <div class="field"><a class="btn pri" id="loginBtn" href="/auth/login" hidden
+      style="font-size:16px;padding:12px 22px;text-decoration:none">Log in to Fyers</a></div>
     <div class="field">
       <input id="apiInput" value="http://localhost:8787" spellcheck="false" aria-label="Server address" />
       <button class="btn pri" id="apiSave">Try again</button>
@@ -177,27 +233,38 @@ tr.reco td.k{box-shadow:inset 0 0 0 1.5px var(--warn)}
 </div>
 
 <div class="shell" id="shell" style="display:none">
-  <aside class="col watch">
+  <aside class="col watch adv">
     <div class="hd">Watchlist</div>
     <div id="wl"></div>
-    <div class="note">Click any symbol to open its option chain.</div>
+    <div class="note">Click a symbol to load its chart.</div>
   </aside>
 
   <main class="col">
     <div class="ctop">
-      <h2 id="symName">—</h2>
-      <span class="m mid" id="symMeta" style="font-size:12px"></span>
-      <div class="seg" id="tfs" style="margin-left:auto"></div>
-      <div class="menu">
+      <select id="symSel" class="symsel simple-only" aria-label="Choose a symbol"></select>
+      <div class="bigpx simple-only"><span id="bigPx" class="m">—</span><span id="bigChg" class="m"></span></div>
+      <h2 id="symName" class="adv">—</h2>
+      <span class="m mid adv" id="symMeta" style="font-size:12px"></span>
+      <div class="seg" id="optSeg" aria-label="Chart of"></div>
+      <div class="seg" id="tfs" style="margin-left:auto" aria-label="Candle size"></div>
+      <div class="menu adv">
         <button class="btn" id="indBtn">Indicators ▾</button>
         <div class="pop" id="indPop" style="display:none"></div>
       </div>
       <button class="btn" id="chainBtn">Option chain</button>
     </div>
-    <div class="rdo" id="rdo"></div>
-    <div id="box"><canvas id="cv"></canvas><div id="ohlc"></div></div>
+    <div class="rdo adv" id="rdo"></div>
+    <div id="box"><canvas id="cv"></canvas><div id="ohlc" class="adv"></div>
+      <div class="zoom"><button id="zOut" title="Show more candles" aria-label="Zoom out">−</button><button id="zIn" title="Show fewer candles" aria-label="Zoom in">+</button></div></div>
 
-    <div class="blot">
+    <section class="simple-only">
+      <div class="cards-hd"><h3 id="cardsTitle">Signals today</h3>
+        <div class="seg" id="cardState"></div><div class="seg" id="cardScope"></div></div>
+      <div id="cards"></div>
+      <div class="simple-note" id="simplePerf"></div>
+    </section>
+
+    <div class="blot adv">
       <div class="hd" style="display:flex;gap:12px;align-items:center">
         <span id="blotTitle">Signals</span>
         <div class="seg" id="stateSeg" style="margin-left:auto"></div>
@@ -208,7 +275,7 @@ tr.reco td.k{box-shadow:inset 0 0 0 1.5px var(--warn)}
     </div>
   </main>
 
-  <aside class="col side"><div id="sigPanel"></div></aside>
+  <aside class="col side adv"><div id="sigPanel"></div></aside>
 </div>
 
 <div class="ovl" id="ovl">
@@ -255,7 +322,8 @@ const store = {
 const HOSTED = /^https?:$/.test(location.protocol);
 const S = {
   api: HOSTED ? location.origin : store.get("sd_api","http://localhost:8787"),
-  tf: 5, tkr: null, picked: null, scope:"ONE", state:"ALL",
+  tf: 5, tkr: null, picked: null, scope:"ALL", state:"ALL",
+  simple: store.get("sd_mode","simple")!=="adv",
   universe: [], bars:{}, quotes:{}, sigs:{}, ind:{}, struct:{},
   ready:false, lastErr:null, feed:null,
   show:{ ema9:true, ema21:true, ema50:true, vwap:true, st:true, bb:false,
@@ -265,7 +333,7 @@ const S = {
 /* ------------------------------------------------------------------ feed -- */
 async function api(path){
   const r = await fetch(S.api+path, {cache:"no-store"});
-  if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.error||("HTTP "+r.status)); }
+  if(!r.ok){ const j=await r.json().catch(()=>({})); const e=new Error(j.error||("HTTP "+r.status)); e.status=r.status; throw e; }
   return r.json();
 }
 function setConn(state, text){
@@ -277,15 +345,25 @@ function setConn(state, text){
 async function boot(){
   try{
     setConn("", "Connecting…");
-    const st = await api("/api/status");
+    let st = await api("/api/status");
+    // The server forgets the Fyers login when it restarts; hand back the copy this browser kept.
+    const kept = store.get("sd_fy", null);
+    if(!st.authenticated && st.login && kept){
+      try{
+        const r = await fetch(S.api+"/auth/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:kept});
+        const j = await r.json();
+        if(j.ok){ if(j.a) store.set("sd_fy", JSON.stringify({a:j.a, r:j.r||null})); st = await api("/api/status"); }
+        else { try{ localStorage.removeItem("sd_fy"); }catch(e){} }
+      }catch(e){}
+    }
     if(!st.authenticated){
-      showSetup(st.error || "The server is running but its data feed is not ready.");
+      showSetup(st.error || "The server is running but its data feed is not ready.", st.login);
       setConn("err","Not logged in"); return;
     }
     S.feed = st;
     S.universe = await api("/api/instruments");
     if(!S.universe.length) throw new Error("backend returned an empty instrument list");
-    S.tkr = S.tkr || S.universe[0].tkr;
+    if(!S.universe.some(u=>u.tkr===S.tkr)) S.tkr = S.universe[0].tkr;
     document.getElementById("setup").style.display="none";
     document.getElementById("shell").style.display="";
     S.ready = true;
@@ -305,7 +383,8 @@ function liveLabel(){
   const f=S.feed||{};
   return f.delayed ? "Delayed "+(f.delayNote||"") : "Live";
 }
-function showSetup(msg){
+function showSetup(msg, login){
+  const lb=document.getElementById("loginBtn"); lb.hidden=!login; if(login) lb.href=S.api+login;
   document.getElementById("shell").style.display="none";
   document.getElementById("setup").style.display="";
   document.getElementById("setupErr").textContent = msg||"";
@@ -321,7 +400,7 @@ function startPolling(){
     if(busy || document.hidden) return;         // never stack requests; rest when the tab is hidden
     busy=true;
     try{
-      const q = await api("/api/quotes"); S.quotes = q.quotes;
+      const q = await api(quotesPath()); S.quotes = q.quotes;
       await loadCandles(S.tkr);                 // active symbol on every tick
       recompute(S.tkr);
       // one other symbol per tick, in rotation, so the whole watchlist's signals stay current
@@ -330,11 +409,17 @@ function startPolling(){
         try{ await loadCandles(o.tkr); recompute(o.tkr); }catch(e){} }
       renderLive();
       setConn("ok", liveLabel()); S.lastErr=null;
-    }catch(e){ setConn("err","Feed error"); S.lastErr=e.message; }
+    }catch(e){
+      if(e.status===401){ clearInterval(pollTimer); pollTimer=null; S.ready=false; boot(); return; }   // login ran out
+      setConn("err","Feed error"); S.lastErr=e.message; }
     finally{ busy=false; }
   }, (S.feed&&S.feed.pollMs)||5000);
 }
 
+function quotesPath(){
+  const x=S.universe.filter(u=>u.seg==="OPT").map(u=>u.tkr);
+  return "/api/quotes"+(x.length?"?x="+encodeURIComponent(x.join(",")):"");
+}
 async function loadCandles(tkr){
   const d = await api("/api/candles?tkr="+encodeURIComponent(tkr)+"&interval="+S.tf);
   S.bars[tkr] = d.candles.map(c=>{
@@ -344,7 +429,7 @@ async function loadCandles(tkr){
   });
 }
 async function refreshAll(){
-  const q = await api("/api/quotes"); S.quotes=q.quotes;
+  const q = await api(quotesPath()); S.quotes=q.quotes;
   await loadCandles(S.tkr);
   // background-load the rest so the watchlist shows signal counts
   for(const u of S.universe){
@@ -585,7 +670,7 @@ function engine(u, b, ind, str){
                    :Math.max.apply(null,b.slice(i-3,i+1).map(x=>x.h))+0.3*A[i];
       const sl=L?Math.max(swing,entry-1.8*A[i]):Math.min(swing,entry+1.8*A[i]);
       const risk=Math.abs(entry-sl);
-      if(risk<=0||risk/entry>0.03) continue;
+      if(risk<=0||risk/entry>(u.seg==="OPT"?0.35:0.03)) continue;
 
       const d=L?1:-1;
       const s={ id:u.tkr.slice(0,4)+"-"+String(1000+i).slice(-4), tkr:u.tkr, sym:u.sym,
@@ -663,7 +748,16 @@ const px=(v,u)=>nf(v, (u&&u.step>=50)?1:2);
 const cv=document.getElementById("cv"), cx=cv.getContext("2d");
 let W=900,H=520,hover=null,hits=[],drag=null;
 const view={n:110, off:0};                    // off = bars back from the live edge
-const PL=8,PR=72,PT=14,PB=24,G=8;
+const PL=8,PT=14,G=8; let PR=72,PB=24;
+/* Simple view draws all chart text larger. Every font set on the canvas passes
+   through here, so one factor scales the lot. */
+let FS=1;
+{ const d=Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype,"font");
+  Object.defineProperty(cx,"font",{configurable:true, get(){ return d.get.call(this); },
+    set(v){ d.set.call(this, FS===1?v:String(v).replace(/([\d.]+)px/,(m,n)=>(n*FS).toFixed(1)+"px")); }}); }
+const SIMPLE_SHOW={ ema9:true, ema21:true, ema50:false, vwap:false, st:false, bb:false,
+  ob:false, liq:false, fvg:false, vol:false, rsi:false, macd:false, levels:true };
+S.showAdv=S.show;
 const F=' -apple-system, ui-monospace, monospace';
 
 function panes(){
@@ -671,7 +765,7 @@ function panes(){
   if(S.show.vol) sub.push({k:"vol",h:46});
   if(S.show.rsi) sub.push({k:"rsi",h:56});
   if(S.show.macd)sub.push({k:"macd",h:56});
-  const price=310;
+  const price=S.simple?Math.round(Math.max(280,Math.min(470,window.innerHeight*0.5))):310;
   let y=PT+price; sub.forEach(p=>{y+=G;p.top=y;y+=p.h;});
   return {price,sub,total:PT+price+sub.reduce((s,p)=>s+p.h+G,0)+PB};
 }
@@ -690,7 +784,10 @@ function draw(){
 
   const sel=S.picked&&S.picked.tkr===S.tkr?S.picked:null;
   let lo=Math.min(...vis.map(x=>x.l)), hi=Math.max(...vis.map(x=>x.h));
+  const sigsHere=S.sigs[S.tkr]||[];
+  const latest=!sel&&sigsHere.length?sigsHere[sigsHere.length-1]:null;   // shown boxed until you pick another
   if(sel&&sel.i>=start&&sel.i<end&&S.show.levels){lo=Math.min(lo,sel.sl,sel.t3);hi=Math.max(hi,sel.sl,sel.t3);}
+  if(latest&&latest.i>=start&&latest.i<end&&S.show.levels){lo=Math.min(lo,latest.sl,latest.t2);hi=Math.max(hi,latest.sl,latest.t2);}
   const pad=(hi-lo)*0.07; lo-=pad; hi+=pad;
   const cw=(W-PL-PR)/vis.length, bw=Math.max(cw*0.6,1);
   const X=i=>PL+(i-start+0.5)*cw;
@@ -705,10 +802,12 @@ function draw(){
     cx.fillStyle=C.low; cx.textAlign="left"; cx.fillText(px(p,u), W-PR+6, y+3);
   }
   cx.textAlign="center";
-  let lastDay=null;
+  let lastDay=null, lastLbl=-1e9;
   vis.forEach((x,k)=>{
     const g=start+k, newDay=x.day!==lastDay; lastDay=x.day;
     if(!newDay && x.t%60!==0) return;
+    if(!newDay && X(g)-lastLbl<46*FS) return;        // don't print labels on top of each other
+    lastLbl=X(g);
     cx.strokeStyle=C.line; cx.globalAlpha=newDay?1:.6; cx.lineWidth=newDay?1:.5;
     cx.beginPath(); cx.moveTo(Math.round(X(g))+.5,PT); cx.lineTo(Math.round(X(g))+.5,H-PB); cx.stroke();
     cx.globalAlpha=1; cx.fillStyle=C.low;
@@ -761,21 +860,53 @@ function draw(){
   }
 
   /* ---- selected trade's levels ------------------------------------------- */
+  /* Every signal gets a trade box from its entry candle to where it ended:
+     green from entry up to the target, red from entry down to the stop.
+     The picked signal (or, with none picked, the latest) is drawn strong
+     with its TP / Entry / SL prices; the others stay faint. */
+  if(S.show.levels) sigsHere.forEach(s=>{
+    const lastI=s.res.exit!=null?s.res.exit:b.length-1;
+    if(s.i>=end||lastI<start) return;
+    const isSel=sel&&sel.id===s.id, isLatest=latest&&latest.id===s.id, strong=isSel||isLatest;
+    const tp=isSel?s.t3:isLatest?s.t2:s.t1;
+    const x0=Math.max(X(Math.max(s.i,start)),PL), x1=Math.min(X(Math.min(lastI,end-1))+cw/2,W-PR);
+    if(x1-x0<2) return;
+    const clip=(ya,yb)=>{ const t=Math.max(Math.min(ya,yb),PT), bt=Math.min(Math.max(ya,yb),PT+lay.price); return [t,Math.max(bt-t,0)]; };
+    const [gy,gh]=clip(Y(s.entry),Y(tp)), [ry,rh]=clip(Y(s.entry),Y(s.sl));
+    cx.globalAlpha=strong?.17:.07;
+    cx.fillStyle=C.up; cx.fillRect(x0,gy,x1-x0,gh);
+    cx.fillStyle=C.dn; cx.fillRect(x0,ry,x1-x0,rh);
+    cx.globalAlpha=1;
+    if(!isLatest) return;                        // the picked signal's lines are drawn just below
+    [["TP",tp,C.up,[5,4]],["Entry",s.entry,C.key,[]],["SL",s.sl,C.dn,[5,4]]].forEach(([lb,p,col,dash])=>{
+      const y=Math.round(Y(p))+.5; if(y<PT||y>PT+lay.price) return;
+      cx.strokeStyle=col; cx.lineWidth=1.2; cx.setLineDash(dash);
+      cx.beginPath(); cx.moveTo(x0,y); cx.lineTo(x1,y); cx.stroke(); cx.setLineDash([]);
+      cx.font="600 9px"+F; cx.textAlign="left"; cx.fillStyle=col;
+      const txt=lb+" "+px(p,u), tw=cx.measureText(txt).width, th=13*FS;
+      // inside the box when it is wide enough, otherwise just to its left; always on a dark plate
+      const tx=(x1-x0>tw+14)?x0+5:Math.max(PL+2,x0-tw-8);
+      const ty=lb==="SL"?(s.side==="BUY"?y+th-1:y-4):lb==="TP"?(s.side==="BUY"?y-4:y+th-1):y-4;
+      cx.fillStyle=C.bg; cx.globalAlpha=.82; cx.fillRect(tx-3,ty-th+3,tw+6,th); cx.globalAlpha=1;
+      cx.fillStyle=col; cx.fillText(txt,tx,ty); cx.font="10px"+F;
+    });
+  });
+
   if(sel&&S.show.levels&&inV(sel.i)){
     const x0=X(sel.i), x1=sel.res.exit!=null&&inV(sel.res.exit)?X(sel.res.exit):W-PR;
-    cx.fillStyle=C.dn; cx.globalAlpha=.09;
-    cx.fillRect(x0,Y(Math.max(sel.entry,sel.sl)),Math.max(W-PR-x0,0),Math.abs(Y(sel.sl)-Y(sel.entry)));
-    cx.fillStyle=C.up; cx.globalAlpha=.07;
-    cx.fillRect(x0,Y(Math.max(sel.entry,sel.t3)),Math.max(W-PR-x0,0),Math.abs(Y(sel.t3)-Y(sel.entry)));
-    cx.globalAlpha=1;
+    const NAMES={SL:"Stop",ENTRY:"Entry",T1:"Target 1",T2:"Target 2",T3:"Target 3"};
     [["SL",sel.sl,C.dn],["ENTRY",sel.entry,C.key],["T1",sel.t1,C.up],["T2",sel.t2,C.up],["T3",sel.t3,C.up]]
     .forEach(([lb,p,col])=>{
       const y=Math.round(Y(p))+.5;
-      cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash(lb==="ENTRY"?[]:[5,4]);
+      cx.strokeStyle=col; cx.lineWidth=S.simple?1.5:1; cx.setLineDash(lb==="ENTRY"?[]:[5,4]);
       cx.beginPath(); cx.moveTo(x0,y); cx.lineTo(x1,y); cx.stroke(); cx.setLineDash([]);
-      cx.fillStyle=col; cx.fillRect(W-PR-2,y-8,PR,16);
+      cx.fillStyle=col; cx.fillRect(W-PR-2,y-8*FS,PR+2,16*FS);
       cx.fillStyle="#fff"; cx.textAlign="left"; cx.font="600 9px"+F;
-      cx.fillText(lb+" "+px(p,u), W-PR+2, y+3); cx.font="10px"+F;
+      if(S.simple){                              // name on the line, price alone in the margin
+        cx.fillText(px(p,u), W-PR+3, y+3*FS);
+        cx.fillStyle=col; cx.fillText(NAMES[lb], Math.min(x0+6, W-PR-70*FS), y-5);
+      } else cx.fillText(lb+" "+px(p,u), W-PR+2, y+3);
+      cx.font="10px"+F;
     });
   }
 
@@ -816,8 +947,8 @@ function draw(){
     const y=Math.round(Y(lb.c))+.5;
     cx.strokeStyle=C.warn; cx.globalAlpha=.5; cx.setLineDash([2,4]); cx.lineWidth=1;
     cx.beginPath(); cx.moveTo(PL,y); cx.lineTo(W-PR,y); cx.stroke(); cx.setLineDash([]); cx.globalAlpha=1;
-    cx.fillStyle=C.warn; cx.fillRect(W-PR-2,y-8,PR,16);
-    cx.fillStyle="#000"; cx.textAlign="left"; cx.font="600 9.5px"+F; cx.fillText(px(lb.c,u), W-PR+2, y+3);
+    cx.fillStyle=C.warn; cx.fillRect(W-PR-2,y-8*FS,PR+2,16*FS);
+    cx.fillStyle="#000"; cx.textAlign="left"; cx.font="600 9.5px"+F; cx.fillText(px(lb.c,u), W-PR+3, y+3*FS);
   }
 
   /* ---- trend arrows + signal arrows --------------------------------------- */
@@ -845,12 +976,13 @@ function draw(){
     if(cw>7){                                  // tag: side + entry, on the arrow
       const tag=s.side+" "+px(s.entry,u);
       cx.font="600 9px"+F; cx.textAlign="center";
-      const tw=cx.measureText(tag).width+10, ty=up?y+8:y-21;
+      const th=13*FS, tw=cx.measureText(tag).width+10, ty=up?y+8:y-8-th;
+      const tx=Math.max(PL+tw/2, Math.min(x, W-PR-tw/2));      // keep the tag inside the chart
       cx.fillStyle=col; cx.globalAlpha=dim?.35:.95;
       cx.beginPath();
-      if(cx.roundRect) cx.roundRect(x-tw/2,ty,tw,13,3); else cx.rect(x-tw/2,ty,tw,13);
+      if(cx.roundRect) cx.roundRect(tx-tw/2,ty,tw,th,3); else cx.rect(tx-tw/2,ty,tw,th);
       cx.fill();
-      cx.fillStyle="#fff"; cx.globalAlpha=1; cx.fillText(tag,x,ty+9.5); cx.font="10px"+F;
+      cx.fillStyle="#fff"; cx.globalAlpha=1; cx.fillText(tag,tx,ty+9.5*FS); cx.font="10px"+F;
     }
     if(on){cx.fillStyle=C.key;cx.beginPath();cx.arc(x,Y(s.entry),4,0,7);cx.fill();
       cx.strokeStyle=C.bg;cx.lineWidth=1.5;cx.stroke();}
@@ -927,7 +1059,50 @@ function readout(i){
     it("Order blocks",liveOb+" live",C.fg)+it("Liquidity",openLiq+" open",C.warn);
 }
 
-function fit(){ W=document.getElementById("box").clientWidth||900; cv.style.width="100%"; draw(); }
+function fit(){
+  W=document.getElementById("box").clientWidth||900; cv.style.width="100%";
+  if(S.simple){ const phone=W<520; FS=phone?1.2:1.35; PR=phone?76:94; PB=30; }
+  else { FS=1; PR=72; PB=24; }
+  draw();
+}
+function setMode(simple){
+  S.simple=simple; store.set("sd_mode",simple?"simple":"adv");
+  document.body.classList.toggle("simple",simple);
+  S.show=simple?SIMPLE_SHOW:S.showAdv;
+  seg(document.getElementById("modeSeg"),[{l:"Simple",v:true},{l:"Advanced",v:false}],
+    it=>S.simple===it.v, it=>setMode(it.v));
+  if(S.ready){ buildChrome(); renderLive(); fit(); }
+}
+function zoomBy(f){ const b=S.bars[S.tkr]; if(!b) return;
+  view.n=Math.round(Math.max(30,Math.min(b.length,view.n*f))); draw(); }
+document.getElementById("zIn").onclick=()=>zoomBy(.72);
+document.getElementById("zOut").onclick=()=>zoomBy(1.4);
+/* Touch: slide sideways to move through the day, pinch to zoom, tap an arrow
+   to see that signal. Up-and-down swipes still scroll the page. */
+let tch=null;
+cv.addEventListener("touchstart",e=>{
+  const r=cv.getBoundingClientRect(), t=e.touches;
+  if(t.length===2) tch={pinch:Math.abs(t[0].clientX-t[1].clientX)||1, n:view.n};
+  else tch={x:t[0].clientX-r.left, y:t[0].clientY-r.top, off:view.off, moved:false};
+},{passive:true});
+cv.addEventListener("touchmove",e=>{
+  const b=S.bars[S.tkr]; if(!tch||!b) return;
+  const r=cv.getBoundingClientRect(), t=e.touches;
+  if(tch.pinch&&t.length===2){ e.preventDefault();
+    const d=Math.abs(t[0].clientX-t[1].clientX)||1;
+    view.n=Math.round(Math.max(30,Math.min(b.length,tch.n*tch.pinch/d))); draw(); return; }
+  if(tch.x==null) return;
+  const mx=t[0].clientX-r.left; if(Math.abs(mx-tch.x)>6) tch.moved=true;
+  const cw=(W-PL-PR)/view.n;
+  view.off=Math.max(0,Math.min(tch.off+Math.round((mx-tch.x)/cw), Math.max(0,b.length-view.n))); draw();
+},{passive:false});
+cv.addEventListener("touchend",()=>{
+  if(tch&&tch.x!=null&&!tch.moved){
+    const h=hits.find(h=>Math.abs(h.x-tch.x)<24&&Math.abs(h.y-tch.y)<32);
+    if(h){ S.picked=(S.sigs[S.tkr]||[]).find(s=>s.id===h.id); renderLive(); }
+  }
+  tch=null;
+});
 window.addEventListener("resize",fit);
 cv.addEventListener("mousemove",e=>{
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, b=S.bars[S.tkr]; if(!b)return;
@@ -965,10 +1140,16 @@ function buildChrome(){
     async it=>{ S.tf=it.v; S.picked=null; await refreshAll(); });
   seg(document.getElementById("stateSeg"),
     [{l:"All",v:"ALL"},{l:"Active",v:"ACTIVE"},{l:"Expired",v:"EXPIRED"}],
-    it=>S.state===it.v, it=>{S.state=it.v; renderBlotter();});
+    it=>S.state===it.v, it=>{S.state=it.v; buildChrome(); renderBlotter(); renderCards();});
   seg(document.getElementById("scopeSeg"),
     [{l:"This symbol",v:"ONE"},{l:"All",v:"ALL"}],
-    it=>S.scope===it.v, it=>{S.scope=it.v; renderBlotter();});
+    it=>S.scope===it.v, it=>{S.scope=it.v; buildChrome(); renderBlotter(); renderCards();});
+  seg(document.getElementById("cardState"),
+    [{l:"All",v:"ALL"},{l:"Active only",v:"ACTIVE"}],
+    it=>S.state===it.v||(it.v==="ALL"&&S.state==="EXPIRED"), it=>{S.state=it.v; buildChrome(); renderCards();});
+  seg(document.getElementById("cardScope"),
+    [{l:"All symbols",v:"ALL"},{l:"This symbol",v:"ONE"}],
+    it=>S.scope===it.v, it=>{S.scope=it.v; buildChrome(); renderCards();});
 
   const groups=[
     ["Overlays",[["ema9","EMA 9",C.warn],["ema21","EMA 21",C.key],["ema50","EMA 50","#8B7FD4"],
@@ -1003,12 +1184,119 @@ function renderWatch(){
       `<div class="t"><span class="s">${u.seg}${act?' <span class="badge">'+act+' live</span>':''}</span>`+
       `<span class="p ${q.chg>=0?'up':'dn'}" style="font-size:11px">`+
       `${q.chg!=null?(q.chg>=0?"+":"")+q.chg.toFixed(2)+"%":""}</span></div>`;
-    b.onclick=async()=>{
-      S.tkr=u.tkr; S.picked=null; view.off=0;
-      if(!S.bars[u.tkr]){ try{ await loadCandles(u.tkr); recompute(u.tkr);}catch(e){} }
-      renderAll(); openChain(u.tkr);
-    };
+    b.onclick=()=>selectSym(u.tkr);
     el.appendChild(b);
+  });
+}
+/* Open one option contract (a call or a put) as its own live chart with signals. */
+function openOption(parentTkr, sym, strike, ty){
+  const p=uni(parentTkr);
+  if(!S.universe.some(u=>u.tkr===sym))
+    S.universe.push({ tkr:sym, sym:`${(p.sym||parentTkr)} ${strike} ${ty==="CE"?"CALL":"PUT"}`, seg:"OPT", step:0,
+      lot:p.lot, lotFromFeed:p.lotFromFeed, fo:false, open:p.open, close:p.close, parent:parentTkr, ty });
+  document.getElementById("ovl").classList.remove("open");
+  return selectSym(sym);
+}
+/* "Call" / "Put" jump straight to the at-the-money contract of the nearest
+   expiry; other strikes are picked from the option chain. */
+async function openAtm(ty){
+  const cur=uni(S.tkr), base=cur.seg==="OPT"?cur.parent:S.tkr;
+  setConn("ok","Finding the "+(ty==="CE"?"call":"put")+"…");
+  try{
+    const d=await api("/api/chain?tkr="+encodeURIComponent(base));
+    const row=d.rows.slice().sort((a,b)=>Math.abs(a.strike-d.spot)-Math.abs(b.strike-d.spot))[0];
+    const leg=row&&(ty==="CE"?row.ce:row.pe);
+    if(!leg||!leg.sym) throw new Error("no contract found");
+    await openOption(base, leg.sym, row.strike, ty);
+    setConn("ok", liveLabel());
+  }catch(e){ setConn("err","No "+(ty==="CE"?"call":"put")+" option available"); setTimeout(()=>S.ready&&setConn("ok",liveLabel()),4000); }
+}
+function renderOptSeg(){
+  const el=document.getElementById("optSeg"), cur=uni(S.tkr), base=cur.seg==="OPT"?uni(cur.parent):cur;
+  el.hidden=!(base&&base.fo);
+  if(el.hidden) return;
+  const now=cur.seg==="OPT"?cur.ty:"U";
+  seg(el,[{l:base.seg==="MCX"?"Future":base.seg==="IDX"?"Index":"Stock",v:"U"},{l:"Call",v:"CE"},{l:"Put",v:"PE"}],
+    it=>it.v===now, it=>{ if(it.v===now) return; it.v==="U"?selectSym(base.tkr):openAtm(it.v); });
+}
+async function selectSym(tkr){
+  S.tkr=tkr; S.picked=null; view.off=0;
+  if(!S.bars[tkr]){ try{ await loadCandles(tkr); recompute(tkr);}catch(e){} }
+  renderAll();
+}
+
+/* Simple view: one dropdown for the symbol and a large live price. */
+const SEG_NAMES={IDX:"Indices",MCX:"Commodities (MCX)",EQ:"Stocks",GLB:"Global commodities",OPT:"Options you opened"};
+function renderHead(){
+  const sel=document.getElementById("symSel");
+  const sig=S.universe.map(u=>u.tkr+u.sym).join("|");
+  if(sel.dataset.sig!==sig){
+    sel.dataset.sig=sig; sel.innerHTML="";
+    const groups={};
+    S.universe.forEach(u=>(groups[u.seg]=groups[u.seg]||[]).push(u));
+    Object.keys(groups).forEach(g=>{
+      const og=document.createElement("optgroup"); og.label=SEG_NAMES[g]||g;
+      groups[g].forEach(u=>{ const o=document.createElement("option"); o.value=u.tkr; o.textContent=u.sym; og.appendChild(o); });
+      sel.appendChild(og);
+    });
+    sel.onchange=()=>selectSym(sel.value);
+  }
+  if(document.activeElement!==sel) sel.value=S.tkr;
+  const u=uni(S.tkr), q=S.quotes[S.tkr]||{}, b=S.bars[S.tkr];
+  const last=q.ltp!=null?q.ltp:(b&&b.length?b[b.length-1].c:null);
+  document.getElementById("bigPx").textContent=last==null?"—":px(last,u);
+  const ce=document.getElementById("bigChg");
+  ce.textContent=q.chg!=null?(q.chg>=0?"+":"")+q.chg.toFixed(2)+"%":"";
+  ce.className="m "+(q.chg>=0?"up":"dn");
+  const cb=document.getElementById("chainBtn"), base=u.seg==="OPT"?uni(u.parent):u;
+  cb.hidden=!base.fo; cb.textContent=S.simple?"More strikes":"Option chain";
+  renderOptSeg();
+}
+
+/* Simple view: each signal as a card with its five price levels. */
+function renderCards(){
+  if(!S.simple) return;
+  const el=document.getElementById("cards");
+  const r=rows().sort((a,b)=>(a.res.state==="ACTIVE"?0:1)-(b.res.state==="ACTIVE"?0:1)||b.ts-a.ts);
+  document.getElementById("cardsTitle").textContent="Signals today ("+r.length+")";
+  // Show every active signal plus the latest few closed ones; the rest sit behind a button.
+  const total=r.length, act=r.filter(s=>s.res.state==="ACTIVE").length, cap=Math.max(act+4,6);
+  const cut=!S.cardsAll&&total>cap; if(cut) r.length=cap;
+  if(!r.length){
+    el.innerHTML=`<div class="empty" style="font-size:15px;grid-column:1/-1">No ${S.state==="ACTIVE"?"active ":""}signals `+
+      `${S.scope==="ONE"?"for "+esc(uni(S.tkr).sym||"this symbol"):"yet"} today. `+
+      `A signal appears only when a setup is confirmed, so a quiet market shows none.</div>`;
+    return;
+  }
+  el.innerHTML=r.map(s=>{
+    const u=uni(s.tkr), col=s.side==="BUY"?C.up:C.dn, t=tone(s.res), on=S.picked&&S.picked.id===s.id&&S.picked.tkr===s.tkr;
+    const lv=(k,v,c)=>`<div><span>${k}</span><b style="color:${c}">${v}</b></div>`;
+    const tg=n=>s.res.hit>=n?C.up:C.fg;
+    const o=s.opt;
+    return `<button class="card${on?" on":""}" data-id="${s.id}" data-tkr="${s.tkr}">
+      <div class="c1"><span class="sd" style="background:${col}">${s.side}</span>
+        <span class="nm">${esc(s.sym)}</span>
+        <span class="st" style="color:${t};border-color:${t}">${s.res.state==="ACTIVE"?"Active":"Closed"}</span></div>
+      <div class="c2">${hhmm(s.ts)} IST · ${ago(s.ts)} · ${esc(s.res.status)}</div>
+      <div class="lvls">${lv("Entry",px(s.entry,u),C.key)}${lv("Stop",px(s.sl,u),C.dn)}
+        ${lv("Target 1",px(s.t1,u),tg(1))}${lv("Target 2",px(s.t2,u),tg(2))}${lv("Target 3",px(s.t3,u),tg(3))}</div>
+      ${o?`<div class="opt">Option to buy: <b style="color:${col}">${o.ty==="CE"?"CALL":"PUT"}</b> · ${esc(s.tkr)} ${o.strike} ${o.ty}</div>`:""}
+      ${on?`<div class="more">Result so far: <b style="color:${s.res.R>=0?C.up:C.dn}">${(s.res.R>=0?"+":"")+s.res.R.toFixed(2)}R</b>
+        (1R is the distance from entry to stop) · Confidence ${s.conf}/100`+
+        (o?`<br>Option premium about ₹${nf(o.entry,1)}${o.live?"":" (estimate — open the option's own chart for the live price)"}`:"")+`</div>`:""}
+    </button>`;
+  }).join("")+(cut?`<button class="btn" id="moreCards" style="grid-column:1/-1;justify-self:center">Show all ${total} signals</button>`
+    :(S.cardsAll&&total>cap?`<button class="btn" id="moreCards" style="grid-column:1/-1;justify-self:center">Show fewer</button>`:""));
+  const mc=document.getElementById("moreCards"); if(mc) mc.onclick=()=>{ S.cardsAll=!S.cardsAll; renderCards(); };
+  el.querySelectorAll(".card").forEach(c=>c.onclick=async()=>{
+    const same=S.picked&&S.picked.id===c.dataset.id&&S.picked.tkr===c.dataset.tkr;
+    if(c.dataset.tkr!==S.tkr){ S.tkr=c.dataset.tkr; view.off=0;
+      if(!S.bars[S.tkr]){try{await loadCandles(S.tkr);recompute(S.tkr);}catch(e){}} }
+    S.picked=same?null:(S.sigs[c.dataset.tkr]||[]).find(s=>s.id===c.dataset.id);
+    if(S.picked){ const b=S.bars[S.tkr]; view.off=0;            // bring the signal's candle into view
+      if(b&&b.length-S.picked.i>view.n-8) view.n=Math.min(b.length,b.length-S.picked.i+25); }
+    renderAll();
+    if(!same) document.getElementById("box").scrollIntoView({behavior:"smooth",block:"nearest"});
   });
 }
 
@@ -1114,6 +1402,12 @@ function renderPerf(){
     `net results will be lower. A hit rate near 40% is normal at 1:3 R:R and can still be profitable.`+
     (S.feed&&S.feed.delayed?` <b style="color:${C.warn}">Candles are delayed ${esc(S.feed.delayNote||"")}</b> — `+
       `signal times are candle times, not the moment you could have traded. The option chain is live.`:"");
+  document.getElementById("simplePerf").innerHTML=
+    `Across all symbols today: <b style="color:${C.fg}">${all.length}</b> signals, `+
+    `<b style="color:${C.warn}">${act}</b> still active`+(done.length?`, ${wins} of ${done.length} closed ones ended in profit`:"")+`. `+
+    `Tap a card to draw its entry, stop and targets on the chart. `+
+    (S.feed&&S.feed.delayed?`Prices are delayed ${esc(S.feed.delayNote||"")}.`:`Prices are live.`)+
+    ` Costs and slippage are not included.`;
 }
 
 /* ---------------------------------------------------------- option chain -- */
@@ -1188,25 +1482,28 @@ function drawChain(d){
       <td${ci}><span class="oib c" style="width:${r.ce.oi/maxCe*100}%"></span>${z(kf(r.ce.oi))}</td>
       <td${ci}>${sg(r.ce.chgOi)}</td><td${ci}>${z(kf(r.ce.vol),C.mid)}</td>
       <td${ci}>${z(r.ce.iv?(r.ce.iv*100).toFixed(1):"—",C.mid)}</td>
-      <td${ci}>${z(nf(r.ce.ltp))}</td>
+      <td${ci}>${r.ce.sym?`<button class="pick z" data-s="${esc(r.ce.sym)}" data-k="${r.strike}" data-t="CE">${nf(r.ce.ltp)}</button>`:z(nf(r.ce.ltp))}</td>
       <td${ci}>${z((r.ce.chg>=0?"+":"")+nf(r.ce.chg), r.ce.chg>=0?C.up:C.dn)}</td>
       <td class="k">${r.strike}</td>
       <td${pi}>${z((r.pe.chg>=0?"+":"")+nf(r.pe.chg), r.pe.chg>=0?C.up:C.dn)}</td>
-      <td${pi}>${z(nf(r.pe.ltp))}</td>
+      <td${pi}>${r.pe.sym?`<button class="pick z" data-s="${esc(r.pe.sym)}" data-k="${r.strike}" data-t="PE">${nf(r.pe.ltp)}</button>`:z(nf(r.pe.ltp))}</td>
       <td${pi}>${z(r.pe.iv?(r.pe.iv*100).toFixed(1):"—",C.mid)}</td>
       <td${pi}>${z(kf(r.pe.vol),C.mid)}</td><td${pi}>${sg(r.pe.chgOi)}</td>
       <td${pi}><span class="oib p" style="width:${r.pe.oi/maxPe*100}%"></span>${z(kf(r.pe.oi))}</td></tr>`;
   });
   document.getElementById("ocBody").innerHTML=html;
+  document.getElementById("ocBody").querySelectorAll("button.pick").forEach(bt=>
+    bt.onclick=()=>openOption(d.tkr, bt.dataset.s, +bt.dataset.k, bt.dataset.t));
   document.getElementById("ocNote").textContent=
-    "LTP, open interest, volume and IV come from NSE's own published chain. "+
+"Tap any call or put price to open that contract's own live chart and signals. "+
+    "LTP, open interest and volume are live from your Fyers feed; IV is worked out from each premium where the feed leaves it blank. "+
     "ITM strikes are tinted, the ATM row highlighted, and the strike your current signal recommends is outlined.";
 }
 
 /* ------------------------------------------------------------------ boot -- */
 function renderLive(){
   document.getElementById("clock").textContent=new Date().toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour12:false})+" IST";
-  renderWatch(); renderSide(); renderBlotter(); renderPerf(); draw();
+  renderHead(); renderWatch(); renderSide(); renderBlotter(); renderCards(); renderPerf(); draw();
 }
 function renderAll(){
   const u=uni(S.tkr);
@@ -1215,7 +1512,7 @@ function renderAll(){
     [S.tf+"m", u.seg, u.lot?"lot "+u.lot+(u.lotFromFeed?"":" (check with broker)"):null, u.step?"strike step "+u.step:null].filter(Boolean).join(" · ");
   buildChrome(); renderLive(); fit();
 }
-document.getElementById("chainBtn").onclick=()=>openChain(S.tkr);
+document.getElementById("chainBtn").onclick=()=>{ const u=uni(S.tkr); openChain(u.seg==="OPT"?u.parent:S.tkr); };
 document.getElementById("cfgBtn").onclick=()=>showSetup("");
 document.getElementById("refreshBtn").onclick=()=>refreshAll().catch(e=>setConn("err","Feed error"));
 document.getElementById("apiSave").onclick=()=>{
@@ -1224,6 +1521,7 @@ document.getElementById("apiSave").onclick=()=>{
 };
 setInterval(()=>{ if(S.ready) document.getElementById("clock").textContent=
   new Date().toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour12:false})+" IST"; },1000);
+setMode(S.simple);
 boot();
 </script>
 </body>
