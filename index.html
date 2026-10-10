@@ -6,17 +6,32 @@
 <title>Signal Desk</title>
 <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
 <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-<meta name="theme-color" content="#161B23" />
+<meta name="theme-color" content="#0B1220" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<script>try{ if(localStorage.getItem("sd_theme")==="light") document.documentElement.dataset.theme="light"; }catch(e){}</script>
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-title" content="Signal Desk" />
 <style>
+/* Layout: a sticky header and menu over one centred column of cards.
+   Night desk is the default palette; Day desk is the light one. */
 :root{
-  --bg:#0F1319; --panel:#161B23; --line:#252C37;
-  --fg:#E4E9F0; --mid:#A3ADBA; --low:#7F8A9A;
-  --up:#26A96C; --dn:#E05A47; --key:#4C9AFF; --warn:#E8B44A;
-  --m:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
-  --s:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --bg:#0B1220; --panel:#121B2E; --panel2:#19243B; --line:#243250;
+  --fg:#E9EEF8; --mid:#A7B3C9; --low:#7D8AA5;
+  --up:#1FB889; --dn:#F0616D; --key:#5B8DEF; --warn:#F2B441; --violet:#A08BF0; --onwarn:#1A1203;
+  --shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 10px 28px -18px rgba(0,0,0,.8);
+  --m:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --s:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color-scheme:dark;
+}
+:root[data-theme="light"]{
+  --bg:#F3F6FB; --panel:#FFFFFF; --panel2:#EDF2FA; --line:#D9E1EE;
+  --fg:#142033; --mid:#4E5D78; --low:#75839B;
+  --up:#0C9A6B; --dn:#D5334A; --key:#2C64DB; --warn:#B36B00; --violet:#6D4FD8; --onwarn:#FFFFFF;
+  --shadow:0 1px 2px rgba(20,32,51,.06), 0 12px 28px -20px rgba(20,32,51,.35);
+  color-scheme:light;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 [hidden]{display:none!important}
@@ -55,8 +70,8 @@ header h1{font-size:15px;font-weight:600;letter-spacing:.02em}
 /* watchlist */
 .wr{display:block;width:100%;text-align:left;padding:9px 14px;border-bottom:1px solid var(--line);
   border-left:2px solid transparent}
-.wr:hover{background:#1B212B}
-.wr.on{background:#1B212B;border-left-color:var(--key)}
+.wr:hover{background:var(--panel2)}
+.wr.on{background:var(--panel2);border-left-color:var(--key)}
 .wr .t{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .wr .n{font-size:12.5px;font-weight:500}
 .wr .p{font:12px var(--m)}
@@ -84,7 +99,7 @@ header h1{font-size:15px;font-weight:600;letter-spacing:.02em}
   box-shadow:0 8px 28px rgba(0,0,0,.5)}
 .pop label{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:4px;
   font-size:12px;cursor:pointer}
-.pop label:hover{background:#1B212B}
+.pop label:hover{background:var(--panel2)}
 .pop hr{border:none;border-top:1px solid var(--line);margin:6px 0}
 .sw{width:9px;height:9px;border-radius:2px;flex:none}
 
@@ -107,8 +122,8 @@ table.b th{position:sticky;top:0;background:var(--panel);color:var(--low);text-a
   border-bottom:1px solid var(--line);white-space:nowrap;z-index:2}
 table.b td{padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
 table.b tr{cursor:pointer}
-table.b tr:hover td{background:#1B212B}
-table.b tr.on td{background:rgba(76,154,255,.10)}
+table.b tr:hover td{background:var(--panel2)}
+table.b tr.on td{background:color-mix(in srgb,var(--key) 12%,transparent)}
 
 /* option chain */
 .ovl{position:fixed;inset:0;z-index:60;background:rgba(8,10,14,.8);display:none;
@@ -126,12 +141,12 @@ table.oct th{position:sticky;top:0;background:var(--panel);color:var(--low);
   font:500 9.5px var(--s);letter-spacing:.07em;text-transform:uppercase;
   padding:7px 9px;text-align:right;border-bottom:1px solid var(--line);z-index:2}
 table.oct th.c{text-align:center}
-table.oct td{padding:5px 9px;text-align:right;border-bottom:1px solid #1C222B;position:relative}
-td.itm{background:rgba(232,180,74,.06)}
+table.oct td{padding:5px 9px;text-align:right;border-bottom:1px solid var(--line);position:relative}
+td.itm{background:color-mix(in srgb,var(--warn) 8%,transparent)}
 td.k{text-align:center;font-weight:600;background:var(--panel);
   border-left:1px solid var(--line);border-right:1px solid var(--line)}
-tr.atm td{background:rgba(76,154,255,.12)}
-tr.atm td.k{background:rgba(76,154,255,.22);color:var(--key)}
+tr.atm td{background:color-mix(in srgb,var(--key) 12%,transparent)}
+tr.atm td.k{background:color-mix(in srgb,var(--key) 24%,transparent);color:var(--key)}
 tr.reco td.k{box-shadow:inset 0 0 0 1.5px var(--warn)}
 .oib{position:absolute;top:0;bottom:0;opacity:.14;pointer-events:none}
 .oib.c{right:0;background:var(--dn)}.oib.p{left:0;background:var(--up)}
@@ -150,18 +165,63 @@ tr.reco td.k{box-shadow:inset 0 0 0 1.5px var(--warn)}
   color:var(--fg);border:1px solid var(--line);border-radius:6px}
 .empty{padding:28px;text-align:center;color:var(--low);font-size:12.5px}
 .note{padding:10px 16px;font-size:11.5px;line-height:1.7;color:var(--mid);border-top:1px solid var(--line)}
-.risk{padding:7px 16px;background:rgba(224,90,71,.1);border-bottom:1px solid var(--line);
-  font:11.5px var(--m);color:#F0A498}
-.risk b{color:var(--dn)}
+.risk{padding:7px 16px;background:color-mix(in srgb,var(--warn) 9%,var(--bg));border-bottom:1px solid var(--line);
+  font:13px var(--s);color:var(--mid);text-align:center}
+.risk b{color:var(--warn)}
+
+/* ---------- theme: surfaces, type, controls ---------- */
+body{font-family:var(--s);-webkit-font-smoothing:antialiased;
+  background:radial-gradient(1200px 520px at 12% -180px,color-mix(in srgb,var(--key) 13%,transparent),transparent 70%),var(--bg);
+  background-attachment:fixed}
+header{position:sticky;top:0;z-index:40;border-bottom:none;padding:12px 18px;
+  background:color-mix(in srgb,var(--panel) 88%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit}
+.brand svg{width:30px;height:30px;flex:none}
+header h1{font-size:18px;font-weight:700;letter-spacing:-.01em}
+body.simple header h1{font-size:19px}
+.pill{border-radius:999px;background:var(--bg)}
+.btn{border-radius:10px;font-weight:500;transition:border-color .15s,background .15s,color .15s}
+.btn:hover{background:var(--panel2)}
+.btn.pri{box-shadow:0 8px 20px -10px var(--key)}
+.btn.pri:hover{background:color-mix(in srgb,var(--key) 88%,#000)}
+.seg{border-radius:10px;background:var(--bg)}
+.seg button{transition:background .15s,color .15s;font-family:var(--s);font-weight:500}
+.seg button:hover:not(.on){color:var(--fg);background:var(--panel2)}
+.symsel{border-radius:10px}
+.tile,.trade,.card,.stat,.hsig,.leg,.read,.cmp>div,#payoffWrap,#payoffWrap2,.oc{border-radius:14px;box-shadow:var(--shadow)}
+.tile,.trade,.card,.hsig{transition:transform .15s,border-color .15s}
+.tile:hover,.trade:hover,.card:hover{transform:translateY(-2px)}
+.page h2{font-size:24px;font-weight:700;letter-spacing:-.02em}
+.page h3{font-weight:700;letter-spacing:-.01em}
+.trade .nm,.card .nm{letter-spacing:-.01em}
+.presets button{font-family:var(--s)}
+.hero{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin:16px 0 4px}
+.hero>div{border-radius:14px;padding:14px 16px;border:1px solid var(--line);box-shadow:var(--shadow);
+  background:linear-gradient(140deg,color-mix(in srgb,var(--key) 10%,var(--panel)),var(--panel) 62%)}
+.hero span{display:block;font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--low)}
+.hero b{display:block;font:600 26px var(--m);margin-top:4px}
+.hero small{display:block;font-size:13px;color:var(--mid);margin-top:2px}
+.tile .c .chg{padding:1px 7px;border-radius:6px;font-weight:500}
+.tile .c .chg.up{background:color-mix(in srgb,var(--up) 14%,transparent)}
+.tile .c .chg.dn{background:color-mix(in srgb,var(--dn) 14%,transparent)}
+.mid-msg{padding:56px 20px 40px}
+.mid-msg .logo{width:68px;height:68px;margin:0 auto 18px;display:block}
+.mid-msg h2{font-size:30px;font-weight:700;letter-spacing:-.02em}
+.feats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));max-width:860px;margin:30px auto 0;text-align:left}
+.feats div{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow)}
+.feats b{display:block;font-size:15.5px;color:var(--fg);margin-bottom:4px}
+.feats span{font-size:14px;color:var(--mid);line-height:1.55}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 
 /* ---------- app shell: menu and pages ---------- */
-.nav{display:flex;gap:2px;padding:0 10px;background:var(--panel);border-bottom:1px solid var(--line);
+.nav{display:flex;gap:6px;padding:0 14px 10px;border-bottom:1px solid var(--line);position:sticky;top:58px;z-index:39;
+  background:color-mix(in srgb,var(--panel) 88%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   overflow-x:auto;scrollbar-width:none}
 .nav::-webkit-scrollbar{display:none}
-.nav button{padding:13px 16px;font:500 15.5px var(--s);color:var(--mid);white-space:nowrap;
-  border-bottom:3px solid transparent}
-.nav button:hover{color:var(--fg)}
-.nav button.on{color:var(--fg);border-bottom-color:var(--key)}
+.nav button{padding:9px 15px;font:500 15px var(--s);color:var(--mid);white-space:nowrap;border-radius:999px;
+  transition:background .15s,color .15s}
+.nav button:hover{color:var(--fg);background:var(--panel2)}
+.nav button.on{color:#fff;background:var(--key)}
 .page{font-size:16px;max-width:1180px;margin:0 auto;padding:20px 16px 48px}
 .page h2{font-size:21px;font-weight:600}
 .page h3{font-size:17px;font-weight:600;margin:26px 0 10px}
@@ -173,6 +233,19 @@ tr.reco td.k{box-shadow:inset 0 0 0 1.5px var(--warn)}
 .tile .p{font:600 19px var(--m);margin-top:3px}
 .tile .c{font:14px var(--m);margin-top:1px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .tile .sg{padding:1px 7px;border-radius:4px;font:700 11px var(--s);color:#fff}
+.tblw{overflow-x:auto}
+table.rt{width:100%;min-width:560px;font:15px var(--m);font-variant-numeric:tabular-nums}
+table.rt th{text-align:right;font:500 12px var(--s);letter-spacing:.06em;text-transform:uppercase;color:var(--low);
+  padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.rt td{text-align:right;padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.rt th:first-child,table.rt td:first-child{text-align:left;font-family:var(--s)}
+.cmp{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));margin-top:14px}
+.cmp>div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.cmp>div.on{border-color:var(--key);box-shadow:0 0 0 1px var(--key)}
+.cmp h4{font:600 16px var(--s);margin-bottom:10px}
+.cmp .g{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.cmp .g div>span{display:block;font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--low)}
+.cmp .g b{font:600 18px var(--m)}
 .trades{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(min(100%,500px),1fr));align-items:start}
 .trade{display:block;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);
   border-left:5px solid var(--low);border-radius:10px;padding:14px 16px;min-width:0}
@@ -183,12 +256,36 @@ tr.reco td.k{box-shadow:inset 0 0 0 1.5px var(--warn)}
 .trade .nm{font-size:19px;font-weight:700}
 .trade .st{margin-left:auto;padding:3px 11px;border-radius:20px;font:700 12.5px var(--s);border:1px solid;letter-spacing:.04em}
 .trade .tr2{font-size:14px;color:var(--mid);margin:5px 0 12px}
-.trade .trl{display:grid;grid-template-columns:repeat(4,auto);gap:10px 18px;justify-content:start}
+.trade .trl{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,auto));gap:10px 18px;justify-content:start}
 .trade .trl div>span{display:block;font-size:12px;color:var(--low);letter-spacing:.05em;text-transform:uppercase}
 .trade .trl b{font:600 17px var(--m);font-variant-numeric:tabular-nums;white-space:nowrap}
 .trade .trs{margin-top:12px;padding:10px 12px;border-radius:8px;font-size:15.5px;line-height:1.5;font-weight:500}
 @media(max-width:560px){.trade .trl{grid-template-columns:1fr 1fr;justify-content:stretch}
   .trade .trl div{min-width:0}.trade .trl b{white-space:normal;font-size:16px}.trade .nm{font-size:17.5px}}
+.seg.tabs{display:inline-flex;border-radius:12px;margin-top:18px}
+.seg.tabs button{padding:11px 20px;font:600 15.5px var(--s);min-height:46px}
+.trade{cursor:default}
+.trade .chip{padding:3px 10px;border-radius:6px;font:700 13.5px var(--m);color:#fff}
+.trade .chip.ghost{background:none;color:var(--key);border:1px solid var(--key);font:700 11px var(--s);letter-spacing:.06em}
+.nowrow{display:flex;align-items:flex-end;gap:10px 18px;flex-wrap:wrap;margin-bottom:14px}
+.nowrow .lbl{display:block;font-size:12px;color:var(--low);letter-spacing:.05em;text-transform:uppercase}
+.nowrow .big{font:600 30px var(--m);font-variant-numeric:tabular-nums;line-height:1.1}
+.nowrow .pc{font:600 16px var(--m);margin-left:8px}
+.nowrow .mv{font-size:14.5px;font-weight:600;padding-bottom:4px}
+.nowrow .mv .ar{margin-right:6px}
+.spark{width:96px;height:30px;margin-left:auto;flex:none}
+.track{position:relative;height:40px;margin:16px 8px 2px}
+.track u{position:absolute;left:0;right:0;top:7px;height:4px;border-radius:2px;background:var(--line)}
+.track s{position:absolute;top:7px;height:4px;border-radius:2px;opacity:.85}
+.track i{position:absolute;top:2px;width:2px;height:14px;margin-left:-1px;border-radius:1px}
+.track em{position:absolute;top:21px;transform:translateX(-50%);font:600 11px var(--s);font-style:normal;color:var(--low);letter-spacing:.03em}
+.track b{position:absolute;top:1px;width:16px;height:16px;margin-left:-8px;border-radius:50%;border:3px solid var(--panel);box-shadow:0 0 0 1px var(--line)}
+.trade .ent{margin-top:10px;padding:10px 12px;border-radius:8px;border:1px dashed var(--line);font-size:15px;line-height:1.55;color:var(--mid)}
+.trade .ent b{color:var(--fg)}
+.trade .ent.on{border-style:solid;border-color:var(--key)}
+.trade .ent .trl b{font-size:16px}
+.trade .tra{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.trade .tra .btn{font-size:14.5px;min-height:42px;padding:8px 14px}
 .hsig{display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;width:100%;text-align:left;background:var(--panel);
   border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px;font-size:15px}
 .hsig:hover{border-color:var(--mid)}
@@ -243,7 +340,7 @@ tr.reco td.k{box-shadow:inset 0 0 0 1.5px var(--warn)}
   .leg .lots{grid-area:2/1/3/3}.leg .pr{grid-area:2/3/3/5;text-align:left}
   .leg .lots::placeholder{color:var(--low)}
   .tiles{grid-template-columns:repeat(2,1fr)}
-  .nav button{padding:12px 13px;font-size:15px}
+  .nav button{padding:8px 13px;font-size:14.5px}
 }
 
 /* ---------- simple view (the default): fewer things, bigger type ---------- */
@@ -304,22 +401,24 @@ button.pick:hover{background:var(--key);color:#fff;text-decoration:none}
 <body>
 
 <header>
-  <h1>Signal Desk</h1>
+  <a class="brand" href="/" aria-label="Signal Desk home"><svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="120" fill="var(--key)"/><path d="M104 348l88-100 72 58 124-166" fill="none" stroke="#fff" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/><circle cx="388" cy="140" r="36" fill="var(--warn)"/></svg><h1>Signal Desk</h1></a>
   <span class="pill" id="conn"><span class="led" id="led"></span><span id="connTxt">Connecting…</span></span>
   <span class="pill m" id="clock">--:--:--</span>
   <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
     <div class="seg" id="modeSeg" aria-label="View"></div>
     <button class="btn adv" id="cfgBtn">Feed settings</button>
+    <button class="btn" id="themeBtn" title="Switch between dark and light">Light</button>
     <button class="btn" id="refreshBtn">Refresh</button>
     <button class="btn" id="logoutBtn" hidden>Log out</button>
   </div>
 </header>
 <nav class="nav" id="nav" hidden aria-label="Pages"></nav>
 
-<div class="risk"><b>Not risk-free.</b>&nbsp;Signals are algorithmic outputs, not advice. Every one can lose. Size so a stop-out is survivable.</div>
+<div class="risk"><b>Not risk-free.</b> Signals are worked out by rules, not advice, and any of them can lose.</div>
 
 <div id="setup" style="display:none">
   <div class="mid-msg">
+    <svg class="logo" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="120" fill="var(--key)"/><path d="M104 348l88-100 72 58 124-166" fill="none" stroke="#fff" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/><circle cx="388" cy="140" r="36" fill="var(--warn)"/></svg>
     <h2 id="setupTitle">Waiting for the market data feed</h2>
     <p id="setupText"></p>
     <div class="field"><a class="btn pri" id="loginBtn" href="/auth/login" hidden
@@ -328,17 +427,39 @@ button.pick:hover{background:var(--key);color:#fff;text-decoration:none}
       <input id="apiInput" value="http://localhost:8787" spellcheck="false" aria-label="Server address" />
       <button class="btn pri" id="apiSave">Try again</button>
     </div>
-    <p style="margin-top:20px;font-size:12.5px" id="setupErr"></p>
+    <p style="margin-top:20px;font-size:14px" id="setupErr"></p>
+    <div class="feats" id="feats">
+      <div><b>Live option signals</b><span>Buy price, stop loss and three targets for each signal, followed live with a safe-exit price.</span></div>
+      <div><b>Charts and option chain</b><span>Real-time charts, open interest and option chains for indices, stocks and MCX.</span></div>
+      <div><b>Honest results</b><span>Every past signal counted, wins and losses, so you can judge before trading.</span></div>
+    </div>
   </div>
 </div>
 
 <section class="page" id="homePage" hidden>
   <h2>Live option signals</h2>
   <div class="sub" id="homeSub"></div>
-  <h3 id="homeSigTitle">Live signals</h3>
+  <div class="hero" id="hero"></div>
+  <div class="seg tabs" id="strictHome" aria-label="Which signals to show"></div>
+  <h3 id="homeSigTitle" style="margin-top:14px">Live signals</h3>
+  <div class="sub" id="homeTabNote" style="margin:-4px 0 12px"></div>
   <div id="homeSigs" class="trades"></div>
   <div class="sub" id="homeSigNote" style="margin-top:10px"></div>
   <div id="homeGrid"></div>
+</section>
+
+<section class="page" id="resPage" hidden>
+  <div class="bar-row"><h2 style="margin-right:auto">Results</h2><div class="seg" id="strictRes" aria-label="Signal filter"></div></div>
+  <div class="sub" id="resSub"></div>
+  <div class="read" id="resVerdict"></div>
+  <div id="resCompare"></div>
+  <h3>Running total</h3>
+  <div id="payoffWrap2" style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 8px 4px"><svg id="resCurve" viewBox="0 0 800 260" role="img" aria-label="Running total of results" style="display:block;width:100%;height:auto"></svg></div>
+  <h3>By instrument</h3>
+  <div class="tblw"><table class="rt" id="resBySym"></table></div>
+  <h3>By day</h3>
+  <div class="tblw"><table class="rt" id="resByDay"></table></div>
+  <div class="read" id="resNote" style="color:var(--mid);font-size:14.5px"></div>
 </section>
 
 <section class="page" id="stratPage" hidden>
@@ -439,8 +560,11 @@ button.pick:hover{background:var(--key);color:#fff;text-decoration:none}
    ========================================================================= */
 
 const C = {};
-["bg","panel","line","fg","mid","low","up","dn","key","warn"].forEach(k=>
-  C[k]=getComputedStyle(document.documentElement).getPropertyValue("--"+k).trim());
+function readColors(){
+  const cs=getComputedStyle(document.documentElement);
+  ["bg","panel","panel2","line","fg","mid","low","up","dn","key","warn","violet","onwarn"].forEach(k=>C[k]=cs.getPropertyValue("--"+k).trim());
+}
+readColors();
 
 const TF = [3,5,15,30,60];
 const RF = 0.065;                 // risk-free rate for option pricing
@@ -458,6 +582,7 @@ const S = {
   tf: 5, tkr: null, picked: null, scope:"ALL", state:"ALL",
   simple: store.get("sd_mode","simple")!=="adv",
   page: store.get("sd_page","home"), legs: [], preset: "Buy call",
+  strict: store.get("sd_strict","1")==="1",
   universe: [], bars:{}, quotes:{}, sigs:{}, ind:{}, struct:{},
   ready:false, lastErr:null, feed:null,
   show:{ ema9:true, ema21:true, ema50:true, vwap:true, st:true, bb:false,
@@ -521,7 +646,7 @@ function liveLabel(){
 }
 function showSetup(msg, login){
   const lb=document.getElementById("loginBtn"); lb.hidden=!login; if(login) lb.href=S.api+login;
-  ["homePage","stratPage"].forEach(id=>document.getElementById(id).hidden=true);
+  ["homePage","stratPage","resPage"].forEach(id=>document.getElementById(id).hidden=true);
   document.getElementById("shell").style.display="none";
   document.getElementById("ovl").classList.remove("open","page");
   document.getElementById("nav").hidden=true;
@@ -531,6 +656,7 @@ function showSetup(msg, login){
   document.getElementById("setupText").textContent=login
     ?"Live charts, buy and sell signals, option chain, open interest and a strategy builder for NSE and MCX. Log in with your Fyers account to load live prices. The login is used only to read prices; this site cannot place orders."
     :"The server could not start the live feed. The reason is shown below.";
+  document.getElementById("feats").hidden=!login;
   document.getElementById("setup").style.display="";
   document.getElementById("setupErr").textContent = msg||"";
   document.getElementById("apiInput").value = S.api;
@@ -643,7 +769,7 @@ function boll(v,p,k){p=p||20;k=k||2;const m=sma(v,p),u=Array(v.length).fill(null
 
 function indicators(b){
   const c=b.map(x=>x.c), vw=vwap(b);
-  return { e9:ema(c,9), e21:ema(c,21), e50:ema(c,50), vwap:vw.mid, vwUp:vw.up, vwDn:vw.dn,
+  return { e9:ema(c,9), e21:ema(c,21), e50:ema(c,50), e63:ema(c,63), vwap:vw.mid, vwUp:vw.up, vwDn:vw.dn,
     rsi:rsi(c,14), atr:atr(b,14), macd:macd(c), st:supertrend(b), adx:adx(b), bb:boll(c,20,2),
     volMA:b.map((_,i)=> i<20?null:b.slice(i-19,i+1).reduce((s,x)=>s+(x.v||0),0)/20) };
 }
@@ -780,16 +906,21 @@ function trendMarks(b,ind){
   return out;
 }
 
-function engine(u, b, ind, str){
+/* opt.strict  — only signals where the bigger trend, trend strength and timing all agree
+   opt.all     — every day in the loaded history, for the Results page (default: today only)
+   opt.lite    — skip the option estimate */
+function engine(u, b, ind, str, opt){
+  opt=Object.assign({strict:false, all:false, lite:false}, opt);
   const n=b.length; if(n<60) return [];
   const {e9,e21,e50,rsi:R,atr:A,vwap:VW,macd:M,st:ST,adx:AX,volMA:VM}=ind;
   const out=[]; let last=-99;
   const cooldown=Math.max(5,Math.round(40/S.tf));
   const today=b[n-1].day;
-  const CL=u.close||930;                      // session close, minutes after midnight IST
+  const CL=u.close||930, OP=u.open||555;      // session close and open, minutes after midnight IST
+  const E63=ind.e63;                          // 63 bars = EMA 21 of a timeframe three times larger
 
   for(let i=55;i<n-1;i++){                    // last bar is still forming
-    if(b[i].day!==today) continue;            // only today's signals are live
+    if(!opt.all&&b[i].day!==today) continue;  // only today's signals are live
     if(i-last<cooldown) continue;
     if(e50[i]==null||A[i]==null||!M[i]||!ST[i]||VM[i]==null||AX[i]==null) continue;
     if(b[i].t>=CL-25) continue;               // no entries in the last 25 min
@@ -815,6 +946,10 @@ function engine(u, b, ind, str){
         adx: AX[i]>20, ob:nearOb, liq:swept };
       const score=CHECKS.reduce((s,c)=>s+(P[c.id]?c.w:0),0);
       if(score<60) continue;
+      // Strict: the bigger trend points the same way and is still moving, the trend is strong,
+      // and it is not the choppy first 15 or last 45 minutes of the session.
+      const big=E63[i]!=null&&E63[i-6]!=null&&(L?(b[i].c>E63[i]&&E63[i]>E63[i-6]):(b[i].c<E63[i]&&E63[i]<E63[i-6]));
+      const strictOk=score>=72&&big&&P.trend&&P.st&&P.vwap&&AX[i]>22&&b[i].t>=OP+15&&b[i].t<CL-45;
 
       const entry=b[i].c;
       const swing=L?Math.min.apply(null,b.slice(i-3,i+1).map(x=>x.l))-0.3*A[i]
@@ -824,16 +959,16 @@ function engine(u, b, ind, str){
       if(risk<=0||risk/entry>(u.seg==="OPT"?0.35:0.03)) continue;
 
       const d=L?1:-1;
-      const s={ id:u.tkr.slice(0,4)+"-"+String(1000+i).slice(-4), tkr:u.tkr, sym:u.sym,
+      const s={ id:u.tkr.slice(0,4)+"-"+String(1000+i).slice(-4), day:b[i].day, strict:!!strictOk, tkr:u.tkr, sym:u.sym,
         seg:u.seg, closeT:CL, side, i, ts:b[i].ts, entry, sl,
         t1:entry+d*risk, t2:entry+d*risk*2, t3:entry+d*risk*3,
         risk, conf:score, checks:P, atr:A[i], rsi:R[i], adx:AX[i], vwap:VW[i] };
-      s.opt = optionLeg(u, s);
+      s.opt = opt.lite?null:optionLeg(u, s);
       s.res = track(b, s);
       out.push(s); last=i; break;
     }
   }
-  return out;
+  return opt.strict?out.filter(x=>x.strict):out;
 }
 
 /** Walk forward to the live edge. The stop is checked before targets inside the
@@ -843,11 +978,17 @@ function track(b,s){
   const L=s.side==="BUY"; let stop=s.sl, hit=0;
   const fin=(status,j,px)=>({state:"EXPIRED",status,exit:j,px,hit,R:((px-s.entry)*(L?1:-1))/s.risk});
   for(let j=s.i+1;j<b.length;j++){
+    // an intraday trade never runs into the next day
+    if(b[j].day!==b[s.i].day) return fin("Closed at session end", j-1, b[j-1].c);
     if(L? b[j].l<=stop : b[j].h>=stop)
       return fin(hit===0?"Stopped out":hit===1?"Breakeven stop":"Trailed from T"+hit, j, stop);
     if(hit<1&&(L?b[j].h>=s.t1:b[j].l<=s.t1)){hit=1;stop=s.entry;}
     if(hit<2&&(L?b[j].h>=s.t2:b[j].l<=s.t2)){hit=2;stop=s.t1;}
     if(hit<3&&(L?b[j].h>=s.t3:b[j].l<=s.t3)) return fin("T3 achieved",j,s.t3);
+    if(j<b.length-1){                          // rules for bars that are complete
+      if(b[j].t>=(s.closeT||930)-5) return fin("Closed at session end", j, b[j].c);
+      if(hit===0&&j-s.i>MAX_LIFE) return fin("No follow-through", j, b[j].c);
+    }
   }
   const last=b[b.length-1], R=((last.c-s.entry)*(L?1:-1))/s.risk, age=b.length-1-s.i;
   if(last.t>=(s.closeT||930)-5) return fin("Closed at session end", b.length-1, last.c);
@@ -1078,7 +1219,7 @@ function draw(){
       if(!s){flush();dir=null;continue;} if(dir!==null&&s.dir!==dir)flush(); dir=s.dir; seg.push([X(g),Y(s.band)]);}
     flush();
   }
-  if(S.show.ema50) line(ind.e50,"#8B7FD4");
+  if(S.show.ema50) line(ind.e50,C.violet);
   if(S.show.ema21) line(ind.e21,C.key);
   if(S.show.ema9)  line(ind.e9,C.warn);
   if(S.show.vwap)  line(ind.vwap,C.fg,[5,3],.8,1.4);
@@ -1099,7 +1240,7 @@ function draw(){
     cx.strokeStyle=C.warn; cx.globalAlpha=.5; cx.setLineDash([2,4]); cx.lineWidth=1;
     cx.beginPath(); cx.moveTo(PL,y); cx.lineTo(W-PR,y); cx.stroke(); cx.setLineDash([]); cx.globalAlpha=1;
     cx.fillStyle=C.warn; cx.fillRect(W-PR-2,y-8*FS,PR+2,16*FS);
-    cx.fillStyle="#000"; cx.textAlign="left"; cx.font="600 9.5px"+F; cx.fillText(px(lb.c,u), W-PR+3, y+3*FS);
+    cx.fillStyle=C.onwarn; cx.textAlign="left"; cx.font="600 9.5px"+F; cx.fillText(px(lb.c,u), W-PR+3, y+3*FS);
   }
 
   /* ---- trend arrows + signal arrows --------------------------------------- */
@@ -1158,7 +1299,7 @@ function draw(){
       [30,70].forEach(l=>{cx.strokeStyle=C.line;cx.setLineDash([3,3]);cx.beginPath();
         cx.moveTo(PL,Math.round(ry(l))+.5);cx.lineTo(W-PR,Math.round(ry(l))+.5);cx.stroke();cx.setLineDash([]);
         cx.fillStyle=C.low;cx.fillText(String(l),W-PR+6,ry(l)+3);});
-      cx.strokeStyle="#8B7FD4";cx.lineWidth=1.3;cx.beginPath();let on=false;
+      cx.strokeStyle=C.violet;cx.lineWidth=1.3;cx.beginPath();let on=false;
       for(let k=0;k<vis.length;k++){const g=start+k,v=ind.rsi[g];
         if(v==null){on=false;continue;} on?cx.lineTo(X(g),ry(v)):(cx.moveTo(X(g),ry(v)),on=true);}
       cx.stroke(); cx.fillStyle=C.low; cx.fillText("RSI 14",PL+3,p.top+9);
@@ -1200,7 +1341,7 @@ function readout(i){
   const openLiq=[...str.bsl,...str.ssl].filter(p=>p.swept==null).length;
   document.getElementById("rdo").innerHTML=
     it("EMA9",px(ind.e9[i],u),C.warn)+it("EMA21",px(ind.e21[i],u),C.key)+
-    it("EMA50",px(ind.e50[i],u),"#8B7FD4")+
+    it("EMA50",px(ind.e50[i],u),C.violet)+
     it("VWAP",px(ind.vwap[i],u), ind.vwap[i]==null?C.mid:(x.c>ind.vwap[i]?C.up:C.dn))+
     it("RSI",r==null?"—":r.toFixed(1), r==null?C.mid:r>70?C.dn:r<30?C.up:C.fg)+
     it("ATR",px(ind.atr[i],u))+
@@ -1217,7 +1358,7 @@ function fit(){
   draw();
 }
 /* ------------------------------------------------------------ pages -- */
-const PAGES=[["home","Home"],["chart","Charts & signals"],["chain","Option chain"],["oi","Open interest"],["strat","Strategy builder"]];
+const PAGES=[["home","Home"],["chart","Charts & signals"],["chain","Option chain"],["oi","Open interest"],["strat","Strategy builder"],["results","Results"]];
 function setPage(p){
   if(!PAGES.some(x=>x[0]===p)) p="home";
   S.page=p; store.set("sd_page",p);
@@ -1226,6 +1367,7 @@ function setPage(p){
     b.className=k===p?"on":""; b.onclick=()=>setPage(k); nav.appendChild(b); });
   document.getElementById("homePage").hidden=p!=="home";
   document.getElementById("stratPage").hidden=p!=="strat";
+  document.getElementById("resPage").hidden=p!=="results";
   document.getElementById("shell").style.display=p==="chart"?"":"none";
   document.getElementById("modeSeg").hidden=p!=="chart";
   const ov=document.getElementById("ovl"), opt=p==="chain"||p==="oi";
@@ -1235,6 +1377,7 @@ function setPage(p){
   if(!S.ready) return;
   if(p==="chart") renderAll();
   if(p==="home") renderHome();
+  if(p==="results") renderResults();
   if(opt||p==="strat"){
     const d=S.chainCache[S.chainTkr];
     if(d){ drawChain(d); renderStrat(); }
@@ -1251,7 +1394,7 @@ function renderHome(){
   const all=S.universe.reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);
   const act=all.filter(s=>s.res.state==="ACTIVE").sort((a,b)=>b.ts-a.ts);
   document.getElementById("homeSub").textContent=(S.feed&&S.feed.delayed?"Delayed prices":"Live prices")+
-    " · "+all.length+" signals today · India time · analysis only, not advice";
+    " · "+all.length+(S.strict?" strict":"")+" signals today · India time · analysis only, not advice";
   const groups={}; S.universe.filter(u=>u.seg!=="OPT").forEach(u=>(groups[u.seg]=groups[u.seg]||[]).push(u));
   const g=document.getElementById("homeGrid"); g.innerHTML=`<h2 style="margin-top:34px">Market now</h2>`;
   Object.keys(groups).forEach(k=>{
@@ -1261,14 +1404,108 @@ function renderHome(){
       const q=S.quotes[u.tkr]||{}, a=(S.sigs[u.tkr]||[]).filter(s=>s.res.state==="ACTIVE").pop();
       const b=document.createElement("button"); b.className="tile";
       b.innerHTML=`<div class="n">${esc(u.sym)}</div><div class="p">${q.ltp!=null?px(q.ltp,u):"—"}</div>`+
-        `<div class="c"><span class="${q.chg>=0?"up":"dn"}">${q.chg!=null?(q.chg>=0?"+":"")+q.chg.toFixed(2)+"%":""}</span>`+
+        `<div class="c">${q.chg!=null?`<span class="chg ${q.chg>=0?"up":"dn"}">${q.chg>=0?"▲":"▼"} ${Math.abs(q.chg).toFixed(2)}%</span>`:""}`+
         (a?`<span class="sg" style="background:${a.side==="BUY"?C.up:C.dn}">${a.side}</span>`:"")+`</div>`;
       b.onclick=()=>goChart(u.tkr);
       t.appendChild(b);
     });
     g.appendChild(t);
   });
+  renderStrictSegs();
+  const past=tally(pastSignals(true)), nAct=all.filter(x=>x.res.state==="ACTIVE").length;
+  document.getElementById("hero").innerHTML=
+    `<div><span>Active now</span><b style="color:${nAct?C.up:C.fg}">${nAct}</b><small>signals being followed</small></div>`+
+    `<div><span>Signals today</span><b>${all.length}</b><small>${all.filter(x=>x.strict).length} strict, ${all.filter(x=>!x.strict).length} other</small></div>`+
+    `<div><span>Strict win rate</span><b>${past.rate==null?"—":past.rate.toFixed(0)+"%"}</b><small>${past.won} won, ${past.lost} lost · see Results</small></div>`+
+    `<div><span>Instruments</span><b>${S.universe.filter(u=>u.seg!=="OPT").length}</b><small>indices, stocks, MCX</small></div>`;
   renderTrades();
+}
+
+/* -------------------------------------------- strict filter + results -- */
+function setStrict(v){
+  S.strict=v; store.set("sd_strict",v?"1":"0");
+  renderStrictSegs(); renderHome(); pumpTrades();
+  if(S.page==="results") renderResults();
+}
+function renderStrictSegs(){
+  const today=S.universe.filter(u=>u.seg!=="OPT").reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]), nS=today.filter(x=>x.strict).length;
+  const pick=it=>{ if(S.strict!==it.v) setStrict(it.v); };
+  seg(document.getElementById("strictHome"),[{l:`Strict signals · ${nS}`,v:true},{l:`Other signals · ${today.length-nS}`,v:false}],it=>S.strict===it.v,pick);
+  seg(document.getElementById("strictRes"),[{l:"Strict signals",v:true},{l:"All signals",v:false}],it=>S.strict===it.v,pick);
+}
+/* Every signal the rules would have given over the loaded history, with how it ended.
+   Measured on the index, share or future price in R: 1R is the distance from entry to stop. */
+function pastSignals(strict){
+  const out=[];
+  S.universe.filter(u=>u.seg!=="OPT").forEach(u=>{
+    const b=S.bars[u.tkr], ind=S.ind[u.tkr], str=S.struct[u.tkr];
+    if(!b||b.length<60||!ind||!str) return;
+    engine(u,b,ind,str,{all:true,strict,lite:true}).forEach(x=>{ if(x.res.state==="EXPIRED") out.push(x); });
+  });
+  return out.sort((a,b)=>a.ts-b.ts);
+}
+function tally(list){
+  const w=list.filter(x=>x.res.R>0.05), l=list.filter(x=>x.res.R<-0.05), sum=a=>a.reduce((t,x)=>t+x.res.R,0);
+  return { n:list.length, won:w.length, lost:l.length, flat:list.length-w.length-l.length,
+    rate:w.length+l.length?w.length/(w.length+l.length)*100:null, net:sum(list), avg:list.length?sum(list)/list.length:0,
+    avgWin:w.length?sum(w)/w.length:0, avgLoss:l.length?sum(l)/l.length:0 };
+}
+function renderResults(){
+  if(S.page!=="results") return;
+  renderStrictSegs();
+  const strictL=pastSignals(true), allL=pastSignals(false), cur=S.strict?strictL:allL, t=tally(cur);
+  const days=[...new Set(allL.concat(strictL).map(x=>x.day))].sort();
+  const rR=v=>`<span style="color:${v>0.005?C.up:v<-0.005?C.dn:C.fg}">${v>=0?"+":"−"}${Math.abs(v).toFixed(2)}R</span>`;
+  const pc=v=>v==null?"—":v.toFixed(0)+"%";
+  const dfmt=d=>new Date(d+"T00:00:00Z").toLocaleDateString("en-IN",{timeZone:"UTC",day:"2-digit",month:"short"});
+  document.getElementById("resSub").textContent=days.length
+    ?`Every signal over the last ${days.length} trading days (${dfmt(days[0])} to ${dfmt(days[days.length-1])}), ${S.tf}-minute candles, wins and losses alike.`
+    :"No finished signals in the loaded history yet.";
+  // verdict, in plain words
+  const v=document.getElementById("resVerdict");
+  if(!t.n) v.innerHTML=`No finished ${S.strict?"strict ":""}signals in this period, so there is nothing to judge yet.`;
+  else v.innerHTML=`<b>${S.strict?"Strict signals":"All signals"}:</b> ${t.n} signals, <b style="color:${C.up}">${t.won} won</b>, `+
+    `<b style="color:${C.dn}">${t.lost} lost</b>${t.flat?`, ${t.flat} ended flat`:""}. Win rate <b>${pc(t.rate)}</b>. `+
+    `Average win ${rR(t.avgWin)}, average loss ${rR(t.avgLoss)}. `+
+    (t.avg>0.05?`On balance they <b style="color:${C.up}">made money</b> in this period: ${rR(t.avg)} per signal.`
+      :t.avg<-0.05?`On balance they <b style="color:${C.dn}">lost money</b> in this period: ${rR(t.avg)} per signal. Do not trade them as they stand.`
+      :`On balance they roughly <b>broke even</b> in this period: ${rR(t.avg)} per signal.`)+
+    ` ${days.length<20?"This is a short period; it shows the tendency, not a promise.":""}`;
+  const block=(name,x,on)=>`<div class="${on?"on":""}"><h4>${name}${on?" · in use":""}</h4><div class="g">`+
+    `<div><span>Signals</span><b>${x.n}</b></div><div><span>Won / lost</span><b><span style="color:${C.up}">${x.won}</span> / <span style="color:${C.dn}">${x.lost}</span></b></div>`+
+    `<div><span>Win rate</span><b>${pc(x.rate)}</b></div><div><span>Per signal</span><b>${rR(x.avg)}</b></div>`+
+    `<div><span>Total</span><b>${rR(x.net)}</b></div><div><span>Per day</span><b>${days.length?(x.n/days.length).toFixed(1):"—"}</b></div></div></div>`;
+  document.getElementById("resCompare").innerHTML=`<div class="cmp">${block("Strict signals",tally(strictL),S.strict)}${block("All signals",tally(allL),!S.strict)}</div>`;
+  // running total
+  const svg=document.getElementById("resCurve");
+  if(cur.length<2) svg.innerHTML=`<text x="400" y="130" text-anchor="middle" font-size="15" fill="${C.low}">Not enough finished signals to draw yet</text>`;
+  else{
+    const W=800,H=260,Lm=64,R=14,T=14,B=34; let run=0; const ys=[0].concat(cur.map(x=>run+=x.res.R));
+    const mx=Math.max(...ys,0.5), mn=Math.min(...ys,-0.5), X=i=>Lm+i/(ys.length-1)*(W-Lm-R), Y=q=>T+(1-(q-mn)/(mx-mn))*(H-T-B);
+    let o="";
+    for(let k=0;k<=4;k++){ const q=mn+(mx-mn)*k/4, y=Y(q);
+      o+=`<line x1="${Lm}" x2="${W-R}" y1="${y}" y2="${y}" stroke="${C.line}"/><text x="${Lm-8}" y="${y+4}" text-anchor="end" font-size="13" fill="${C.low}">${q>=0?"+":"−"}${Math.abs(q).toFixed(1)}R</text>`; }
+    const last=ys[ys.length-1], col=last>=0?C.up:C.dn;
+    o+=`<line x1="${Lm}" x2="${W-R}" y1="${Y(0)}" y2="${Y(0)}" stroke="${C.mid}" stroke-width="1.2"/>`+
+       `<path d="${ys.map((q,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(q).toFixed(1)).join("")}" fill="none" stroke="${col}" stroke-width="2.4" stroke-linejoin="round"/>`+
+       `<circle cx="${X(ys.length-1)}" cy="${Y(last)}" r="5" fill="${col}"/>`+
+       `<text x="${(Lm+W-R)/2}" y="${H-8}" text-anchor="middle" font-size="12.5" fill="${C.low}">Signals in order, oldest on the left · total after each one</text>`;
+    svg.innerHTML=o;
+  }
+  // tables
+  const table=(el,head,groups,label)=>{
+    document.getElementById(el).innerHTML=`<tr><th>${head}</th><th>Signals</th><th>Won</th><th>Lost</th><th>Win rate</th><th>Total</th></tr>`+
+      (groups.length?groups.map(([k,arr])=>{ const x=tally(arr);
+        return `<tr><td>${esc(label(k))}</td><td>${x.n}</td><td style="color:${C.up}">${x.won}</td><td style="color:${C.dn}">${x.lost}</td><td>${pc(x.rate)}</td><td>${rR(x.net)}</td></tr>`; }).join("")
+      :`<tr><td colspan="6" style="text-align:center;color:${C.low}">Nothing yet</td></tr>`);
+  };
+  const by=key=>{ const m=new Map(); cur.forEach(x=>{ const k=key(x); (m.get(k)||m.set(k,[]).get(k)).push(x); }); return [...m.entries()]; };
+  table("resBySym","Instrument",by(x=>x.tkr).sort((a,b)=>tally(b[1]).net-tally(a[1]).net),k=>uni(k).sym||k);
+  table("resByDay","Day",by(x=>x.day).sort((a,b)=>a[0]<b[0]?1:-1),dfmt);
+  document.getElementById("resNote").innerHTML=`How to read this: results are measured on the index, share or future price. <b>1R</b> is the distance from entry to stop loss, `+
+    `so −1R is a full stop-out and +3R is all three targets. Stops are assumed to fill before targets inside a candle. `+
+    `Option trades move differently and usually by more, in both directions, and brokerage, taxes and slippage are not included, so real results will be lower. `+
+    `Strict signals need the bigger trend, trend strength and timing to agree; All signals is the original rule set.`;
 }
 
 /* ------------------------------------------ live option signals (home) -- */
@@ -1283,7 +1520,7 @@ const pm=v=>v>=100?nf(v,1):nf(v,2);
 function homeSignals(){
   const all=S.universe.filter(u=>u.seg!=="OPT").reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);
   const live=s=>{ const t=S.otr[sigKey(s)]; return (t&&t.entry!=null?t.state:s.res.state)==="ACTIVE"; };
-  return all.sort((a,b)=>(live(a)?0:1)-(live(b)?0:1)||b.ts-a.ts);
+  return all.filter(x=>x.strict===S.strict).sort((a,b)=>(live(a)?0:1)-(live(b)?0:1)||b.ts-a.ts);
 }
 async function liteChain(tkr){
   const c=S.lite[tkr];
@@ -1366,65 +1603,136 @@ async function pumpTrades(){
     }
   }catch(e){} finally{ trBusy=false; renderTrades(); }
 }
+/* What you did with each signal — kept in this browser only, never sent anywhere. */
+const taken={
+  m:(()=>{ try{ return JSON.parse(localStorage.getItem("sd_taken")||"{}")||{}; }catch(e){ return {}; } })(),
+  get(k){ return this.m[k]; },
+  set(k,v){ if(v) this.m[k]=v; else delete this.m[k];
+    const ks=Object.keys(this.m); if(ks.length>150) ks.slice(0,ks.length-150).forEach(x=>delete this.m[x]);
+    store.set("sd_taken",JSON.stringify(this.m)); },
+};
+const takeKey=s=>s.tkr+"|"+s.ts+"|"+s.side;
+
+/* One shape for every card, whether it follows a real option or, where no option
+   price exists, the index / share / future itself. d is +1 when a rising price helps. */
+function tradeModel(s){
+  const u=uni(s.tkr), t=S.otr[sigKey(s)], when=`signal ${hhmm(s.ts)} IST, ${ago(s.ts)}`;
+  if(t&&t.entry!=null) return { opt:true, d:1, f:pm, name:s.sym, chip:`${t.strike} ${t.ty}`, chipCol:t.ty==="CE"?C.up:C.dn, verb:"Buy",
+    sub:`${t.ty==="CE"?"Call":"Put"} option · expiry ${new Date(t.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})} · ${when}`,
+    entry:t.entry, sl:t.sl, t1:t.t1, t2:t.t2, t3:t.t3, now:t.now, hit:t.hit, active:t.state==="ACTIVE", safe:t.safe, warn:t.warn,
+    why:t.why, exit:t.exit, endNote:s.res.status, series:(t.bars||[]).slice(-20).map(c=>c[4]) };
+  const b=S.bars[s.tkr]||[], q=S.quotes[s.tkr]||{}, ind=S.ind[s.tkr], live=s.res.state==="ACTIVE", d=s.side==="BUY"?1:-1, st=s.res.status;
+  const now=live&&q.ltp!=null?q.ltp:s.res.px;
+  let warn=false;
+  if(live&&ind&&b.length&&d*(now-s.entry)<0){ const n=b.length-1, x=ind.st[n], e=ind.e21[n];
+    warn=!!((x&&x.dir===-d)||(e!=null&&d*(b[n].c-e)<0)); }
+  return { opt:false, d, f:v=>px(v,u), name:s.sym, chip:s.side, chipCol:d>0?C.up:C.dn, verb:d>0?"Buy":"Sell",
+    sub:`${u.seg==="MCX"?"Futures":u.seg==="IDX"?"Index":"Share"} price levels · ${when}`+(t&&t.state==="LOADING"?" · finding the option…":u.fo?" · option price not available":""),
+    entry:s.entry, sl:s.sl, t1:s.t1, t2:s.t2, t3:s.t3, now, hit:s.res.hit, active:live,
+    safe:s.res.hit>=2?s.t1:s.res.hit===1?s.entry:s.sl, warn,
+    why:st.startsWith("Stopped")?"STOP":st.startsWith("Breakeven")?"COST":st.startsWith("Trailed")?"TRAIL":st.startsWith("T3")?"T3":"END",
+    exit:s.res.px, endNote:st, series:b.slice(-20).map(x=>x.c) };
+}
+/* Which way the price has gone over the last three candles. */
+function moving(m){
+  const a=m.series; if(a.length<4) return {txt:"Direction not known yet",arrow:"",col:C.mid};
+  const ref=a[a.length-4], last=m.active?m.now:a[a.length-1], ch=(last-ref)/ref*100;
+  if(Math.abs(ch)<(m.opt?0.6:0.04)) return {txt:"Price is flat",arrow:"▬",col:C.mid};
+  const up=ch>0, good=(up?1:-1)===m.d;
+  return {txt:`Price moving ${up?"up":"down"}, ${good?"in favour of":"against"} this trade`,arrow:up?"▲":"▼",col:good?C.up:C.dn};
+}
+function sparkline(m,col){
+  const a=m.series.concat(m.active?[m.now]:[]); if(a.length<3) return "";
+  const mx=Math.max(...a), mn=Math.min(...a), W=96,H=30, X=i=>2+i/(a.length-1)*(W-4), Y=v=>H-3-(mx===mn?0.5:(v-mn)/(mx-mn))*(H-6);
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${a.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join("")}" fill="none" stroke="${col}" stroke-width="1.8" stroke-linejoin="round"/>`+
+    `<circle cx="${X(a.length-1)}" cy="${Y(a[a.length-1])}" r="2.6" fill="${col}"/></svg>`;
+}
+/* If you have not entered yet: is it still worth entering at the price now, and at what levels? */
+function lateEntry(m){
+  const d=m.d, risk=d*(m.now-m.sl), rew=d*(m.t2-m.now), moved=d*(m.now-m.entry)/m.entry*100;
+  if(m.warn) return {ok:false,msg:`Do not enter now: the market is turning against this signal.`};
+  if(m.hit>=1||d*(m.now-m.t1)>=0) return {ok:false,msg:`Too late to enter: Target 1 has already been reached. Wait for the next signal.`};
+  if(risk<=0) return {ok:false,msg:`Do not enter: price is at the stop loss.`};
+  if(rew/risk<1) return {ok:false,msg:`Late entry is poor value now: you would risk ${m.f(risk)} to make ${m.f(rew)} at Target 2.`};
+  const near=Math.abs(moved)<(m.opt?1.5:0.05);
+  return {ok:true, risk, rew, note:near?`Price is still at the original entry.`
+    :moved>0?`Price has already moved ${moved.toFixed(1)}% past the original entry, so the entry is later and the risk is larger.`
+    :`Price is ${Math.abs(moved).toFixed(1)}% better than the original entry.`};
+}
 function renderTrades(){
   if(S.page!=="home") return;
   const el=document.getElementById("homeSigs"), list=homeSignals().slice(0,14);
-  const isLive=s=>{ const t=S.otr[sigKey(s)]; return (t&&t.entry!=null?t.state:s.res.state)==="ACTIVE"; };
-  const nLive=list.filter(isLive).length;
-  document.getElementById("homeSigTitle").textContent="Live signals ("+nLive+" active)";
+  const models=list.map(s=>({s,m:tradeModel(s)})), nLive=models.filter(x=>x.m.active).length;
+  document.getElementById("homeSigTitle").textContent=(S.strict?"Strict signals":"Other signals")+" ("+nLive+" active)";
+  document.getElementById("homeTabNote").textContent=S.strict
+    ?"Signals where the bigger trend, trend strength and timing all agree. Fewer, and better on the Results page so far, but they still lose sometimes."
+    :"Signals that passed the basic rules but not the strict filter. They are weaker; check the Results page before trusting them.";
   document.getElementById("homeSigNote").textContent=list.length
-    ?"Buy price is the option's actual price when the signal fired. Stop loss and targets are worked out from the chart's stop and targets. Tap a signal to see it on the chart."
+    ?"Buy price is the option's actual price when the signal fired. Stop loss and targets come from the chart's stop and targets. \"I took this entry\" is remembered on this device only."
     :"";
-  if(!list.length){ el.innerHTML=`<div class="empty" style="font-size:15.5px;grid-column:1/-1">No signals yet today. `+
-    `A signal appears here the moment a setup is confirmed on any index, stock or commodity.</div>`; return; }
-  const cell=(k,v)=>`<div><span>${k}</span><b>${v}</b></div>`;
-  el.innerHTML=""; list.forEach(s=>{
-    const u=uni(s.tkr), t=S.otr[sigKey(s)], b=document.createElement("button");
-    let cls, badge, bcol, head, sub, cells, msg, mcol;
-    if(t&&t.entry!=null){                                   // a real option contract
-      const up=t.pct>=0, pc=`${up?"+":""}${t.pct.toFixed(1)}%`, tg=(v,n)=>`<span style="color:${t.hit>=n?C.up:"inherit"}">${pm(v)}${t.hit>=n?"✓":""}</span>`;
-      head=`${esc(s.sym)} — ${t.strike} ${t.ty}`;
-      sub=`${t.ty==="CE"?"Call":"Put"} option · expiry ${new Date(t.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})} · signal ${hhmm(s.ts)} IST, ${ago(s.ts)}`;
-      cells=cell("Buy @",`<span style="color:${C.key}">${pm(t.entry)}</span>`)+cell("Stop loss",`<span style="color:${C.dn}">${pm(t.sl)}</span>`)+
-        cell("Target 1 / 2 / 3",tg(t.t1,1)+" / "+tg(t.t2,2)+" / "+tg(t.t3,3))+
-        cell(t.state==="ACTIVE"?"Now":"Closed at",`<span style="color:${up?C.up:C.dn}">${pm(t.now)} (${pc})</span>`);
-      if(t.state==="ACTIVE"){
-        badge="ACTIVE";
-        if(t.warn){ cls="warn"; bcol=C.warn; mcol=C.warn;
-          msg=`Market is turning against this trade. Safe exit now near <b>${pm(t.now)}</b>, without waiting for the stop loss at ${pm(t.sl)}.`; }
-        else if(t.hit>0){ cls="pos"; bcol=C.up; mcol=C.up;
-          msg=`Signal hit positive: Target ${t.hit} reached, now <b>${pm(t.now)}</b> (${pc}). Safe exit is now <b>${pm(t.safe)}</b>${t.hit===1?", your buy price, so this trade can no longer lose":""}.`; }
-        else if(up){ cls="pos"; bcol=C.up; mcol=C.up;
-          msg=`Signal hit positive: now <b>${pm(t.now)}</b> (${pc}). Next target ${pm(t.t1)}. Safe exit if it reverses: ${pm(t.sl)}.`; }
-        else { cls=""; bcol=C.warn; mcol=C.mid;
-          msg=`Below buy price: now <b>${pm(t.now)}</b> (${pc}). Still valid. Safe exit at the stop loss, <b>${pm(t.sl)}</b>.`; }
-      } else {
-        const chartStop=t.why==="END"&&s.res.status.startsWith("Stopped")&&t.pct<0, failed=t.why==="STOP"||chartStop;
-        cls=(up?"pos":"neg")+" done"; badge=failed?"FAILED":"CLOSED"; bcol=failed?C.dn:C.mid; mcol=failed?C.dn:up?C.up:C.mid;
-        msg=chartStop?`Signal failed, the chart hit its stop. Safe exit was <b>${pm(t.exit)}</b> (${pc}).`
-          :t.why==="STOP"?`Signal failed, market went the other way. Safe exit was the stop loss at <b>${pm(t.exit)}</b> (${pc}).`
-          :t.why==="COST"?`Target 1 was reached, then it came back. Closed at the buy price, <b>${pm(t.exit)}</b>, with no loss.`
-          :t.why==="TRAIL"?`Target ${t.hit} was reached, then it came back. Closed at safe exit <b>${pm(t.exit)}</b> (${pc}).`
-          :t.why==="T3"?`All three targets reached. Closed at <b>${pm(t.exit)}</b> (${pc}).`
-          :`Signal ended (${esc(s.res.status.toLowerCase())}). Closed at <b>${pm(t.exit)}</b> (${pc}).`;
-      }
-    } else {                                                 // no option available: show the chart levels themselves
-      const live=s.res.state==="ACTIVE", up=s.res.R>=0, q=S.quotes[s.tkr]||{};
-      head=`${esc(s.sym)} — ${s.side}`; cls=live?(up?"pos":""):(up?"pos":"neg")+" done";
-      badge=live?"ACTIVE":s.res.status.startsWith("Stopped")?"FAILED":"CLOSED"; bcol=live?(up?C.up:C.warn):badge==="FAILED"?C.dn:C.mid; mcol=up?C.up:live?C.mid:C.dn;
-      sub=`${u.seg==="MCX"?"Futures":u.seg==="IDX"?"Index":"Share"} price levels · signal ${hhmm(s.ts)} IST, ${ago(s.ts)}`+
-        (t&&t.state==="LOADING"?" · finding the option…":u.fo?" · option price not available":"");
-      cells=cell(s.side==="BUY"?"Buy @":"Sell @",`<span style="color:${C.key}">${px(s.entry,u)}</span>`)+cell("Stop loss",`<span style="color:${C.dn}">${px(s.sl,u)}</span>`)+
-        cell("Target 1 / 2 / 3",[s.t1,s.t2,s.t3].map((v,i)=>`<span style="color:${s.res.hit>i?C.up:"inherit"}">${px(v,u)}${s.res.hit>i?"✓":""}</span>`).join(" / "))+
-        cell(live?"Now":"Closed at",`<span style="color:${up?C.up:C.dn}">${px(live&&q.ltp!=null?q.ltp:s.res.px,u)}</span>`);
-      msg=live?(up?`Signal hit positive. `:`Below entry, still valid. `)+`Safe exit at <b>${px(s.res.hit>=2?s.t1:s.res.hit===1?s.entry:s.sl,u)}</b>.`
-        :badge==="FAILED"?`Signal failed, market went the other way. Safe exit was the stop loss at <b>${px(s.sl,u)}</b>.`:`${esc(s.res.status)}. Closed at <b>${px(s.res.px,u)}</b>.`;
+  if(!list.length){ el.innerHTML=`<div class="empty" style="font-size:15.5px;grid-column:1/-1">No ${S.strict?"strict":"other"} signals yet today. `+
+    `${S.strict?"Strict signals are rare by design; a quiet day can have none.":"They appear here the moment a setup is confirmed."}</div>`; return; }
+  el.innerHTML=""; models.forEach(({s,m})=>{
+    const f=m.f, k=takeKey(s), mine=taken.get(k), base=mine?mine.px:m.entry;
+    const pct=m.d*(m.now-base)/base*100, up=pct>=0, pc=`${up?"+":""}${pct.toFixed(1)}%`, mv=moving(m);
+    const tg=(v,n)=>`<span style="color:${m.hit>=n?C.up:"inherit"}">${f(v)}${m.hit>=n?"✓":""}</span>`;
+    const cell=(a,b)=>`<div><span>${a}</span><b>${b}</b></div>`;
+    let cls, badge, bcol, msg, mcol;
+    if(m.active){
+      badge="ACTIVE";
+      if(m.warn){ cls="warn"; bcol=mcol=C.warn; msg=`Market is turning against this trade. Safe exit now near <b>${f(m.now)}</b>, without waiting for the stop loss at ${f(m.sl)}.`; }
+      else if(m.hit>0){ cls="pos"; bcol=mcol=C.up; msg=`Signal hit positive: Target ${m.hit} reached. Safe exit is now <b>${f(m.safe)}</b>${m.hit===1?", the original entry price":""}.`; }
+      else if(m.d*(m.now-m.entry)>=0){ cls="pos"; bcol=mcol=C.up; msg=`Signal hit positive: price is beyond the entry. Next target ${f(m.t1)}. Safe exit if it reverses: <b>${f(m.sl)}</b>.`; }
+      else { cls=""; bcol=C.warn; mcol=C.mid; msg=`Price is on the wrong side of the entry, but the signal is still valid. Safe exit at the stop loss, <b>${f(m.sl)}</b>.`; }
+    } else {
+      const failed=m.why==="STOP"||(m.why==="END"&&m.endNote.startsWith("Stopped")&&m.d*(m.exit-m.entry)<0);
+      cls=(m.d*(m.exit-m.entry)>=0?"pos":"neg")+" done"; badge=failed?"FAILED":"CLOSED"; bcol=failed?C.dn:C.mid; mcol=failed?C.dn:m.d*(m.exit-m.entry)>0?C.up:C.mid;
+      msg=failed?`Signal failed, the market went the other way. Safe exit was <b>${f(m.exit)}</b>.`
+        :m.why==="COST"?`Target 1 was reached, then price came back. Closed at the entry price, <b>${f(m.exit)}</b>, with no loss.`
+        :m.why==="TRAIL"?`Target ${m.hit} was reached, then price came back. Closed at safe exit <b>${f(m.exit)}</b>.`
+        :m.why==="T3"?`All three targets reached. Closed at <b>${f(m.exit)}</b>.`
+        :`Signal ended (${esc(m.endNote.toLowerCase())}). Closed at <b>${f(m.exit)}</b>.`;
     }
-    b.className="trade "+cls;
-    b.innerHTML=`<div class="tr1"><span class="nm">${head}</span><span class="st" style="color:${bcol};border-color:${bcol}">${badge}</span></div>`+
-      `<div class="tr2">${sub}</div><div class="trl">${cells}</div>`+
-      `<div class="trs" style="color:${mcol};background:color-mix(in srgb, ${mcol} 12%, transparent)">${msg}</div>`;
-    b.onclick=()=>goChart(s.tkr,s);
+    // where the price sits between stop loss and Target 3
+    const pos=v=>Math.max(0,Math.min(100,(v-m.sl)/(m.t3-m.sl)*100));
+    const tick=(v,l,c)=>`<i style="left:${pos(v)}%;background:${c}"></i><em style="left:${pos(v)}%">${l}</em>`;
+    const a=pos(m.entry), n=pos(m.now);
+    const track=`<div class="track"><u></u><s style="left:${Math.min(a,n)}%;width:${Math.abs(n-a)}%;background:${n>=a?C.up:C.dn}"></s>`+
+      tick(m.sl,"SL",C.dn)+tick(m.entry,m.verb,C.key)+tick(m.t1,"T1",C.up)+tick(m.t2,"T2",C.up)+tick(m.t3,"T3",C.up)+
+      `<b style="left:${n}%;background:${up?C.up:C.dn}" title="Price now"></b></div>`;
+    // your entry: taken, or whether and where to enter late
+    let entryBox="", btn="";
+    if(mine){
+      entryBox=`<div class="ent on"><b>Entry taken</b> at <b>${f(mine.px)}</b>${mine.late?" (late entry)":""}. `+
+        `${m.active?"Now":"Closed"} <b style="color:${up?C.up:C.dn}">${f(m.now)} (${pc})</b> on your entry. `+
+        (m.active?`Stop loss ${f(m.safe)}, targets ${f(m.t1)} / ${f(m.t2)} / ${f(m.t3)}.`:"")+`</div>`;
+      btn=`<button class="btn act" data-a="undo">Undo "entry taken"</button>`;
+    } else if(m.active){
+      const le=lateEntry(m);
+      entryBox=le.ok?`<div class="ent"><b>Entry not taken.</b> ${le.note} If you enter now:<div class="trl" style="margin-top:8px">`+
+          cell(m.verb+" @ now",`<span style="color:${C.key}">${f(m.now)}</span>`)+cell("Stop loss",`<span style="color:${C.dn}">${f(m.sl)}</span>`)+
+          cell("Target 1 / 2 / 3",`${f(m.t1)} / ${f(m.t2)} / ${f(m.t3)}`)+cell("Risk : reward to T2",`${f(le.risk)} : ${f(le.rew)}`)+`</div></div>`
+        :`<div class="ent no"><b>Entry not taken.</b> ${le.msg}</div>`;
+      btn=`<button class="btn act pri" data-a="take">I took this entry at ${f(m.now)}</button>`;
+    } else entryBox=`<div class="ent no">Entry not taken.</div>`;
+
+    const b=document.createElement("div"); b.className="trade "+cls;
+    b.innerHTML=`<div class="tr1"><span class="nm">${esc(m.name)}</span><span class="chip" style="background:${m.chipCol}">${esc(m.chip)}</span>`+
+        `${s.strict?'<span class="chip ghost">STRICT</span>':""}<span class="st" style="color:${bcol};border-color:${bcol}">${badge}</span></div>`+
+      `<div class="tr2">${m.sub}</div>`+
+      `<div class="nowrow"><div><span class="lbl">${m.active?"Current price":"Closed at"}</span>`+
+        `<b class="big" style="color:${up?C.up:C.dn}">${f(m.now)}</b><span class="pc" style="color:${up?C.up:C.dn}">${pc}</span></div>`+
+        `<div class="mv" style="color:${mv.col}">${m.active?`<span class="ar">${mv.arrow}</span>${mv.txt}`:""}</div>${sparkline(m,m.active?mv.col:C.low)}</div>`+
+      `<div class="trl">${cell(m.verb+" @",`<span style="color:${C.key}">${f(m.entry)}</span>`)}${cell("Stop loss",`<span style="color:${C.dn}">${f(m.sl)}</span>`)}`+
+        `${cell("Target 1 / 2 / 3",tg(m.t1,1)+" / "+tg(m.t2,2)+" / "+tg(m.t3,3))}</div>`+track+
+      `<div class="trs" style="color:${mcol};background:color-mix(in srgb, ${mcol} 12%, transparent)">${msg}</div>`+entryBox+
+      `<div class="tra">${btn}<button class="btn act" data-a="chart">View on chart</button></div>`;
+    b.querySelectorAll("button.act").forEach(x=>x.onclick=()=>{
+      if(x.dataset.a==="chart") return goChart(s.tkr,s);
+      if(x.dataset.a==="take") taken.set(k,{px:m.now, late:Math.abs(m.now-m.entry)/m.entry*100>=(m.opt?1.5:0.05), at:Date.now()});
+      else taken.set(k,null);
+      renderTrades();
+    });
     el.appendChild(b);
   });
 }
@@ -1602,6 +1910,17 @@ document.getElementById("logoutBtn").onclick=async()=>{
   if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } S.ready=false; boot();
 };
 
+function setTheme(light){
+  if(light) document.documentElement.dataset.theme="light"; else delete document.documentElement.dataset.theme;
+  store.set("sd_theme",light?"light":"dark");
+  document.getElementById("themeBtn").textContent=light?"Dark":"Light";
+  const mc=document.querySelector('meta[name="theme-color"]'); if(mc) mc.content=light?"#F3F6FB":"#0B1220";
+  readColors();
+  if(S.ready) setPage(S.page);                // redraw everything in the new colours
+}
+document.getElementById("themeBtn").onclick=()=>setTheme(document.documentElement.dataset.theme!=="light");
+document.getElementById("themeBtn").textContent=document.documentElement.dataset.theme==="light"?"Dark":"Light";
+
 function setMode(simple){
   S.simple=simple; store.set("sd_mode",simple?"simple":"adv");
   document.body.classList.toggle("simple",simple);
@@ -1689,7 +2008,7 @@ function buildChrome(){
     it=>S.scope===it.v, it=>{S.scope=it.v; buildChrome(); renderCards();});
 
   const groups=[
-    ["Overlays",[["ema9","EMA 9",C.warn],["ema21","EMA 21",C.key],["ema50","EMA 50","#8B7FD4"],
+    ["Overlays",[["ema9","EMA 9",C.warn],["ema21","EMA 21",C.key],["ema50","EMA 50",C.violet],
       ["vwap","VWAP",C.fg],["st","Supertrend",C.up],["bb","Bollinger",C.mid]]],
     ["Smart money",[["ob","Order blocks",C.up],["liq","Liquidity pools",C.warn],["fvg","Fair value gaps",C.key]]],
     ["Panes",[["vol","Volume",C.mid],["rsi","RSI",C.mid],["macd","MACD",C.mid]]],

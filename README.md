@@ -6,7 +6,19 @@ This is analysis software. It places no orders.
 
 ---
 
-## Set it up (about 15 minutes, all in the browser)
+## How people use it
+
+The site opens like any website and shows a **Log in with Fyers** button. Each visitor logs in with their own Fyers account and sees live prices on their own login. Nobody shares your account, and the site cannot place orders. Fyers ends every login overnight, so each person clicks Log in with Fyers once a day.
+
+## Before other people can log in
+
+An app created at myapi.fyers.in accepts only the Fyers account that created it. With a normal app, **you** can log in and everyone else is refused by Fyers. To open it to other users, ask Fyers to approve your app for third-party use: write to Fyers API support (or post in the API section of the Fyers community) and say you run a web app where each user logs in with their own Fyers account. This is Fyers' decision; nothing in these files can bypass it.
+
+Also check the rules before offering signals to the public. In India, giving buy or sell recommendations with targets can require SEBI Research Analyst registration, in particular if you charge for it. Take advice from a compliance professional before you invite users.
+
+## Set it up (one time, by you, all in the browser)
+
+Visitors never see this part. It tells the site which Fyers app it is.
 
 ### 1. Create a Fyers app
 
@@ -16,11 +28,11 @@ This is analysis software. It places no orders.
 4. Leave the permissions as offered and create the app.
 5. Copy the **App ID** (it ends in `-100`) and the **Secret ID**.
 
-### 2. Replace the files on GitHub
+### 2. Put the files on GitHub
 
 Open your `signal-desk` repository, choose **Add file > Upload files**, drag in the four files and click **Commit changes**. Files with the same name are replaced. Render rebuilds the site by itself.
 
-### 3. Add the settings on Render
+### 3. Add two settings on Render
 
 Open your service on Render, go to **Environment**, and add:
 
@@ -28,23 +40,14 @@ Open your service on Render, go to **Environment**, and add:
 |---|---|
 | `FYERS_APP_ID` | the App ID |
 | `FYERS_SECRET_ID` | the Secret ID |
-| `FYERS_PIN` | your 4-digit Fyers PIN (optional, see below) |
-| `SITE_PASSWORD` | a password of your choice for the site (recommended) |
 
-Save. Render restarts the site.
+Save. Render restarts the site. Never put the Secret ID in the files or on GitHub.
 
-### 4. Log in
+Do not add `SITE_PASSWORD` if you want the site to open normally. It exists only for keeping the whole site private behind one password.
 
-Open your site and click **Log in to Fyers**. After the Fyers login the chart opens.
+### 4. Try it
 
-## How often you log in
-
-Fyers closes every login overnight; that is a rule for all Indian brokers.
-
-- **With `FYERS_PIN` set:** the site renews the login by itself for 15 days, on any browser where you logged in. After 15 days, click Log in to Fyers once.
-- **Without it:** click Log in to Fyers once each morning.
-
-The PIN stays in Render's private settings. Never put it, or the Secret ID, in the files or on GitHub.
+Open your site. It shows the welcome page with **Log in with Fyers**. Click it, log in, and the app opens.
 
 ## What's in the app
 
@@ -58,6 +61,19 @@ The menu across the top has five pages.
 - *Signal failed* when the stop loss is hit, with the exit price.
 
 The buy price is the option's real traded price when the signal fired. Stop loss and targets are the premiums the option should show when the chart reaches its own stop and targets; for thinly traded options they fall back to −20% and +20% / +45% / +80%. Below the signals are live prices for every instrument.
+
+**Two tabs on Home: Strict signals and Other signals** — Strict signals are the ones where the bigger trend points the same way and is still moving, trend strength is above its threshold, price is on the right side of VWAP and Supertrend, the score is 72 or more, and it is not the first 15 or last 45 minutes of the session. Other signals passed the basic rules only and are weaker. Neither tab is guaranteed to profit; the Results page shows how each has actually done.
+
+**On every signal card**
+- *Current price*, large, with the profit or loss in percent and a small line of the recent price.
+- *Direction*: whether the price is moving up, moving down or flat over the last three candles, and whether that is in favour of the trade or against it.
+- *Price track*: where the price sits between stop loss, entry and the three targets.
+- *Entry taken or not*: press "I took this entry" and the card follows your own entry price from then on. This is remembered on your device only.
+- *Late entry*: if you have not entered, the card says whether entering now still makes sense. If it does, it gives the entry at the current price, the stop loss, the targets and the new risk against reward. If Target 1 is already reached, the market has turned, or the reward no longer covers the risk, it says not to enter.
+
+**Dark and light theme** — the Light / Dark button in the header.
+
+**Results** — every signal the rules gave over the loaded history (about 12 trading days on 5-minute candles), winners and losers alike: how many won and lost, the win rate, the average win and loss, a running total, and a breakdown by instrument and by day, for Strict and All side by side. Results are measured on the index, share or future price in R, where 1R is the distance from entry to stop loss. Use this page to judge the signals before risking money. Nothing is hidden from it.
 
 **Charts & signals** — pick a symbol, read the live price, and see today's signals as cards with Entry, Stop and three Targets. Every signal is boxed on the chart: green up to the target, red down to the stop. Each card names the option to buy (CALL for a buy signal, PUT for a sell signal). The Future / Call / Put switch opens the at-the-money call or put as its own live chart. The Simple / Advanced switch shows the full terminal with indicators, order blocks and the signal table.
 
@@ -80,7 +96,8 @@ The buy price is the option's real traded price when the signal fired. Stop loss
 - **MCX contracts** roll every month. The site picks the nearest live contract by itself each day and shows its month beside the name.
 - **Lot sizes** are a built-in table, not from the exchange. Check them with your broker.
 - **Free hosting sleeps** after about 15 minutes without visitors; the next visit takes up to a minute.
-- **Exchange data is licensed to you** for your own use. Set `SITE_PASSWORD` and don't share the link publicly.
+- **Each visitor sees data on their own Fyers login.** A visitor who is not logged in gets no prices.
+- **Free hosting is for trying it out.** With several users at once, move to a paid Render plan so the site stays awake and responsive.
 
 ## Limits of the signals
 

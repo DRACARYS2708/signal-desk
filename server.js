@@ -1,17 +1,20 @@
 /* ============================================================================
    SIGNAL DESK — real-time backend (Fyers data feed, free)
    ----------------------------------------------------------------------------
-   Candles, quotes and the option chain come in real time from your own Fyers
-   account through the Fyers API v3. Fyers does not charge for it.
+   The site opens for anyone and shows "Log in with Fyers". Each visitor logs in
+   with their own Fyers account and gets their own session; prices, candles and
+   the option chain then come in real time through the Fyers API v3.
+
+   Note: an app created at myapi.fyers.in only accepts its creator's Fyers
+   account. For other people to log in, Fyers has to approve the app for
+   third-party use. Until then, other visitors' logins are refused by Fyers.
 
    Settings (environment variables — set them on your host, never in this file):
 
      FYERS_APP_ID      required   App ID of the app you create at myapi.fyers.in
      FYERS_SECRET_ID   required   Secret ID of that app
-     FYERS_PIN         optional   your 4-digit Fyers PIN. With it the site renews
-                                  its own login for 15 days; without it you log
-                                  in on the site once every morning.
-     SITE_PASSWORD     optional   asks every visitor for this password
+     SITE_PASSWORD     optional   asks every visitor for this password before the
+                                  page opens. Leave it unset for a normal public site.
      PUBLIC_URL        optional   your site address, if the host doesn't provide
                                   it (Render does)
 
@@ -29,7 +32,7 @@ const PORT = process.env.PORT || 8787;
 const env = k => (process.env[k] || "").trim();
 const APP_ID = env("FYERS_APP_ID");
 const SECRET = env("FYERS_SECRET_ID");
-const PIN = env("FYERS_PIN");
+const { AsyncLocalStorage } = require("async_hooks");
 const SITE_PASSWORD = env("SITE_PASSWORD");
 const BASE = (env("PUBLIC_URL") || env("RENDER_EXTERNAL_URL") || `http://localhost:${PORT}`).replace(/\/+$/, "");
 const REDIRECT = BASE + "/auth/callback";
@@ -99,18 +102,26 @@ const bySym = t => UNIVERSE.find(u => u.tkr === t && u.fy) || optionOf(String(t 
 const live = () => UNIVERSE.filter(u => u.fy);
 
 /* ----------------------------------------------------------------- login -- */
-const auth = { access: null, refresh: null, exp: 0, error: null };
-const NEED_LOGIN = "Log in to Fyers to start the live feed.";
+/* One session per visitor, found by a cookie. Whatever a request does later —
+   however deep in the code — `auth` is that visitor's own session, so one
+   person's Fyers login is never used as another person's. */
+const NEED_LOGIN = "Log in with Fyers to start the live feed.";
+const sessions = new Map();
+const blank = () => ({ access: null, exp: 0, error: null, seen: Date.now() });
+const visitor = new AsyncLocalStorage(), NOBODY = blank();
+const auth = new Proxy({}, {
+  get: (_t, k) => (visitor.getStore() || NOBODY)[k],
+  set: (_t, k, v) => { (visitor.getStore() || NOBODY)[k] = v; return true; },
+});
+setInterval(() => {                           // forget visitors not seen for a day and a half
+  for (const [k, v] of sessions) if (Date.now() - v.seen > 36 * 3600e3) sessions.delete(k);
+}, 3600e3).unref();
 
 function jwtExp(tok) {
   try { return JSON.parse(Buffer.from(tok.split(".")[1], "base64url").toString()).exp * 1000 || 0; }
   catch (e) { return 0; }
 }
-function setAccess(tok, refresh) {
-  auth.access = tok; auth.exp = jwtExp(tok); auth.error = null;
-  if (refresh) auth.refresh = refresh;
-  resolved = null;                           // re-check the instrument list with the new login
-}
+function setAccess(tok) { auth.access = tok; auth.exp = jwtExp(tok); auth.error = null; }
 function dropAccess(why) { auth.access = null; auth.exp = 0; auth.error = why || NEED_LOGIN; }
 const hasAccess = () => !!auth.access && (!auth.exp || Date.now() < auth.exp - 60000);
 
@@ -123,23 +134,11 @@ async function postJson(url, body) {
 const exchangeCode = code => postJson(API + "/validate-authcode",
   { grant_type: "authorization_code", appIdHash: APP_HASH, code });
 
-/* A refresh token lasts 15 days and, with the PIN, buys a new day's access
-   token without anyone logging in. */
-let refreshing = null;
-function renew() {
-  if (!auth.refresh || !PIN) return Promise.reject(new Error(NEED_LOGIN));
-  refreshing = refreshing || postJson(API + "/validate-refresh-token",
-      { grant_type: "refresh_token", appIdHash: APP_HASH, refresh_token: auth.refresh, pin: PIN })
-    .then(j => { setAccess(j.access_token, j.refresh_token); })
-    .catch(e => { auth.refresh = null; dropAccess(NEED_LOGIN); throw new Error(NEED_LOGIN); })
-    .finally(() => { refreshing = null; });
-  return refreshing;
-}
 async function access() {
   if (!APP_ID || !SECRET) throw new Error(auth.error = "FYERS_APP_ID and FYERS_SECRET_ID are not set on the server.");
   if (hasAccess()) return auth.access;
-  await renew();
-  return auth.access;
+  dropAccess(NEED_LOGIN);
+  throw new Error(NEED_LOGIN);
 }
 
 /* ------------------------------------------------------- Fyers requests -- */
@@ -157,7 +156,7 @@ function queued(fn) {
 }
 const AUTH_CODES = [-8, -15, -16, -17];
 
-async function fy(pathname, params, retried) {
+async function fy(pathname, params) {
   const tok = await access();
   const r = await queued(() => fetch(DATA + pathname + "?" + new URLSearchParams(params),
     { headers: { Authorization: APP_ID + ":" + tok, version: "3", Accept: "application/json" } }));
@@ -166,7 +165,6 @@ async function fy(pathname, params, retried) {
   const code = j ? Number(j.code) : 0;
   if (r.status === 401 || r.status === 403 || AUTH_CODES.includes(code)) {
     dropAccess(NEED_LOGIN);
-    if (!retried && auth.refresh && PIN) { await renew(); return fy(pathname, params, true); }
     throw new Error(NEED_LOGIN);
   }
   if (r.status === 429 || code === -429) throw new Error("Fyers rate limit reached; slowing down.");
@@ -249,6 +247,19 @@ if (SITE_PASSWORD) app.use((req, res, next) => {
   res.set("WWW-Authenticate", 'Basic realm="Signal Desk"').status(401).send("Password required");
 });
 
+app.use((req, res, next) => {
+  const m = /(?:^|;\s*)sd_sid=([a-f0-9]{48})/.exec(req.headers.cookie || "");
+  let sid = m && m[1], s = sid && sessions.get(sid);
+  if (!s) {
+    if (sessions.size > 20000) sessions.delete(sessions.keys().next().value);
+    if (!sid) sid = crypto.randomBytes(24).toString("hex");
+    s = blank(); sessions.set(sid, s);
+    res.append("Set-Cookie", `sd_sid=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${BASE.startsWith("https") ? "; Secure" : ""}`);
+  }
+  s.seen = Date.now(); req.sid = sid;
+  visitor.run(s, next);
+});
+
 app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "index.html")));
 
 /* ---- login with Fyers ---------------------------------------------------- */
@@ -258,12 +269,12 @@ const page = (title, body) => `<!doctype html><meta charset="utf-8"><meta name="
 <h2 style="font-size:22px">${title}</h2>${body}</body>`;
 const escHtml = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
 
-app.get("/auth/login", (_req, res) => {
+app.get("/auth/login", (req, res) => {
   if (!APP_ID || !SECRET) return res.status(500).send(page("Setup is not finished",
     "<p>FYERS_APP_ID and FYERS_SECRET_ID are not set on the server.</p>"));
   const state = crypto.randomBytes(16).toString("hex");
-  states.set(state, Date.now());
-  for (const [k, t] of states) if (Date.now() - t > 15 * 60000) states.delete(k);
+  states.set(state, { at: Date.now(), sid: req.sid });
+  for (const [k, v] of states) if (Date.now() - v.at > 15 * 60000) states.delete(k);
   res.redirect(API + "/generate-authcode?" + new URLSearchParams(
     { client_id: APP_ID, redirect_uri: REDIRECT, response_type: "code", state }));
 });
@@ -272,40 +283,37 @@ app.get("/auth/callback", async (req, res) => {
   const fail = why => res.status(400).send(page("Fyers login did not complete",
     `<p>${escHtml(why)}</p><p><a href="/auth/login" style="color:#4C9AFF">Try again</a></p>`));
   const code = req.query.auth_code, state = String(req.query.state || "");
-  if (!states.has(state)) return fail("This login link has expired. Start again from the site.");
+  const st = states.get(state);
   states.delete(state);
+  if (!st || st.sid !== req.sid) return fail("This login link has expired. Start again from the site.");
   if (!code) return fail(String(req.query.message || "Fyers did not return a login code."));
   try {
     const j = await exchangeCode(String(code));
-    setAccess(j.access_token, j.refresh_token);
-    console.log("  logged in to Fyers");
+    setAccess(j.access_token);
+    console.log(`  a visitor logged in with Fyers (${[...sessions.values()].filter(v => v.access).length} logged in now)`);
     // Keep the tokens in this browser too, so the site can wake the server
     // after it sleeps without another login.
-    const keep = JSON.stringify({ a: j.access_token, r: j.refresh_token || null }).replace(/</g, "\\u003c");
+    const keep = JSON.stringify({ a: j.access_token }).replace(/</g, "\\u003c");
     res.send(page("Logged in", `<p>Opening Signal Desk…</p><script>
       try{ localStorage.setItem("sd_fy", JSON.stringify(${keep})); }catch(e){}
       location.replace("/");</script>`));
-  } catch (e) { fail(e.message + " Check that FYERS_APP_ID and FYERS_SECRET_ID are correct and that the app's redirect address is exactly " + REDIRECT); }
+  } catch (e) { fail(e.message + " If this is not the Fyers account that created the app, Fyers has to approve the app for other users first. Otherwise check that FYERS_APP_ID and FYERS_SECRET_ID are correct and that the app's redirect address is exactly " + REDIRECT); }
 });
 
-app.post("/auth/logout", (_req, res) => {
-  auth.access = null; auth.refresh = null; auth.exp = 0; auth.error = NEED_LOGIN; resolved = null; cache.clear();
-  res.json({ ok: true });
-});
+app.post("/auth/logout", (_req, res) => { dropAccess(NEED_LOGIN); res.json({ ok: true }); });
 
-/* The page hands back the tokens it kept, after the server has restarted. */
+/* After the server restarts it has forgotten every login. The visitor's own
+   browser hands its token back; it is accepted only if Fyers still honours it. */
 app.post("/auth/restore", async (req, res) => {
-  const a = typeof req.body?.a === "string" ? req.body.a : "", r = typeof req.body?.r === "string" ? req.body.r : "";
+  const a = typeof req.body?.a === "string" && req.body.a.length < 4000 ? req.body.a : "";
   try {
-    if (hasAccess()) return res.json({ ok: true });
-    if (r) auth.refresh = r;
-    if (a && (!jwtExp(a) || Date.now() < jwtExp(a) - 60000)) {
+    if (!hasAccess()) {
+      if (!a || (jwtExp(a) && Date.now() > jwtExp(a) - 60000)) throw new Error(NEED_LOGIN);
       setAccess(a);
-      try { await fy("/quotes", { symbols: "NSE:NIFTY50-INDEX" }); }
-      catch (e) { if (!hasAccess()) throw e; }
-    } else await renew();
-    res.json({ ok: hasAccess(), a: auth.access, r: auth.refresh });
-  } catch (e) { res.json({ ok: false }); }
+      await fy("/quotes", { symbols: "NSE:NIFTY50-INDEX" });
+    }
+    res.json({ ok: hasAccess(), a: auth.access });
+  } catch (e) { dropAccess(NEED_LOGIN); res.json({ ok: false }); }
 });
 
 app.get("/api/status", async (_req, res) => {
@@ -316,8 +324,17 @@ app.get("/api/status", async (_req, res) => {
 });
 
 const guard = fn => async (req, res) => {
-  try { await ensureUniverse(); await fn(req, res); }
-  catch (e) { res.status(e.message === NEED_LOGIN ? 401 : 502).json({ error: e.message }); }
+  try {
+    await access();                            // the visitor must be logged in themselves
+    for (let attempt = 0; ; attempt++) {
+      try { await ensureUniverse(); return await fn(req, res); }
+      catch (e) {
+        // The answer may have been fetched on someone else's login that had just run out. Ask again on this visitor's own.
+        if (e.message === NEED_LOGIN && hasAccess() && attempt < 2) continue;
+        throw e;
+      }
+    }
+  } catch (e) { if (!res.headersSent) res.status(e.message === NEED_LOGIN ? 401 : 502).json({ error: e.message }); }
 };
 
 app.get("/api/instruments", guard(async (_req, res) => res.json(live().map(u => ({
@@ -423,6 +440,6 @@ app.listen(PORT, () => {
   console.log(`\nSignal Desk (Fyers real-time feed) on ${BASE}`);
   console.log("  Fyers app  : " + (APP_ID && SECRET ? "set" : "NOT SET — add FYERS_APP_ID and FYERS_SECRET_ID"));
   console.log("  redirect   : " + REDIRECT + "   (enter exactly this in the Fyers app)");
-  console.log("  auto-renew : " + (PIN ? "on (FYERS_PIN set)" : "off — log in on the site each morning"));
-  console.log("  password   : " + (SITE_PASSWORD ? "on" : "off — anyone with the link can view") + "\n");
+  console.log("  visitors   : each logs in with their own Fyers account");
+  console.log("  password   : " + (SITE_PASSWORD ? "on — asked before the page opens" : "off — the site opens normally") + "\n");
 });
