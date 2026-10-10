@@ -64,6 +64,8 @@ The buy price is the option's real traded price when the signal fired. Stop loss
 
 **Two tabs on Home: Strict signals and Other signals** — Strict signals are the ones where the bigger trend points the same way and is still moving, trend strength is above its threshold, price is on the right side of VWAP and Supertrend, the score is 72 or more, and it is not the first 15 or last 45 minutes of the session. Other signals passed the basic rules only and are weaker. Neither tab is guaranteed to profit; the Results page shows how each has actually done.
 
+**Three groups on Home** — signals and live prices are shown separately for Indices (blue, chart icon), Commodities (amber, dashed frame, drop icon) and Stocks (violet, squared frame, bars icon). Each group shows up to six signals, active ones first, with a count of all its signals today.
+
 **On every signal card**
 - *Current price*, large, with the profit or loss in percent and a small line of the recent price.
 - *Direction*: whether the price is moving up, moving down or flat over the last three candles, and whether that is in favour of the trade or against it.

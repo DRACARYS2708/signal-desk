@@ -227,6 +227,26 @@ body.simple header h1{font-size:19px}
 .page h3{font-size:17px;font-weight:600;margin:26px 0 10px}
 .sub{color:var(--mid);font-size:14.5px;margin-top:3px}
 .tiles{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(168px,1fr))}
+.grp{--gc:var(--key);margin-top:20px;border:1px solid color-mix(in srgb,var(--gc) 38%,var(--line));border-radius:18px;
+  padding:14px 14px 16px;background:linear-gradient(180deg,color-mix(in srgb,var(--gc) 11%,var(--bg)),color-mix(in srgb,var(--gc) 3%,var(--bg)) 180px)}
+.grp[data-g="MCX"]{--gc:var(--warn);border-style:dashed}
+.grp[data-g="EQ"]{--gc:var(--violet);border-radius:8px}
+.grp-hd{display:flex;align-items:center;gap:10px 12px;margin:2px 2px 14px;flex-wrap:wrap}
+.grp-hd>div{flex:1 1 160px;min-width:0}
+.grp,.grp .trades{min-width:0}
+@media(max-width:560px){.grp{padding:10px 8px 12px;border-radius:14px}.grp .trade{padding:12px 12px}}
+.grp-hd .ic{width:38px;height:38px;border-radius:11px;background:var(--gc);display:grid;place-items:center;flex:none}
+.grp[data-g="MCX"] .ic{border-radius:50%}
+.grp[data-g="EQ"] .ic{border-radius:6px}
+.grp-hd .ic svg{width:22px;height:22px}
+.grp-hd h3{margin:0;font-size:18.5px;font-weight:700}
+.grp-hd small{display:block;font-size:13.5px;color:var(--mid);font-weight:400}
+.grp-hd .ct{margin-left:auto;font:600 13px var(--m);color:var(--gc);border:1px solid var(--gc);border-radius:20px;padding:3px 11px;white-space:nowrap}
+.grp .trade{border-top:3px solid var(--gc)}
+.grp[data-g="MCX"] .trade,.grp[data-g="MCX"] .tile{border-radius:16px}
+.grp[data-g="EQ"] .trade,.grp[data-g="EQ"] .tile{border-radius:6px}
+.grp .tile{border-top:3px solid var(--gc)}
+.grp .none{padding:10px 4px 2px;color:var(--low);font-size:14.5px}
 .tile{text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
 .tile:hover{border-color:var(--mid)}
 .tile .n{font-size:14px;color:var(--mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -443,7 +463,7 @@ button.pick:hover{background:var(--key);color:#fff;text-decoration:none}
   <div class="seg tabs" id="strictHome" aria-label="Which signals to show"></div>
   <h3 id="homeSigTitle" style="margin-top:14px">Live signals</h3>
   <div class="sub" id="homeTabNote" style="margin:-4px 0 12px"></div>
-  <div id="homeSigs" class="trades"></div>
+  <div id="homeSigs"></div>
   <div class="sub" id="homeSigNote" style="margin-top:10px"></div>
   <div id="homeGrid"></div>
 </section>
@@ -1398,7 +1418,7 @@ function renderHome(){
   const groups={}; S.universe.filter(u=>u.seg!=="OPT").forEach(u=>(groups[u.seg]=groups[u.seg]||[]).push(u));
   const g=document.getElementById("homeGrid"); g.innerHTML=`<h2 style="margin-top:34px">Market now</h2>`;
   Object.keys(groups).forEach(k=>{
-    const h=document.createElement("h3"); h.textContent=SEG_NAMES[k]||k; g.appendChild(h);
+    const w=grpBox(k, groups[k].length+" live prices"); g.appendChild(w);
     const t=document.createElement("div"); t.className="tiles";
     groups[k].forEach(u=>{
       const q=S.quotes[u.tkr]||{}, a=(S.sigs[u.tkr]||[]).filter(s=>s.res.state==="ACTIVE").pop();
@@ -1409,7 +1429,7 @@ function renderHome(){
       b.onclick=()=>goChart(u.tkr);
       t.appendChild(b);
     });
-    g.appendChild(t);
+    w.appendChild(t);
   });
   renderStrictSegs();
   const past=tally(pastSignals(true)), nAct=all.filter(x=>x.res.state==="ACTIVE").length;
@@ -1590,7 +1610,7 @@ let trBusy=false;
 async function pumpTrades(){
   if(trBusy||!S.ready) return; trBusy=true;
   try{
-    const list=homeSignals().slice(0,14), keep=new Set(list.map(sigKey));
+    const list=homeShown(), keep=new Set(list.map(sigKey));
     Object.keys(S.otr).forEach(k=>{ if(!keep.has(k)) delete S.otr[k]; });
     let builds=0, refreshes=0;
     for(const s of list){
@@ -1661,7 +1681,7 @@ function lateEntry(m){
 }
 function renderTrades(){
   if(S.page!=="home") return;
-  const el=document.getElementById("homeSigs"), list=homeSignals().slice(0,14);
+  const el=document.getElementById("homeSigs"), list=homeShown();
   const models=list.map(s=>({s,m:tradeModel(s)})), nLive=models.filter(x=>x.m.active).length;
   document.getElementById("homeSigTitle").textContent=(S.strict?"Strict signals":"Other signals")+" ("+nLive+" active)";
   document.getElementById("homeTabNote").textContent=S.strict
@@ -1670,9 +1690,18 @@ function renderTrades(){
   document.getElementById("homeSigNote").textContent=list.length
     ?"Buy price is the option's actual price when the signal fired. Stop loss and targets come from the chart's stop and targets. \"I took this entry\" is remembered on this device only."
     :"";
-  if(!list.length){ el.innerHTML=`<div class="empty" style="font-size:15.5px;grid-column:1/-1">No ${S.strict?"strict":"other"} signals yet today. `+
-    `${S.strict?"Strict signals are rare by design; a quiet day can have none.":"They appear here the moment a setup is confirmed."}</div>`; return; }
-  el.innerHTML=""; models.forEach(({s,m})=>{
+
+  el.innerHTML="";
+  const total=homeSignals(), boxes={};
+  GROUPS.forEach(g=>{
+    const mine=total.filter(s=>uni(s.tkr).seg===g[0]), act=models.filter(x=>uni(x.s.tkr).seg===g[0]&&x.m.active).length;
+    const w=grpBox(g[0], mine.length?`${mine.length} signal${mine.length===1?"":"s"} · ${act} active`:"no signals");
+    const grid=document.createElement("div"); grid.className="trades"; w.appendChild(grid);
+    if(!mine.length) grid.outerHTML=`<div class="none">No ${S.strict?"strict":"other"} signals in ${g[1].toLowerCase()} today.</div>`;
+    else if(mine.length>6){ const n=document.createElement("div"); n.className="none"; n.textContent=`Showing the latest 6 of ${mine.length}. The rest are on the Charts & signals page.`; w.appendChild(n); }
+    boxes[g[0]]=w.querySelector(".trades"); el.appendChild(w);
+  });
+  models.forEach(({s,m})=>{
     const f=m.f, k=takeKey(s), mine=taken.get(k), base=mine?mine.px:m.entry;
     const pct=m.d*(m.now-base)/base*100, up=pct>=0, pc=`${up?"+":""}${pct.toFixed(1)}%`, mv=moving(m);
     const tg=(v,n)=>`<span style="color:${m.hit>=n?C.up:"inherit"}">${f(v)}${m.hit>=n?"✓":""}</span>`;
@@ -1733,7 +1762,7 @@ function renderTrades(){
       else taken.set(k,null);
       renderTrades();
     });
-    el.appendChild(b);
+    (boxes[uni(s.tkr).seg]||el).appendChild(b);
   });
 }
 
@@ -2082,6 +2111,23 @@ async function selectSym(tkr){
 }
 
 /* Simple view: one dropdown for the symbol and a large live price. */
+const GROUPS=[
+  ["IDX","Indices","Nifty, Bank Nifty, Sensex and the other indices",'<path d="M3 17l5-6 4 3 7-9" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>'],
+  ["MCX","Commodities","Crude oil, gold, silver, copper and natural gas on MCX",'<path d="M12 3c3.5 4.2 6 7.3 6 10.3A6 6 0 0 1 6 13.300C6 10.300 8.500 7.200 12 3z" fill="#fff"/>'],
+  ["EQ","Stocks","Reliance, HDFC Bank, Federal Bank, Coal India and other shares",'<path d="M4 20V10M10 20V4M16 20v-8M21 20H2" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>'],
+];
+function grpBox(k, count){
+  const g=GROUPS.find(x=>x[0]===k)||[k,SEG_NAMES[k]||k,"",""], w=document.createElement("section");
+  w.className="grp"; w.dataset.g=k;
+  w.innerHTML=`<div class="grp-hd"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true">${g[3]}</svg></span>`+
+    `<div><h3>${g[1]}</h3><small>${g[2]}</small></div><span class="ct">${count}</span></div>`;
+  return w;
+}
+/* Signals shown on Home: up to six per group, active ones first. */
+function homeShown(){
+  const all=homeSignals();
+  return GROUPS.reduce((a,g)=>a.concat(all.filter(s=>uni(s.tkr).seg===g[0]).slice(0,6)),[]);
+}
 const SEG_NAMES={IDX:"Indices",MCX:"Commodities (MCX)",EQ:"Stocks",GLB:"Global commodities",OPT:"Options you opened"};
 function renderHead(){
   const sel=document.getElementById("symSel");
