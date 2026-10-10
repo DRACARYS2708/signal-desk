@@ -1,6 +1,6 @@
 # Signal Desk — real-time build (Fyers feed, free)
 
-Intraday signal terminal for NSE indices, NSE stocks and MCX crude oil, natural gas, gold, silver and copper. Prices, candles and the option chain come in real time from your own Fyers account. Fyers does not charge for its API or market data. The page refreshes every 5 seconds.
+Intraday option-signal app for NSE indices, 17 liquid NSE stocks (Reliance, HDFC Bank, Federal Bank, Coal India and others) and MCX crude oil, natural gas, gold, silver and copper. Prices, candles and the option chain come in real time from your own Fyers account. Fyers does not charge for its API or market data. The page refreshes every 5 seconds.
 
 This is analysis software. It places no orders.
 
@@ -46,17 +46,32 @@ Fyers closes every login overnight; that is a rule for all Indian brokers.
 
 The PIN stays in Render's private settings. Never put it, or the Secret ID, in the files or on GitHub.
 
-## Using the page
+## What's in the app
 
-**Simple view (default)** — pick a symbol from the dropdown, read the live price, and see today's signals as cards with Entry, Stop and three Targets. Tap a card to draw those levels on the chart. Buttons zoom the chart; on a phone, slide sideways to move and pinch to zoom.
+The menu across the top has five pages.
 
-**Trade boxes** — every signal is boxed on the chart from its entry candle to where it ended: green up to the target, red down to the stop. The latest signal shows its TP, Entry and SL prices; tap any other card to box that one.
+**Home** — every live signal as an option trade, for example "NIFTY 50 — 25100 CE, expiry 13 Oct, Buy @ 126, Stop loss 100, Target 1 / 2 / 3 150 / 190 / 250", with the option's price now and its profit or loss. A buy signal gives a CALL and a sell signal gives a PUT, at the strike nearest the price, in the nearest expiry with at least a day left. Each card then says in words what is happening:
 
-**Calls and puts** — each signal card names the option to buy (CALL for a buy signal, PUT for a sell signal). The Future / Call / Put switch beside the price opens the at-the-money call or put as its own live chart with its own signals. **More strikes** opens the option chain; tap any call or put price there to chart that contract. Opened options stay in the dropdown under "Options you opened". On an option's own chart, signals refer to the premium: BUY means buy that option, SELL means the premium is falling.
+- *Signal hit positive* when the option is above the buy price, and which targets have been reached.
+- *Safe exit* price at all times: the stop loss at first, your buy price once Target 1 is reached, Target 1 once Target 2 is reached.
+- *Market is turning against this trade, safe exit now near …* when the option is below the buy price and the chart has turned, before the stop loss is hit.
+- *Signal failed* when the stop loss is hit, with the exit price.
 
-**Advanced view** — the full terminal: watchlist, indicator read-outs, order blocks, liquidity pools, fair value gaps, RSI/MACD panes, the full signal table, the trade plan panel and the option chain.
+The buy price is the option's real traded price when the signal fired. Stop loss and targets are the premiums the option should show when the chart reaches its own stop and targets; for thinly traded options they fall back to −20% and +20% / +45% / +80%. Below the signals are live prices for every instrument.
 
-**Signals** — fire on a fresh EMA cross or Supertrend flip that also scores 60 or more out of 100 on eleven checks. No new entries in the last 25 minutes of a session; open signals close 5 minutes before the session ends (15:30 for NSE, 23:30 for MCX).
+**Charts & signals** — pick a symbol, read the live price, and see today's signals as cards with Entry, Stop and three Targets. Every signal is boxed on the chart: green up to the target, red down to the stop. Each card names the option to buy (CALL for a buy signal, PUT for a sell signal). The Future / Call / Put switch opens the at-the-money call or put as its own live chart. The Simple / Advanced switch shows the full terminal with indicators, order blocks and the signal table.
+
+**Option chain** — live OI, change in OI, volume, IV and price for every strike, with PCR and max pain. Tap any call or put price to chart that contract.
+
+**Open interest** — bar charts of open interest and today's change by strike, with a plain reading of where support and resistance sit.
+
+**Strategy builder** — choose a ready-made strategy (buy call, spreads, straddle, strangle, iron condor) or build your own legs. It shows what you pay or receive, maximum profit, maximum loss, breakevens and a payoff graph at expiry and today. It never places an order.
+
+**Log in with Fyers / Log out** — the login is used only to read prices.
+
+**Install as an app** — on a phone, open the site in Chrome or Safari and choose "Add to Home screen". It then opens full-screen from its own icon.
+
+**Signals** — fire on a fresh EMA cross or Supertrend flip that also scores 60 or more out of 100 on eleven checks. No new entries in the last 25 minutes of a session; open signals close 5 minutes before the session ends (15:30 for NSE, 23:30 for MCX). On an option's own chart, signals refer to the premium.
 
 **Times** — everything is shown in India time (IST).
 

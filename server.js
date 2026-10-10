@@ -77,8 +77,16 @@ const UNIVERSE = [
   eq("TCS", "TCS", 40, 175),
   eq("SBIN", "SBIN", 10, 750),
   eq("TATA MOTORS", "TATAMOTORS", 10, null, ["NSE:TMPV-EQ"]),
-  eq("HDFC AMC", "HDFCAMC", 50, 150),
   eq("BAJAJ FINANCE", "BAJFINANCE", 10, 750),
+  eq("FEDERAL BANK", "FEDERALBNK", 2.5, null),
+  eq("COAL INDIA", "COALINDIA", 5, null),
+  eq("AXIS BANK", "AXISBANK", 10, null),
+  eq("KOTAK BANK", "KOTAKBANK", 20, null),
+  eq("ITC", "ITC", 5, null),
+  eq("L&T", "LT", 20, null),
+  eq("BHARTI AIRTEL", "BHARTIARTL", 20, null),
+  eq("TATA STEEL", "TATASTEEL", 2.5, null),
+  eq("HDFC AMC", "HDFCAMC", 50, 150),
 ];
 UNIVERSE.forEach(u => { u.open = u.open || 555; u.close = u.close || 930; u.fy = null; });
 /* A single option contract (a call or a put) can be charted too. It is not in
@@ -218,6 +226,18 @@ const app = express();
 app.use(cors({ origin: process.env.ALLOW_ORIGIN || "*" }));
 app.use(express.json({ limit: "20kb" }));
 
+/* Lets a phone or computer install the site as an app (Add to Home screen).
+   Served before the password check; neither holds anything private. */
+const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="96" fill="#0F1319"/>
+<path d="M96 344l88-96 72 56 112-152" fill="none" stroke="#26A96C" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="368" cy="152" r="34" fill="#4C9AFF"/></svg>`;
+app.get("/icon.svg", (_req, res) => res.type("image/svg+xml").send(ICON));
+app.get("/manifest.webmanifest", (_req, res) => res.type("application/manifest+json").json({
+  name: "Signal Desk", short_name: "Signal Desk", start_url: "/", scope: "/", display: "standalone",
+  background_color: "#0F1319", theme_color: "#161B23",
+  icons: [{ src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" }],
+}));
+
 /* Optional password. Real-time exchange data is licensed to you for your own
    use, and every visitor spends your Fyers request limit, so keep it private. */
 if (SITE_PASSWORD) app.use((req, res, next) => {
@@ -266,6 +286,11 @@ app.get("/auth/callback", async (req, res) => {
       try{ localStorage.setItem("sd_fy", JSON.stringify(${keep})); }catch(e){}
       location.replace("/");</script>`));
   } catch (e) { fail(e.message + " Check that FYERS_APP_ID and FYERS_SECRET_ID are correct and that the app's redirect address is exactly " + REDIRECT); }
+});
+
+app.post("/auth/logout", (_req, res) => {
+  auth.access = null; auth.refresh = null; auth.exp = 0; auth.error = NEED_LOGIN; resolved = null; cache.clear();
+  res.json({ ok: true });
 });
 
 /* The page hands back the tokens it kept, after the server has restarted. */
@@ -320,7 +345,7 @@ app.get("/api/candles", guard(async (req, res) => {
 /* --------------------------------------------------------------- quotes -- */
 app.get("/api/quotes", guard(async (req, res) => {
   // `x` = option contracts the viewer has opened, quoted alongside the watchlist
-  const extra = [...new Set(String(req.query.x || "").split(",").filter(s => OPT_RE.test(s)))].slice(0, 8);
+  const extra = [...new Set(String(req.query.x || "").split(",").filter(s => OPT_RE.test(s)))].slice(0, 20);
   const out = await cached("quotes:" + extra.join(","), 3000, async () => {
     const j = await fy("/quotes", { symbols: live().map(u => u.fy).concat(extra).join(",") });
     const q = {};
