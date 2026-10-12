@@ -62,9 +62,26 @@ The menu across the top has five pages.
 
 The buy price is the option's real traded price when the signal fired. Stop loss and targets are the premiums the option should show when the chart reaches its own stop and targets; for thinly traded options they fall back to −20% and +20% / +45% / +80%. Below the signals are live prices for every instrument.
 
-**Two tabs on Home: Strict signals and Other signals** — Strict signals are the ones where the bigger trend points the same way and is still moving, trend strength is above its threshold, price is on the right side of VWAP and Supertrend, the score is 72 or more, and it is not the first 15 or last 45 minutes of the session. Other signals passed the basic rules only and are weaker. Neither tab is guaranteed to profit; the Results page shows how each has actually done.
+**How a signal is found** — the engine reads three timeframes: trend (default 1 hour), setup (15 minutes) and entry (the candle size you choose, default 5 minutes). Change setup and trend next to the candle-size buttons on the chart. A CALL BUY setup needs all of:
 
-**Three groups on Home** — signals and live prices are shown separately for Indices (blue, chart icon), Commodities (amber, dashed frame, drop icon) and Stocks (violet, squared frame, bars icon). Each group shows up to six signals, active ones first, with a count of all its signals today.
+1. Trend timeframe: the last structure break was bullish (closed candles only).
+2. Setup timeframe: price recently reached a bullish order block, an unfilled bullish fair value gap, or the discount half of the dealing range.
+3. Entry timeframe: sell-side liquidity (a swing low, equal lows, previous day or week low) was swept: a wick below and a close back above.
+4. After the sweep, a bullish break of structure or change of character on a candle close, with a displacement candle in the move.
+5. RSI above 50; and for stocks and MCX, volume at 1.2× average on the sweep or the break. Indices have no volume in the feed, so this check is skipped and the card says so.
+6. Entry by limit at the near edge of the gap (or order block) the move left, filled within 18 candles before the stop or Target 1 trades.
+7. Stop beyond the sweep, 0.5 to 2.5 ATR from entry.
+8. Room: the first opposing liquidity is at least 1.5R away after costs. Targets are that liquidity and the next pools beyond it.
+
+PUT BUY is the mirror image. One trade per instrument at a time; no new entries in the first 15 or last 45 minutes.
+
+**Grades and tabs** — Strict signals are grade A: the zone was an order block or gap, the break was a market structure shift or came on high volume, and there is room for 2R or more. Other signals are grade B: every core rule passed but not the extras. Expect only a few signals a day across all instruments, and days with none.
+
+**Every instrument has a state** — shown on its Home tile and above the chart: CALL BUY SETUP, PUT BUY SETUP, WAIT (setup forming, with what is missing, or a confirmed setup waiting for the pull-back entry) or NO TRADE (with the reason).
+
+**No repainting** — every value for a candle uses only candles that had closed by then, and higher-timeframe candles only once they have closed. A signal never changes or disappears afterwards, so the Results page counts exactly what was shown live.
+
+**On the chart** — EMA 20/50/200, VWAP where there is volume, swing labels (HH, HL, LH, LL), BOS / CHoCH / MSS lines, order blocks (fresh or tested; broken ones removed), fair value gaps (unfilled or part filled), liquidity levels with their type and whether swept, and premium / discount around the 50% line. RSI, MACD, volume and Bollinger are optional.
 
 **On every signal card**
 - *Current price*, large, with the profit or loss in percent and a small line of the recent price.
@@ -72,6 +89,21 @@ The buy price is the option's real traded price when the signal fired. Stop loss
 - *Price track*: where the price sits between stop loss, entry and the three targets.
 - *Entry taken or not*: press "I took this entry" and the card follows your own entry price from then on. This is remembered on your device only.
 - *Late entry*: if you have not entered, the card says whether entering now still makes sense. If it does, it gives the entry at the current price, the stop loss, the targets and the new risk against reward. If Target 1 is already reached, the market has turned, or the reward no longer covers the risk, it says not to enter.
+
+**Copy for WhatsApp** — every signal card has *Copy signal for WhatsApp*, which copies it in this form, ready to paste:
+
+```
+NIFTY 50 - 13 OCT EXPIRY
+BUY 22000 CE @ 260
+SL - 200
+T1/T2/T3 - 290/350/390
+```
+
+*Copy update* copies the latest news on that trade (for example "✅ T2 350 DONE. Trail SL 332" or "⚠️ EXIT NOW near 345 to book profit"), and *Send on WhatsApp* opens WhatsApp with the signal filled in so you can pick the group.
+
+**Protecting profit** — after Target 1 the stop loss moves to the entry price. After Target 2 a trailing stop loss locks 60% of the best gain so far (never less than Target 1) and rises as the price makes new highs; the card shows its value. If, after any target, the chart turns against the trade (structure turns or price closes back through EMA 20), the card shows an EXIT ALERT with the price to exit at and the profit it keeps. The Results page uses the same trailing rule.
+
+**Alerts** — *Turn on alerts* on Home plays a sound and shows a notification for a new signal, each target, an exit alert, a stop, or a closed trade. They work only while the site is open in a tab or as an installed app.
 
 **Dark and light theme** — the Light / Dark button in the header.
 
@@ -92,6 +124,17 @@ The buy price is the option's real traded price when the signal fired. Stop loss
 **Signals** — fire on a fresh EMA cross or Supertrend flip that also scores 60 or more out of 100 on eleven checks. No new entries in the last 25 minutes of a session; open signals close 5 minutes before the session ends (15:30 for NSE, 23:30 for MCX). On an option's own chart, signals refer to the premium.
 
 **Times** — everything is shown in India time (IST).
+
+## Audit of the previous signal engine (October 2026)
+
+- **Repainting and look-ahead:** order blocks, liquidity sweeps and swing points were worked out with later candles. On test data about 5% of signals shown live later changed or vanished, and the Results page was flattered.
+- **One idea counted seven times:** 76 of the 100 score points measured the same thing (price recently went up: EMA order, EMA cross, above EMA 50, VWAP, MACD, Supertrend, ADX), so any small upswing scored 60.
+- **Late, lagging triggers:** entries came on EMA crossovers or Supertrend flips, after the move, and fired constantly in sideways markets.
+- **Stops inside the noise and blind targets:** stops sat just under the last three candles; targets were fixed at 1R/2R/3R regardless of resistance in the way; costs were ignored.
+- **No real higher timeframe, and volume silently missing:** indices have no volume in the feed, so the volume check could never pass and VWAP was not a real VWAP.
+- **Option contract not checked:** no check of spread or trading in the chosen option.
+
+All of these are addressed by the new engine above.
 
 ## Limits to know
 

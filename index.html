@@ -247,6 +247,8 @@ body.simple header h1{font-size:19px}
 .grp[data-g="EQ"] .trade,.grp[data-g="EQ"] .tile{border-radius:6px}
 .grp .tile{border-top:3px solid var(--gc)}
 .grp .none{padding:10px 4px 2px;color:var(--low);font-size:14.5px}
+.tile .stt{display:inline-block;margin-top:8px;padding:2px 8px;border:1px solid;border-radius:6px;font:700 11.5px var(--s);letter-spacing:.04em}
+.tile .why{margin-top:5px;font-size:12.5px;line-height:1.4;color:var(--mid);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .tile{text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
 .tile:hover{border-color:var(--mid)}
 .tile .n{font-size:14px;color:var(--mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -305,7 +307,9 @@ table.rt th:first-child,table.rt td:first-child{text-align:left;font-family:var(
 .trade .ent.on{border-style:solid;border-color:var(--key)}
 .trade .ent .trl b{font-size:16px}
 .trade .tra{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-.trade .tra .btn{font-size:14.5px;min-height:42px;padding:8px 14px}
+.trade .tra .btn{font-size:14.5px;min-height:42px;padding:8px 14px;text-decoration:none;display:inline-flex;align-items:center}
+.trade .tra .btn.wa{border-color:#25D366;color:var(--fg)}
+#alertBtn.on{border-color:var(--up);color:var(--up)}
 .hsig{display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;width:100%;text-align:left;background:var(--panel);
   border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px;font-size:15px}
 .hsig:hover{border-color:var(--mid)}
@@ -375,6 +379,8 @@ body.simple .pill{font-size:13px;padding:5px 12px}
 body.simple header h1{font-size:18px}
 body.simple .risk{font:13.5px/1.5 var(--s);padding:9px 16px}
 body.simple .ctop{gap:12px 14px;padding:14px 16px}
+.tfpick{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--mid)}
+.tfpick select{font:600 14px var(--m);padding:6px 8px;min-height:38px;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:8px}
 .symsel{font:600 18px var(--s);padding:9px 12px;min-height:46px;background:var(--panel);color:var(--fg);
   border:1px solid var(--line);border-radius:8px;max-width:100%}
 .symsel:focus-visible{outline:2px solid var(--key);outline-offset:1px}
@@ -461,7 +467,8 @@ button.pick:hover{background:var(--key);color:#fff;text-decoration:none}
   <div class="sub" id="homeSub"></div>
   <div class="hero" id="hero"></div>
   <div class="seg tabs" id="strictHome" aria-label="Which signals to show"></div>
-  <h3 id="homeSigTitle" style="margin-top:14px">Live signals</h3>
+  <div class="bar-row" style="margin-top:14px"><h3 id="homeSigTitle" style="margin:0 auto 0 0">Live signals</h3>
+    <button class="btn" id="alertBtn" title="Sound and notification when a target, stop or exit alert happens">Turn on alerts</button></div>
   <div class="sub" id="homeTabNote" style="margin:-4px 0 12px"></div>
   <div id="homeSigs"></div>
   <div class="sub" id="homeSigNote" style="margin-top:10px"></div>
@@ -518,7 +525,9 @@ button.pick:hover{background:var(--key);color:#fff;text-decoration:none}
       <h2 id="symName" class="adv">—</h2>
       <span class="m mid adv" id="symMeta" style="font-size:12px"></span>
       <div class="seg" id="optSeg" aria-label="Chart of"></div>
-      <div class="seg" id="tfs" style="margin-left:auto" aria-label="Candle size"></div>
+      <div class="seg" id="tfs" style="margin-left:auto" aria-label="Entry timeframe"></div>
+      <label class="tfpick">Setup <select id="tfSetup" aria-label="Setup timeframe"></select></label>
+      <label class="tfpick">Trend <select id="tfTrend" aria-label="Trend timeframe"></select></label>
       <div class="menu adv">
         <button class="btn" id="indBtn">Indicators ▾</button>
         <div class="pop" id="indPop" style="display:none"></div>
@@ -603,9 +612,10 @@ const S = {
   simple: store.get("sd_mode","simple")!=="adv",
   page: store.get("sd_page","home"), legs: [], preset: "Buy call",
   strict: store.get("sd_strict","1")==="1",
-  universe: [], bars:{}, quotes:{}, sigs:{}, ind:{}, struct:{},
+  universe: [], bars:{}, quotes:{}, sigs:{}, ind:{}, struct:{}, ctx:{}, status:{}, mtf:{},
+  tfSet: (()=>{ try{ return JSON.parse(store.get("sd_tfset","{}"))||{}; }catch(e){ return {}; } })(),
   ready:false, lastErr:null, feed:null,
-  show:{ ema9:true, ema21:true, ema50:true, vwap:true, st:true, bb:false,
+  show:{ ema20:true, ema50:true, ema200:true, vwap:true, bb:false, struct:true, pd:true,
          ob:true, liq:true, fvg:true, vol:true, rsi:true, macd:false, levels:true },
 };
 
@@ -694,6 +704,7 @@ function startPolling(){
     try{
       const q = await api(quotesPath()); S.quotes = q.quotes;
       await loadCandles(S.tkr);                 // active symbol on every tick
+      try{ await loadMTF(S.tkr); }catch(e){}
       recompute(S.tkr);
       // keep the option pages fresh too, every third tick
       if(["chain","oi","strat"].includes(S.page)&&S.chainTkr&&(turn%3===0)&&!S.chainBusy){
@@ -701,7 +712,7 @@ function startPolling(){
       // one other symbol per tick, in rotation, so the whole watchlist's signals stay current
       const rest=S.universe.filter(u=>u.tkr!==S.tkr);
       if(rest.length){ const o=rest[turn++%rest.length];
-        try{ await loadCandles(o.tkr); recompute(o.tkr); }catch(e){} }
+        try{ await loadCandles(o.tkr); await loadMTF(o.tkr); recompute(o.tkr); }catch(e){} }
       renderLive();
       pumpTrades();                             // option contracts behind the home-page signals
       setConn("ok", liveLabel()); S.lastErr=null;
@@ -725,14 +736,28 @@ async function loadCandles(tkr){
              o:c[1], h:c[2], l:c[3], c:c[4], v:c[5] };
   });
 }
+/* Setup and trend timeframe candles. They change slowly, so they are fetched
+   again only when older than 90 seconds (setup) or 5 minutes (trend). */
+async function loadMTF(tkr, force){
+  const {stf,htf}=mtfOf(tkr), m=S.mtf[tkr]=S.mtf[tkr]||{};
+  for(const [t,age] of [[stf,90e3],[htf,300e3]]){
+    if(t===S.tf) continue;
+    if(!force&&m[t]&&Date.now()-m[t].at<age) continue;
+    const d=await api("/api/candles?tkr="+encodeURIComponent(tkr)+"&interval="+t);
+    m[t]={at:Date.now(), bars:toBars(d.candles)};
+  }
+}
+const toBars=cs=>cs.map(c=>{ const dt=new Date(c[0]+19800000);
+  return { ts:c[0], t:dt.getUTCHours()*60+dt.getUTCMinutes(), day:dt.toISOString().slice(0,10), o:c[1], h:c[2], l:c[3], c:c[4], v:c[5] }; });
 async function refreshAll(){
   const q = await api(quotesPath()); S.quotes=q.quotes;
   await loadCandles(S.tkr);
   // background-load the rest so the watchlist shows signal counts
   for(const u of S.universe){
     if(u.tkr===S.tkr) continue;
-    try{ await loadCandles(u.tkr); recompute(u.tkr); }catch(e){}
+    try{ await loadCandles(u.tkr); await loadMTF(u.tkr); recompute(u.tkr); }catch(e){}
   }
+  try{ await loadMTF(S.tkr); }catch(e){}
   recompute(S.tkr); renderAll(); pumpTrades();
 }
 
@@ -787,89 +812,363 @@ function boll(v,p,k){p=p||20;k=k||2;const m=sma(v,p),u=Array(v.length).fill(null
   for(let i=p-1;i<v.length;i++){let s=0;for(let j=0;j<p;j++){const x=v[i-j]-m[i];s+=x*x;}
     const sd=Math.sqrt(s/p);u[i]=m[i]+k*sd;d[i]=m[i]-k*sd;}return {mid:m,up:u,dn:d};}
 
+/* ============================================================================
+   ANALYSIS ENGINE — causal by construction
+   ----------------------------------------------------------------------------
+   Every value for candle i is worked out from candles 0..i only. Swing points
+   become known only once enough later candles have closed to confirm them;
+   order blocks, gaps and liquidity record *when* they were touched, filled or
+   swept, and a question asked "as of candle i" ignores anything later. So a
+   signal shown at 10:20 is exactly the signal the Results page counts, and it
+   never changes when new candles arrive (no repainting, no look-ahead).
+
+   Timeframes: trend (higher) → setup → entry. A higher-timeframe candle is used
+   only after it has closed.
+   ========================================================================= */
+const TRAIL_LOCK=0.6;   // after Target 2 the stop trails to lock this share of the best gain so far
+const CFG = {
+  extLen: 5,          // candles each side to confirm an external (major) swing
+  intLen: 2,          // ... an internal (minor) swing
+  eqTolAtr: 0.12,     // highs/lows within this many ATR count as "equal"
+  dispBodyAtr: 0.8,   // displacement candle: body at least this many ATR ...
+  dispBodyFrac: 0.55, // ... and body at least this share of its range
+  fvgMinAtr: 0.15,    // smallest gap worth tracking
+  obMaxAtr: 1.6,      // order block taller than this uses the candle body
+  sweepLookback: 15,  // entry candles: how recent the liquidity sweep must be
+  poiLookback: 6,     // setup candles: how recently price must have reached a zone
+  minRR: 1.5,         // minimum reward:risk to Target 1, after costs
+  costPct: 0.0004,    // round-trip costs and slippage, as a share of price
+  minRiskAtr: 0.5, maxRiskAtr: 2.5,
+  relVolMin: 1.2,     // volume on the sweep or trigger vs its 20-candle average
+  skipOpen: 15, skipClose: 45,   // minutes after the open / before the close with no new entries
+};
+/* Setup and trend timeframes that go with each entry timeframe, unless changed in Settings. */
+const MTF_DEFAULT = { 3:[15,60], 5:[15,60], 15:[60,240], 30:[60,240], 60:[240,240] };
+
+/* ------------------------------------------------------------ indicators -- */
 function indicators(b){
-  const c=b.map(x=>x.c), vw=vwap(b);
-  return { e9:ema(c,9), e21:ema(c,21), e50:ema(c,50), e63:ema(c,63), vwap:vw.mid, vwUp:vw.up, vwDn:vw.dn,
-    rsi:rsi(c,14), atr:atr(b,14), macd:macd(c), st:supertrend(b), adx:adx(b), bb:boll(c,20,2),
-    volMA:b.map((_,i)=> i<20?null:b.slice(i-19,i+1).reduce((s,x)=>s+(x.v||0),0)/20) };
+  const c=b.map(x=>x.c), n=b.length;
+  // Indices carry no traded volume. Then VWAP and relative volume mean nothing, so they are left out.
+  const hasVol=b.slice(-60).some(x=>(x.v||0)>0);
+  const vw=hasVol?vwap(b):null;
+  const volMA=b.map((_,i)=> i<20?null:b.slice(i-19,i+1).reduce((s,x)=>s+(x.v||0),0)/20);
+  return { e20:ema(c,20), e50:ema(c,50), e200:ema(c,200),
+    vwap:vw?vw.mid:Array(n).fill(null), hasVol,
+    rsi:rsi(c,14), atr:atr(b,14), macd:macd(c), adx:adx(b,14), bb:boll(c,20,2), st:supertrend(b),
+    volMA, relVol:b.map((x,i)=>hasVol&&volMA[i]?(x.v||0)/volMA[i]:null) };
+}
+const isDisp=(x,a,dir)=>{ if(!a) return false; const body=Math.abs(x.c-x.o), rng=x.h-x.l;
+  return body>=CFG.dispBodyAtr*a && rng>0 && body/rng>=CFG.dispBodyFrac && (dir==null||Math.sign(x.c-x.o)===dir); };
+
+/* -------------------------------------------------- market structure -- */
+/** Walks the candles once. A swing high at k is confirmed at candle k+len, when
+ *  len later candles have failed to exceed it. A break needs a candle CLOSE
+ *  beyond the last confirmed swing: with the trend it is a BOS, against it a
+ *  CHoCH; a CHoCH made by a displacement candle is also an MSS. */
+function swings(b, A, len){
+  const n=b.length, trend=new Int8Array(n), hi=[], lo=[], ev=[];
+  let lastH=null, lastL=null, t=0;
+  const rangeHi=new Float64Array(n).fill(NaN), rangeLo=new Float64Array(n).fill(NaN);
+  for(let j=0;j<n;j++){
+    const k=j-len;
+    if(k>=len){
+      let isH=true, isL=true;
+      for(let m=k-len;m<=k+len;m++){ if(m===k) continue;
+        if(m<k ? b[m].h>=b[k].h : b[m].h>b[k].h) isH=false;
+        if(m<k ? b[m].l<=b[k].l : b[m].l<b[k].l) isL=false; }
+      if(isH){ const p={i:k, px:b[k].h, at:j, lab:hi.length?(b[k].h>hi[hi.length-1].px?"HH":"LH"):"H", broken:null};
+        hi.push(p); lastH=p; }
+      if(isL){ const p={i:k, px:b[k].l, at:j, lab:lo.length?(b[k].l>lo[lo.length-1].px?"HL":"LL"):"L", broken:null};
+        lo.push(p); lastL=p; }
+    }
+    if(lastH&&lastH.broken==null&&b[j].c>lastH.px){
+      const type=t===-1?"CHoCH":"BOS", disp=isDisp(b[j],A[j],1)||(j>0&&isDisp(b[j-1],A[j-1],1));
+      lastH.broken=j; ev.push({i:j, dir:1, type, mss:type==="CHoCH"&&disp, disp, level:lastH.px, from:lastH.i, leg:lastL?lastL.i:Math.max(0,j-20)});
+      t=1;
+    }
+    if(lastL&&lastL.broken==null&&b[j].c<lastL.px){
+      const type=t===1?"CHoCH":"BOS", disp=isDisp(b[j],A[j],-1)||(j>0&&isDisp(b[j-1],A[j-1],-1));
+      lastL.broken=j; ev.push({i:j, dir:-1, type, mss:type==="CHoCH"&&disp, disp, level:lastL.px, from:lastL.i, leg:lastH?lastH.i:Math.max(0,j-20)});
+      t=-1;
+    }
+    trend[j]=t;
+    // dealing range: from the last confirmed swing low to the last confirmed swing high, stretched by any newer extreme
+    if(lastH&&lastL){
+      const s=Math.min(lastH.i,lastL.i); let h=Math.max(lastH.px,lastL.px), l=Math.min(lastH.px,lastL.px);
+      for(let m=s;m<=j;m++){ if(b[m].h>h) h=b[m].h; if(b[m].l<l) l=b[m].l; }
+      rangeHi[j]=h; rangeLo[j]=l;
+    }
+  }
+  return {hi, lo, ev, trend, rangeHi, rangeLo};
 }
 
-/* -------------------------------------------------- market structure (SMC) -- */
-/** Swing pivots, order blocks, fair-value gaps and liquidity pools.
- *
- *  Order block: the last opposite-colour candle before an impulsive move that
- *  displaces more than 1.2 ATR and takes out the prior swing. It marks where
- *  size was absorbed, and stays "unmitigated" until price trades back into it.
- *
- *  Liquidity pool: two or more swing highs (or lows) within 0.15 ATR of each
- *  other — resting stops. A pool is "swept" when a wick takes it out and the
- *  candle closes back inside, which is the trap that often precedes reversal.
- */
-function structure(b, ind){
-  const n=b.length, A=ind.atr;
-  const piv={hi:[],lo:[]};
-  for(let i=2;i<n-2;i++){
-    if(b[i].h>b[i-1].h&&b[i].h>b[i-2].h&&b[i].h>b[i+1].h&&b[i].h>b[i+2].h) piv.hi.push(i);
-    if(b[i].l<b[i-1].l&&b[i].l<b[i-2].l&&b[i].l<b[i+1].l&&b[i].l<b[i+2].l) piv.lo.push(i);
-  }
-
-  // ---- order blocks
-  const obs=[];
-  for(let i=3;i<n-2;i++){
-    const a=A[i]; if(!a) continue;
-    const bull=b[i].c<b[i].o, bear=b[i].c>b[i].o;
-    const move3=(k)=>{ let hi=-Infinity,lo=Infinity;
-      for(let j=i+1;j<=Math.min(i+3,n-1);j++){hi=Math.max(hi,b[j].h);lo=Math.min(lo,b[j].l);}
-      return k===1?hi-b[i].l:b[i].h-lo; };
-    const priorHi=Math.max.apply(null,b.slice(Math.max(0,i-10),i).map(x=>x.h));
-    const priorLo=Math.min.apply(null,b.slice(Math.max(0,i-10),i).map(x=>x.l));
-    const upBreak=b.slice(i+1,Math.min(i+4,n)).some(x=>x.c>priorHi);
-    const dnBreak=b.slice(i+1,Math.min(i+4,n)).some(x=>x.c<priorLo);
-    if(bull && upBreak && move3(1)>1.2*a) obs.push({i, dir:1, top:Math.max(b[i].o,b[i].c), bot:b[i].l});
-    if(bear && dnBreak && move3(-1)>1.2*a) obs.push({i, dir:-1, top:b[i].h, bot:Math.min(b[i].o,b[i].c)});
-  }
-  // mitigation: first later candle to trade back into the zone
-  obs.forEach(o=>{
-    o.mitigated=null;
-    for(let j=o.i+2;j<n;j++){
-      if(o.dir===1 ? b[j].l<=o.top : b[j].h>=o.bot){ o.mitigated=j; break; }
+/* ----------------------------------------------- order blocks and gaps -- */
+/** An order block exists only where structure actually broke: it is the last
+ *  opposite-coloured candle in the leg that produced the break. Each zone
+ *  records when price first came back (mitigated) and when a close went
+ *  through it (invalidated). */
+function orderBlocks(b, A, evs){
+  const out=[];
+  for(const e of evs){
+    if(!e.disp&&e.type==="BOS") continue;              // breaks with no displacement do not mark a zone
+    let k=-1;
+    for(let m=e.i-1;m>=Math.max(e.leg,0);m--){ if(e.dir===1?b[m].c<b[m].o:b[m].c>b[m].o){ k=m; break; } }
+    if(k<0) continue;
+    const a=A[k]||A[e.i]||0, tall=(b[k].h-b[k].l)>CFG.obMaxAtr*a;
+    const top=tall?Math.max(b[k].o,b[k].c):b[k].h, bot=tall?Math.min(b[k].o,b[k].c):b[k].l;
+    if(out.some(o=>o.k===k)) continue;
+    const ob={k, i:k, at:e.i, dir:e.dir, top, bot, ev:e.type, touch:null, invalid:null};
+    for(let j=e.i+1;j<b.length;j++){
+      if(ob.touch==null&&(e.dir===1?b[j].l<=top:b[j].h>=bot)) ob.touch=j;
+      if(e.dir===1?b[j].c<bot:b[j].c>top){ ob.invalid=j; break; }
     }
-  });
-  const liveObs = obs.filter(o=>o.mitigated===null).slice(-6)
-    .concat(obs.filter(o=>o.mitigated!==null).slice(-3));
-
-  // ---- fair value gaps (3-candle imbalance)
-  const fvg=[];
-  for(let i=2;i<n;i++){
-    const a=A[i]; if(!a) continue;
-    if(b[i].l>b[i-2].h && b[i].l-b[i-2].h>0.25*a) fvg.push({i,dir:1,top:b[i].l,bot:b[i-2].h});
-    if(b[i].h<b[i-2].l && b[i-2].l-b[i].h>0.25*a) fvg.push({i,dir:-1,top:b[i-2].l,bot:b[i].h});
+    out.push(ob);
   }
-  fvg.forEach(f=>{ f.filled=null;
-    for(let j=f.i+1;j<n;j++){ if(f.dir===1? b[j].l<=f.bot : b[j].h>=f.top){f.filled=j;break;} } });
-  const liveFvg = fvg.filter(f=>f.filled===null).slice(-5);
-
-  // ---- liquidity pools + sweeps
-  const pool=(idxs,key)=>{
-    const out=[];
-    for(let x=0;x<idxs.length;x++){
-      const base=b[idxs[x]][key], grp=[idxs[x]];
-      for(let y=x+1;y<idxs.length;y++){
-        const a=A[idxs[y]]||A[idxs[x]]; if(!a) continue;
-        if(Math.abs(b[idxs[y]][key]-base)<=0.15*a) grp.push(idxs[y]);
+  return out;
+}
+/** Three-candle gaps. Each records when price first entered it (partly filled)
+ *  and when it closed the whole gap (filled). */
+function gaps(b, A){
+  const out=[];
+  for(let k=2;k<b.length;k++){
+    const a=A[k-1]||A[k]; if(!a) continue;
+    for(const dir of [1,-1]){
+      const top=dir===1?b[k].l:b[k-2].l, bot=dir===1?b[k-2].h:b[k].h;
+      if(top-bot<CFG.fvgMinAtr*a) continue;
+      const g={i:k, at:k, dir, top, bot, disp:isDisp(b[k-1],a,dir), part:null, fill:null, deep:dir===1?top:bot};
+      for(let j=k+1;j<b.length;j++){
+        if(dir===1){ if(b[j].l<top&&g.part==null) g.part=j; if(b[j].l<=bot){ g.fill=j; break; } }
+        else { if(b[j].h>bot&&g.part==null) g.part=j; if(b[j].h>=top){ g.fill=j; break; } }
       }
-      if(grp.length>=2){ out.push({px:base, from:grp[0], to:grp[grp.length-1], n:grp.length}); x+=grp.length-1; }
+      out.push(g);
     }
-    return out.slice(-4);
+  }
+  return out;
+}
+
+/* --------------------------------------------------------- liquidity -- */
+/** Resting stops: confirmed swing highs/lows, equal highs/lows, previous day
+ *  and previous week high/low. Each level records the candle that first took
+ *  it and whether that candle closed back inside (a sweep) or through it. */
+function weekKey(day){ const d=new Date(day+"T00:00:00Z"); const t=new Date(d); t.setUTCDate(d.getUTCDate()-((d.getUTCDay()+6)%7)); return t.toISOString().slice(0,10); }
+function liquidity(b, A, sw){
+  const lv=[];
+  const add=(px,side,kind,from,src)=>lv.push({px,side,kind,from,src,taken:null,swept:null});
+  sw.hi.forEach(p=>add(p.px,"BSL","Swing high",p.at,p.i));
+  sw.lo.forEach(p=>add(p.px,"SSL","Swing low",p.at,p.i));
+  for(const [arr,side,kind] of [[sw.hi,"BSL","Equal highs"],[sw.lo,"SSL","Equal lows"]])
+    for(let x=1;x<arr.length;x++){ const p=arr[x], q=arr[x-1], a=A[p.i]||0;
+      if(a&&Math.abs(p.px-q.px)<=CFG.eqTolAtr*a) add(side==="BSL"?Math.max(p.px,q.px):Math.min(p.px,q.px),side,kind,p.at,q.i); }
+  // previous day and previous week, available from the first candle of the next day / week
+  const days=[], wk=new Map();
+  b.forEach((x,i)=>{ if(!days.length||days[days.length-1].day!==x.day) days.push({day:x.day,first:i,h:x.h,l:x.l});
+    const d=days[days.length-1]; d.h=Math.max(d.h,x.h); d.l=Math.min(d.l,x.l);
+    const w=weekKey(x.day), o=wk.get(w)||{first:i,h:x.h,l:x.l}; o.h=Math.max(o.h,x.h); o.l=Math.min(o.l,x.l); wk.set(w,o); });
+  for(let d=1;d<days.length;d++){ add(days[d-1].h,"BSL","Previous day high",days[d].first,days[d-1].first); add(days[d-1].l,"SSL","Previous day low",days[d].first,days[d-1].first); }
+  const ws=[...wk.values()];
+  for(let w=1;w<ws.length;w++){ add(ws[w-1].h,"BSL","Previous week high",ws[w].first,ws[w-1].first); add(ws[w-1].l,"SSL","Previous week low",ws[w].first,ws[w-1].first); }
+  for(const L of lv){
+    for(let j=L.from;j<b.length;j++){
+      if(L.side==="BSL"?b[j].h>L.px:b[j].l<L.px){ L.taken=j; if(L.side==="BSL"?b[j].c<L.px:b[j].c>L.px) L.swept=j; break; }
+    }
+  }
+  return lv;
+}
+
+/** Everything for one timeframe. */
+function analyseTF(b){
+  const ind=indicators(b), A=ind.atr;
+  const ext=swings(b,A,CFG.extLen), int=swings(b,A,CFG.intLen);
+  const obs=orderBlocks(b,A,ext.ev.concat(int.ev.filter(e=>e.disp)));
+  return { b, ind, ext, int, obs, fvg:gaps(b,A), liq:liquidity(b,A,ext) };
+}
+/* Index of the last candle of a higher timeframe that had fully closed by time t (ms). */
+function closedAt(bars, tfMin, t){
+  let lo=0, hi=bars.length-1, ans=-1;
+  while(lo<=hi){ const m=(lo+hi)>>1; if(bars[m].ts+tfMin*60000<=t){ ans=m; lo=m+1; } else hi=m-1; }
+  return ans;
+}
+
+/* ------------------------------------------------- the signal engine -- */
+/** For every closed entry candle, a bullish (CALL BUY) setup needs ALL of:
+ *   1. Trend timeframe: last structure break bullish (closed candles only).
+ *   2. Setup timeframe: price reached a bullish order block, an unfilled bullish
+ *      gap, or the discount half of the dealing range in the last few candles.
+ *   3. Entry timeframe: sell-side liquidity swept (wick below, close back above)
+ *      within the last 15 candles.
+ *   4. Trigger: a bullish structure break (CHoCH/MSS or BOS) on this candle's
+ *      close, made with displacement, after the sweep.
+ *   5. Momentum: RSI above 50. Volume: sweep or trigger at 1.2x average (skipped,
+ *      and said so, where the feed has no volume).
+ *   6. Entry: a limit order at the middle of the gap the displacement left (or
+ *      the order block it left), so the stop is not miles away. It must fill
+ *      within 18 candles, before the stop or Target 1 trades, in the same session.
+ *   7. Stop below the sweep low, between 0.5 and 2.5 ATR from the entry.
+ *   8. Room: the first opposing liquidity is at least 1.5R away after costs;
+ *      targets are that liquidity and the next pools beyond it.
+ *  Bearish (PUT BUY) is the mirror image. One trade per instrument at a time.
+ *  Grade A = zone was an order block or gap, the trigger was an MSS or
+ *  volume-confirmed, and reward:risk to Target 1 is 2 or more. */
+function engine(ctx, opt){
+  opt=Object.assign({strict:false, all:false, lite:false}, opt);
+  const {u, E, St, H, tf, stf, htf}=ctx, D=opt.dbg;
+  const out=[]; out.pending=null;
+  if(!E||!St||!H) return out;
+  const b=E.b, n=b.length; if(n<60) return out;
+  const A=E.ind.atr, R=E.ind.rsi, RV=E.ind.relVol, hasVol=E.ind.hasVol;
+  const CL=u.close||930, OP=u.open||555, today=b[n-1].day;
+  let busy=-1, pend=null;
+
+  const make=(p,i,sameBarStop)=>{                 // a pending entry has filled at candle i
+    const sig={ id:u.tkr.slice(0,4)+"-"+String(1000+i).slice(-4), day:b[i].day, strict:p.grade==="A", grade:p.grade,
+      tkr:u.tkr, sym:u.sym, seg:u.seg, closeT:CL, side:p.d>0?"BUY":"SELL", i, ts:b[i].ts, setAt:b[p.i0].ts,
+      entry:p.entry, sl:p.sl, t1:p.t1, t2:p.t2, t3:p.t3, risk:p.risk, rr:p.rr, cost:p.cost,
+      reasons:p.why.concat(p.limit?[`limit entry at ${p.entry.toFixed(2)} (${p.limit}) filled at ${hhmm(b[i].ts)}`]:[]),
+      atr:A[i], rsi:R[p.i0], vol:p.vol, poi:p.poi, trig:p.trig };
+    sig.opt=opt.lite?null:optionLeg(u,sig);
+    sig.res=sameBarStop?{state:"EXPIRED",status:"Stopped out",exit:i,px:p.sl,hit:0,R:(-p.risk-p.cost)/p.risk}:track(b,sig);
+    if(opt.all||b[i].day===today) out.push(sig);
+    busy=sig.res.exit!=null?sig.res.exit:n;
+    if(D) D.filled=(D.filled||0)+1;
   };
-  const bsl=pool(piv.hi,"h"), ssl=pool(piv.lo,"l");
-  [...bsl.map(p=>({p,up:true})),...ssl.map(p=>({p,up:false}))].forEach(({p,up})=>{
-    p.swept=null;
-    for(let j=p.to+1;j<n;j++){
-      if(up ? (b[j].h>p.px && b[j].c<p.px) : (b[j].l<p.px && b[j].c>p.px)){ p.swept=j; break; }
+
+  for(let i=30;i<n-1;i++){                       // the last candle is still forming
+    // ---- a waiting limit order: fill, expire or cancel
+    if(pend&&i>pend.i0){
+      const d=pend.d, x=b[i];
+      if(x.day!==b[pend.i0].day||i-pend.i0>18||x.t>=CL-CFG.skipClose) pend=null;            // expired
+      else if(d>0?x.l<=pend.entry:x.h>=pend.entry){ make(pend,i,d>0?x.l<=pend.sl:x.h>=pend.sl); pend=null; continue; }
+      else if(d>0?x.h>=pend.t1:x.l<=pend.t1) pend=null;                                     // ran away without us
     }
-  });
-  return { piv, obs:liveObs, fvg:liveFvg, bsl, ssl };
+    if(i<=busy||!A[i]||b[i].t<OP+CFG.skipOpen||b[i].t>=CL-CFG.skipClose) continue;
+    const tc=b[i].ts+tf*60000, h=closedAt(H.b,htf,tc), s=closedAt(St.b,stf,tc);
+    if(h<0||s<0) continue;
+    for(const d of [1,-1]){
+      if(D) D.bars=(D.bars||0)+1;
+      const why=[];
+      // 1. trend timeframe
+      if(H.ext.trend[h]!==d) continue; if(D) D.trend=(D.trend||0)+1;
+      const lastBreak=H.ext.ev.filter(e=>e.i<=h).slice(-1)[0];
+      why.push(`${tfName(htf)} trend ${d>0?"bullish":"bearish"} (last ${lastBreak?lastBreak.type:"break"} ${d>0?"up":"down"})`);
+      // 2. setup zone
+      let poi=null;
+      for(let k=Math.max(0,s-CFG.poiLookback+1);k<=s;k++){
+        const x=St.b[k];
+        if(St.obs.some(o=>o.dir===d&&o.at<=k&&(o.invalid==null||o.invalid>k)&&x.l<=o.top&&x.h>=o.bot)){ poi="order block"; break; }
+        if(St.fvg.some(f=>f.dir===d&&f.at<k&&f.at>=k-60&&(f.fill==null||f.fill>k)&&(d>0?x.l<=f.top:x.h>=f.bot))){ poi="fair value gap"; break; }
+        const rh=St.ext.rangeHi[k], rl=St.ext.rangeLo[k];
+        if(!poi&&rh>rl&&(d>0?x.l<=(rh+rl)/2:x.h>=(rh+rl)/2)) poi=d>0?"discount zone":"premium zone";
+      }
+      if(!poi) continue; if(D) D.poi=(D.poi||0)+1;
+      why.push(`${tfName(stf)} price reached a ${d>0?"bullish":"bearish"} ${poi}`);
+      // 3. liquidity sweep on the entry timeframe
+      const sw=E.liq.filter(L=>L.side===(d>0?"SSL":"BSL")&&L.swept!=null&&L.swept<=i&&L.swept>=i-CFG.sweepLookback)
+        .sort((x,y)=>y.swept-x.swept)[0];
+      if(!sw) continue; if(D) D.sweep=(D.sweep||0)+1;
+      why.push(`${sw.kind.toLowerCase()} at ${sw.px.toFixed(2)} swept and reclaimed`);
+      // 4. structure break with displacement on this candle, after the sweep
+      const ev=E.ext.ev.find(e=>e.i===i&&e.dir===d)||E.int.ev.find(e=>e.i===i&&e.dir===d);
+      if(!ev||ev.i<=sw.swept) continue;
+      let disp=false; for(let m=sw.swept+1;m<=i&&!disp;m++) disp=isDisp(b[m],A[m],d);   // the move off the sweep must include a displacement candle
+      if(!disp) continue; if(D) D.trigger=(D.trigger||0)+1;
+      const mss=ev.type==="CHoCH";               // a change of character made with displacement is a market structure shift
+      why.push(`${tfName(tf)} ${mss?"market structure shift (CHoCH)":"break of structure"} ${d>0?"up":"down"}, with a displacement candle after the sweep`);
+      // 5. momentum and volume
+      if(d>0?!(R[i]>50):!(R[i]<50)) continue; if(D) D.rsi=(D.rsi||0)+1;
+      why.push(`RSI ${R[i].toFixed(0)} ${d>0?"above":"below"} 50`);
+      let vol=null;
+      if(hasVol){ const rv=Math.max(RV[i]||0,RV[sw.swept]||0); vol=rv>=CFG.relVolMin; if(!vol) continue;
+        why.push(`volume ${rv.toFixed(1)}x its average`); }
+      else why.push("no volume data for this instrument, volume not checked");
+      if(D) D.vol=(D.vol||0)+1;
+      // 6. entry at the gap or order block the displacement left
+      let ext=b[sw.swept][d>0?"l":"h"];
+      for(let m=sw.swept;m<=i;m++) ext=d>0?Math.min(ext,b[m].l):Math.max(ext,b[m].h);
+      let entry=b[i].c, limit=null;
+      const g=E.fvg.filter(f=>f.dir===d&&f.at>sw.swept&&f.at<=i&&(f.fill==null||f.fill>i)).pop();
+      const ob=E.obs.filter(o=>o.dir===d&&o.at===i&&(o.invalid==null||o.invalid>i)).pop();
+      if(g){ entry=d>0?g.top:g.bot; limit="near edge of the fair value gap"; }
+      else if(ob){ entry=d>0?ob.top:ob.bot; limit="edge of the order block"; }
+      let sl=ext-d*0.1*A[i], risk=d*(entry-sl);
+      if(risk>CFG.maxRiskAtr*A[i]||risk<=0) continue; if(D) D.stop=(D.stop||0)+1;
+      if(risk<CFG.minRiskAtr*A[i]){ sl=entry-d*CFG.minRiskAtr*A[i]; risk=CFG.minRiskAtr*A[i]; }
+      // 7. room to the first opposing liquidity, after costs
+      const cost=CFG.costPct*entry;
+      const lv=E.liq.filter(L=>L.side===(d>0?"BSL":"SSL")&&L.from<=i&&(L.taken==null||L.taken>i)&&d*(L.px-entry)>0.1*A[i]).map(L=>({px:L.px,kind:L.kind}));
+      St.ext[d>0?"hi":"lo"].forEach(p=>{ if(p.at>s||d*(p.px-entry)<=0.1*A[i]) return; const t0=St.b[p.i].ts;
+        for(let m=i;m>=0&&b[m].ts>=t0;m--) if(d>0?b[m].h>p.px:b[m].l<p.px) return;
+        lv.push({px:p.px,kind:`${tfName(stf)} swing ${d>0?"high":"low"}`}); });
+      lv.sort((x,y)=>d*(x.px-y.px));
+      const net=v=>(d*(v-entry)-cost)/(risk+cost);
+      let t1,t2,t3,rr;
+      if(lv.length){
+        rr=net(lv[0].px);
+        if(rr<CFG.minRR){ if(D) D.noroom=(D.noroom||0)+1; continue; }
+        t1=lv[0].px; const rest=lv.filter(x=>d*(x.px-t1)>0.5*risk);
+        t2=rest[0]?rest[0].px:t1+d*risk; t3=rest[1]?rest[1].px:t2+d*risk;
+        why.push(`room to the ${lv[0].kind.toLowerCase()} at ${t1.toFixed(2)}: ${rr.toFixed(1)}R after costs`);
+      } else { t1=entry+d*2*risk; t2=entry+d*3*risk; t3=entry+d*4*risk; rr=net(t1); why.push("no opposing liquidity nearby; targets at 2R, 3R and 4R"); }
+      const grade=(poi==="order block"||poi==="fair value gap")&&(mss||vol===true)&&rr>=2?"A":"B";
+      const p={d, i0:i, entry, sl, t1, t2, t3, risk, rr, cost, why, vol, poi, grade, limit, trig:mss?"MSS":ev.type};
+      if(limit&&d*(b[i].c-entry)>0) pend=p;       // wait for the pull-back
+      else make(p,i,false);
+      break;
+    }
+  }
+  if(pend&&b[n-1].day===b[pend.i0].day&&n-1-pend.i0<=18) out.pending=Object.assign({},pend,{side:pend.d>0?"BUY":"SELL",ts:b[pend.i0].ts});
+  return opt.strict?out.filter(x=>x.strict):out;
+}
+const tfName=m=>m>=60?(m/60)+"h":m+"m";
+
+/** Where each instrument stands right now, in one of four states:
+ *  CALL BUY SETUP / PUT BUY SETUP (a live signal), WAIT (setup forming,
+ *  confirmation missing) or NO TRADE, with the reason. */
+function instrumentState(ctx, sigs){
+  const live=(sigs||[]).filter(s=>s.res.state==="ACTIVE").pop(), pd=sigs&&sigs.pending;
+  if(live) return {state:live.side==="BUY"?"CALL BUY SETUP":"PUT BUY SETUP", dir:live.side==="BUY"?1:-1, sig:live,
+    why:`Live ${live.grade}-grade signal from ${hhmm(live.ts)}`};
+  if(pd) return {state:"WAIT",dir:pd.d,pending:pd,
+    why:`${pd.d>0?"Bullish":"Bearish"} setup confirmed at ${hhmm(pd.ts)}: waiting for price to pull back to ${pd.entry.toFixed(2)} (${pd.limit}) to enter`};
+  const {E,St,H,tf,stf,htf}=ctx||{};
+  if(!E||!St||!H||E.b.length<60) return {state:"NO TRADE",dir:0,why:"Loading price history"};
+  const b=E.b, i=b.length-2, u=ctx.u, CL=u.close||930, OP=u.open||555;
+  if(i<0) return {state:"NO TRADE",dir:0,why:"No closed candles yet"};
+  const tc=b[i].ts+tf*60000, h=closedAt(H.b,htf,tc), s=closedAt(St.b,stf,tc);
+  const d=h>=0?H.ext.trend[h]:0;
+  if(!d) return {state:"NO TRADE",dir:0,why:`${tfName(htf)} trend has no clear direction`};
+  if(b[i].t<OP+CFG.skipOpen||b[i].t>=CL-CFG.skipClose) return {state:"NO TRADE",dir:d,why:"Outside entry hours for this session"};
+  const k=s, x=St.b[k], rh=St.ext.rangeHi[k], rl=St.ext.rangeLo[k];
+  const inPoi=St.obs.some(o=>o.dir===d&&o.at<=k&&(o.invalid==null||o.invalid>k)&&(d>0?x.l<=o.top&&x.h>=o.bot:x.h>=o.bot&&x.l<=o.top))
+    ||(rh>rl&&(d>0?x.l<=(rh+rl)/2:x.h>=(rh+rl)/2));
+  const word=d>0?"bullish":"bearish";
+  if(!inPoi) return {state:"NO TRADE",dir:d,why:`${tfName(htf)} trend ${word}, but price is not yet at a ${word} zone (${d>0?"discount / demand":"premium / supply"})`};
+  const swept=E.liq.some(L=>L.side===(d>0?"SSL":"BSL")&&L.swept!=null&&L.swept>=i-CFG.sweepLookback&&L.swept<=i);
+  return {state:"WAIT",dir:d,why:swept?`${word[0].toUpperCase()+word.slice(1)} setup forming: liquidity swept, waiting for a structure break with displacement`
+    :`${word[0].toUpperCase()+word.slice(1)} zone reached, waiting for a liquidity sweep and confirmation`};
+}
+
+/* --------------------------------------------- trade follow-through -- */
+/** Walk forward to the live edge. The stop is checked before targets inside the
+ *  same candle (the worse path), it moves to entry after T1 and to T1 after T2. */
+function track(b,s){
+  const L=s.side==="BUY"; let stop=s.sl, hit=0, peak=s.entry;
+  const fin=(status,j,px)=>({state:"EXPIRED",status,exit:j,px,hit,R:((px-s.entry)*(L?1:-1)-s.cost)/s.risk});
+  for(let j=s.i+1;j<b.length;j++){
+    if(b[j].day!==b[s.i].day) return fin("Closed at session end", j-1, b[j-1].c);
+    if(L? b[j].l<=stop : b[j].h>=stop)
+      return fin(hit===0?"Stopped out":hit===1?"Breakeven stop":"Trailed from T"+hit, j, stop);
+    if(hit<1&&(L?b[j].h>=s.t1:b[j].l<=s.t1)){hit=1;stop=s.entry;}
+    if(hit<2&&(L?b[j].h>=s.t2:b[j].l<=s.t2)){hit=2;stop=s.t1;}
+    if(hit<3&&(L?b[j].h>=s.t3:b[j].l<=s.t3)) return fin("T3 achieved",j,s.t3);
+    peak=L?Math.max(peak,b[j].h):Math.min(peak,b[j].l);
+    if(hit>=2){ const lock=s.entry+(peak-s.entry)*TRAIL_LOCK; stop=L?Math.max(stop,lock):Math.min(stop,lock); }   // applies from the next candle
+    if(j<b.length-1){
+      if(b[j].t>=(s.closeT||930)-5) return fin("Closed at session end", j, b[j].c);
+      if(hit===0&&j-s.i>MAX_LIFE) return fin("No follow-through", j, b[j].c);
+    }
+  }
+  const last=b[b.length-1], R=((last.c-s.entry)*(L?1:-1)-s.cost)/s.risk;
+  return {state:"ACTIVE",status:hit===0?"Working":"T"+hit+" booked, trailing",exit:null,px:last.c,hit,R,stop};
 }
 
 /* --------------------------------------------------------- option pricing -- */
@@ -885,162 +1184,65 @@ function bs(Sp,K,T,sg,ty){
     : {px:Math.max(K*df*ncdf(-d2)-Sp*ncdf(-d1),0), delta:ncdf(d1)-1,
        theta:(-Sp*npdf(d1)*sg/(2*Math.sqrt(T))+RF*K*df*ncdf(-d2))/365};
 }
-/** Implied vol from a live premium, by bisection — the chain gives us price,
- *  not IV, so we back it out. */
+/** Implied vol from a live premium, by bisection. */
 function impliedVol(mktPx,Sp,K,T,ty){
   if(!(mktPx>0)||!(Sp>0)||!(K>0)) return null;
   const intrinsic = ty==="CE" ? Math.max(Sp-K,0) : Math.max(K-Sp,0);
-  if(mktPx<=intrinsic) return null;            // no time value left to solve for
+  if(mktPx<=intrinsic) return null;
   let lo=0.01, hi=4;
-  for(let i=0;i<60;i++){
-    const m=(lo+hi)/2;
-    if(bs(Sp,K,T,m,ty).px > mktPx) hi=m; else lo=m;
-  }
+  for(let i=0;i<60;i++){ const m=(lo+hi)/2; if(bs(Sp,K,T,m,ty).px > mktPx) hi=m; else lo=m; }
   const iv=(lo+hi)/2;
-  return (iv>0.015 && iv<3.9) ? iv : null;     // solver hit a rail — reject it
+  return (iv>0.015 && iv<3.9) ? iv : null;
 }
-
-/* ---------------------------------------------------------- signal engine -- */
-const CHECKS=[
-  {id:"trend", w:14, l:"EMA 9 above EMA 21"},
-  {id:"cross", w:11, l:"Fresh EMA crossover"},
-  {id:"struct",w:9,  l:"Price above EMA 50"},
-  {id:"vwap",  w:12, l:"Price above session VWAP"},
-  {id:"rsi",   w:10, l:"RSI in momentum band"},
-  {id:"macd",  w:10, l:"MACD histogram expanding"},
-  {id:"st",    w:12, l:"Supertrend aligned"},
-  {id:"vol",   w:6,  l:"Volume above 1.3× average"},
-  {id:"adx",   w:8,  l:"ADX above 20"},
-  {id:"ob",    w:5,  l:"Order block support below"},
-  {id:"liq",   w:3,  l:"Liquidity swept before entry"},
-];
-
-function trendMarks(b,ind){
-  const out=[];
-  for(let i=4;i<b.length;i++){
-    if(!ind.st[i]||!ind.st[i-1]||ind.e9[i]==null||ind.e9[i-3]==null) continue;
-    const up=(ind.e9[i]>ind.e21[i]&&ind.e9[i-3]<=ind.e21[i-3])||(ind.st[i].dir===1&&ind.st[i-1].dir===-1);
-    const dn=(ind.e9[i]<ind.e21[i]&&ind.e9[i-3]>=ind.e21[i-3])||(ind.st[i].dir===-1&&ind.st[i-1].dir===1);
-    if(up) out.push({i,dir:1}); else if(dn) out.push({i,dir:-1});
-  }
-  return out;
-}
-
-/* opt.strict  — only signals where the bigger trend, trend strength and timing all agree
-   opt.all     — every day in the loaded history, for the Results page (default: today only)
-   opt.lite    — skip the option estimate */
-function engine(u, b, ind, str, opt){
-  opt=Object.assign({strict:false, all:false, lite:false}, opt);
-  const n=b.length; if(n<60) return [];
-  const {e9,e21,e50,rsi:R,atr:A,vwap:VW,macd:M,st:ST,adx:AX,volMA:VM}=ind;
-  const out=[]; let last=-99;
-  const cooldown=Math.max(5,Math.round(40/S.tf));
-  const today=b[n-1].day;
-  const CL=u.close||930, OP=u.open||555;      // session close and open, minutes after midnight IST
-  const E63=ind.e63;                          // 63 bars = EMA 21 of a timeframe three times larger
-
-  for(let i=55;i<n-1;i++){                    // last bar is still forming
-    if(!opt.all&&b[i].day!==today) continue;  // only today's signals are live
-    if(i-last<cooldown) continue;
-    if(e50[i]==null||A[i]==null||!M[i]||!ST[i]||VM[i]==null||AX[i]==null) continue;
-    if(b[i].t>=CL-25) continue;               // no entries in the last 25 min
-
-    for(const side of ["BUY","SELL"]){
-      const L=side==="BUY";
-      const cross=L?(e9[i]>e21[i]&&e9[i-3]<=e21[i-3]):(e9[i]<e21[i]&&e9[i-3]>=e21[i-3]);
-      const flip=ST[i-1]&&ST[i].dir!==ST[i-1].dir&&ST[i].dir===(L?1:-1);
-      if(!cross&&!flip) continue;             // a trigger is mandatory
-
-      const nearOb=str.obs.some(o=>o.dir===(L?1:-1)&&o.i<i&&o.mitigated===null&&
-        Math.abs(b[i].c-(L?o.top:o.bot))<1.6*A[i]);
-      const swept=(L?str.ssl:str.bsl).some(p=>p.swept!=null&&i-p.swept>=0&&i-p.swept<=6);
-
-      const P={
-        trend: L?e9[i]>e21[i]:e9[i]<e21[i],
-        cross, struct: L?b[i].c>e50[i]:b[i].c<e50[i],
-        vwap: L?b[i].c>VW[i]:b[i].c<VW[i],
-        rsi: L?(R[i]>=52&&R[i]<=72):(R[i]<=48&&R[i]>=28),
-        macd: L?(M[i].hist>0&&M[i].hist>M[i-1].hist):(M[i].hist<0&&M[i].hist<M[i-1].hist),
-        st: ST[i].dir===(L?1:-1),
-        vol: (b[i].v||0)>VM[i]*1.3,
-        adx: AX[i]>20, ob:nearOb, liq:swept };
-      const score=CHECKS.reduce((s,c)=>s+(P[c.id]?c.w:0),0);
-      if(score<60) continue;
-      // Strict: the bigger trend points the same way and is still moving, the trend is strong,
-      // and it is not the choppy first 15 or last 45 minutes of the session.
-      const big=E63[i]!=null&&E63[i-6]!=null&&(L?(b[i].c>E63[i]&&E63[i]>E63[i-6]):(b[i].c<E63[i]&&E63[i]<E63[i-6]));
-      const strictOk=score>=72&&big&&P.trend&&P.st&&P.vwap&&AX[i]>22&&b[i].t>=OP+15&&b[i].t<CL-45;
-
-      const entry=b[i].c;
-      const swing=L?Math.min.apply(null,b.slice(i-3,i+1).map(x=>x.l))-0.3*A[i]
-                   :Math.max.apply(null,b.slice(i-3,i+1).map(x=>x.h))+0.3*A[i];
-      const sl=L?Math.max(swing,entry-1.8*A[i]):Math.min(swing,entry+1.8*A[i]);
-      const risk=Math.abs(entry-sl);
-      if(risk<=0||risk/entry>(u.seg==="OPT"?0.35:0.03)) continue;
-
-      const d=L?1:-1;
-      const s={ id:u.tkr.slice(0,4)+"-"+String(1000+i).slice(-4), day:b[i].day, strict:!!strictOk, tkr:u.tkr, sym:u.sym,
-        seg:u.seg, closeT:CL, side, i, ts:b[i].ts, entry, sl,
-        t1:entry+d*risk, t2:entry+d*risk*2, t3:entry+d*risk*3,
-        risk, conf:score, checks:P, atr:A[i], rsi:R[i], adx:AX[i], vwap:VW[i] };
-      s.opt = opt.lite?null:optionLeg(u, s);
-      s.res = track(b, s);
-      out.push(s); last=i; break;
-    }
-  }
-  return opt.strict?out.filter(x=>x.strict):out;
-}
-
-/** Walk forward to the live edge. The stop is checked before targets inside the
- *  same bar — intrabar sequence is unknowable, so assume the worse path.
- *  Stop trails to breakeven after T1, to T1 after T2. */
-function track(b,s){
-  const L=s.side==="BUY"; let stop=s.sl, hit=0;
-  const fin=(status,j,px)=>({state:"EXPIRED",status,exit:j,px,hit,R:((px-s.entry)*(L?1:-1))/s.risk});
-  for(let j=s.i+1;j<b.length;j++){
-    // an intraday trade never runs into the next day
-    if(b[j].day!==b[s.i].day) return fin("Closed at session end", j-1, b[j-1].c);
-    if(L? b[j].l<=stop : b[j].h>=stop)
-      return fin(hit===0?"Stopped out":hit===1?"Breakeven stop":"Trailed from T"+hit, j, stop);
-    if(hit<1&&(L?b[j].h>=s.t1:b[j].l<=s.t1)){hit=1;stop=s.entry;}
-    if(hit<2&&(L?b[j].h>=s.t2:b[j].l<=s.t2)){hit=2;stop=s.t1;}
-    if(hit<3&&(L?b[j].h>=s.t3:b[j].l<=s.t3)) return fin("T3 achieved",j,s.t3);
-    if(j<b.length-1){                          // rules for bars that are complete
-      if(b[j].t>=(s.closeT||930)-5) return fin("Closed at session end", j, b[j].c);
-      if(hit===0&&j-s.i>MAX_LIFE) return fin("No follow-through", j, b[j].c);
-    }
-  }
-  const last=b[b.length-1], R=((last.c-s.entry)*(L?1:-1))/s.risk, age=b.length-1-s.i;
-  if(last.t>=(s.closeT||930)-5) return fin("Closed at session end", b.length-1, last.c);
-  if(hit===0&&age>MAX_LIFE)
-    return {state:"EXPIRED",status:"No follow-through",exit:b.length-1,px:last.c,hit,R};
-  return {state:"ACTIVE",status:hit===0?"Working":"T"+hit+" booked, trailing",exit:null,px:last.c,hit,R};
-}
-
 function optionLeg(u,s){
   if(!u.fo||!u.step) return null;
-  const ty=s.side==="BUY"?"CE":"PE";
-  const atm=Math.round(s.entry/u.step)*u.step;
-  const strike = s.conf>=78 ? (ty==="CE"?atm-u.step:atm+u.step) : atm;
-  const ch=S.chainCache&&S.chainCache[u.tkr];
-  const T=(ch?ch.daysOut:3)/365;
-  // Prefer the live chain's own IV for that strike; fall back to a rough guess
+  const ty=s.side==="BUY"?"CE":"PE", strike=Math.round(s.entry/u.step)*u.step;
+  const ch=S.chainCache&&S.chainCache[u.tkr], T=(ch?ch.daysOut:3)/365;
   const iv=(ch&&ch.ivAt&&ch.ivAt[strike+ty]) || (u.seg==="IDX"?0.13:0.26);
-  const dec=Math.max(T-0.35/365,1/(365*24));
-  const at=bs(s.entry,strike,T,iv,ty);
+  const dec=Math.max(T-0.35/365,1/(365*24)), at=bs(s.entry,strike,T,iv,ty);
   const g=p=>Math.max(bs(p,strike,dec,iv,ty).px,0.05);
-  return { ty, strike, moneyness: strike===atm?"ATM":"ITM-1", iv, lot:u.lot||null,
-    delta:at.delta, theta:at.theta, entry:at.px, sl:g(s.sl), t1:g(s.t1), t2:g(s.t2), t3:g(s.t3),
-    outlay: u.lot? at.px*u.lot : null, live: !!(ch&&ch.ivAt) };
+  return { ty, strike, moneyness:"ATM", iv, lot:u.lot||null, delta:at.delta, theta:at.theta,
+    entry:at.px, sl:g(s.sl), t1:g(s.t1), t2:g(s.t2), t3:g(s.t3), outlay:u.lot?at.px*u.lot:null, live:!!(ch&&ch.ivAt) };
 }
 
+/* --------------------------------------------------------- per symbol -- */
+/** Shape the analysis for the chart: zones and levels as they stand now. */
+function chartStructure(T){
+  const n=T.b.length, now=n-1;
+  const obs=T.obs.filter(o=>o.invalid==null).slice(-8).map(o=>({i:o.k, dir:o.dir, top:o.top, bot:o.bot, mitigated:o.touch, ev:o.ev}));
+  const fvg=T.fvg.filter(f=>f.fill==null).slice(-6).map(f=>{
+    let top=f.top, bot=f.bot;                                   // what is left of a partly filled gap
+    if(f.part!=null) for(let j=f.part;j<n;j++){ if(f.dir===1) top=Math.min(top,T.b[j].l); else bot=Math.max(bot,T.b[j].h); }
+    return {i:f.i, dir:f.dir, top, bot, partial:f.part!=null};
+  }).filter(f=>f.top>f.bot);
+  const pick=side=>{ const L=T.liq.filter(x=>x.side===side);
+    const open=L.filter(x=>x.taken==null), swept=L.filter(x=>x.swept!=null&&x.swept>=n-40);
+    const keyed=open.filter(x=>x.kind!=="Swing high"&&x.kind!=="Swing low");
+    const sw=open.filter(x=>x.kind==="Swing high"||x.kind==="Swing low").slice(-3);
+    return keyed.concat(sw).concat(swept.slice(-2)).map(x=>({px:x.px, from:x.src, n:1, swept:x.swept, lbl:x.kind}));
+  };
+  const rh=T.ext.rangeHi[now], rl=T.ext.rangeLo[now];
+  return { obs, fvg, bsl:pick("BSL"), ssl:pick("SSL"), range:rh>rl?{hi:rh,lo:rl,eq:(rh+rl)/2}:null,
+    ext:T.ext, int:T.int, piv:{hi:T.ext.hi.map(p=>p.i), lo:T.ext.lo.map(p=>p.i)} };
+}
+function mtfOf(tkr){
+  const set=MTF_DEFAULT[S.tf]||[15,60], o=S.tfSet||{};
+  return { stf:o.setup&&o.setup>=S.tf?o.setup:set[0], htf:o.htf&&o.htf>=S.tf?o.htf:set[1] };
+}
 function recompute(tkr){
   const b=S.bars[tkr], u=S.universe.find(x=>x.tkr===tkr);
   if(!b||b.length<60||!u){ S.sigs[tkr]=[]; return; }
-  const ind=indicators(b); S.ind[tkr]=ind;
-  const str=structure(b,ind); S.struct[tkr]=str;
-  S.sigs[tkr]=engine(u,b,ind,str);
-  S.marks=S.marks||{}; S.marks[tkr]=trendMarks(b,ind);
+  const {stf,htf}=mtfOf(tkr), m=S.mtf&&S.mtf[tkr]||{};
+  const E=analyseTF(b);
+  const tfBars=t=>t===S.tf?b:(m[t]&&m[t].bars);
+  const sb=tfBars(stf), hb=tfBars(htf);
+  const St=sb&&sb.length>=30?(sb===b?E:analyseTF(sb)):null;
+  const H=hb&&hb.length>=30?(hb===b?E:hb===sb?St:analyseTF(hb)):null;
+  const ctx={u, E, St, H, tf:S.tf, stf, htf};
+  S.ctx[tkr]=ctx; S.ind[tkr]=E.ind; S.struct[tkr]=chartStructure(E);
+  S.sigs[tkr]=engine(ctx);
+  S.status[tkr]=instrumentState(ctx,S.sigs[tkr]);
+  S.marks=S.marks||{}; S.marks[tkr]=[];
 }
 
 /* ------------------------------------------------------------- formatting -- */
@@ -1067,8 +1269,8 @@ let FS=1;
 { const d=Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype,"font");
   Object.defineProperty(cx,"font",{configurable:true, get(){ return d.get.call(this); },
     set(v){ d.set.call(this, FS===1?v:String(v).replace(/([\d.]+)px/,(m,n)=>(n*FS).toFixed(1)+"px")); }}); }
-const SIMPLE_SHOW={ ema9:true, ema21:true, ema50:false, vwap:false, st:false, bb:false,
-  ob:false, liq:false, fvg:false, vol:false, rsi:false, macd:false, levels:true };
+const SIMPLE_SHOW={ ema20:true, ema50:true, ema200:false, vwap:false, bb:false, struct:true, pd:false,
+  ob:true, liq:true, fvg:false, vol:false, rsi:false, macd:false, levels:true };
 S.showAdv=S.show;
 const F=' -apple-system, ui-monospace, monospace';
 
@@ -1126,20 +1328,35 @@ function draw(){
     cx.fillText(newDay?new Date(x.ts).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short"}):hhmm(x.ts), X(g), H-PB+14);
   });
 
-  /* ---- order blocks: shaded zones extending to the right until mitigated -- */
+  // zones and levels stay inside the price pane
+  cx.save(); cx.beginPath(); cx.rect(PL,PT,W-PR-PL,lay.price); cx.clip();
+  /* ---- premium / discount: the dealing range and its 50% line ------------- */
+  if(S.show.pd&&str.range){
+    const r=str.range, yH=Y(r.hi), yE=Y(r.eq), yL=Y(r.lo), x0=PL, w=W-PR-PL;
+    cx.fillStyle=C.dn; cx.globalAlpha=.045; cx.fillRect(x0,yH,w,yE-yH);
+    cx.fillStyle=C.up; cx.globalAlpha=.045; cx.fillRect(x0,yE,w,yL-yE);
+    cx.globalAlpha=.7; cx.strokeStyle=C.mid; cx.setLineDash([6,5]); cx.lineWidth=1;
+    cx.beginPath(); cx.moveTo(x0,Math.round(yE)+.5); cx.lineTo(W-PR,Math.round(yE)+.5); cx.stroke(); cx.setLineDash([]);
+    cx.globalAlpha=1; cx.fillStyle=C.mid; cx.textAlign="right"; cx.font="600 8.5px"+F;
+    cx.fillText("PREMIUM", W-PR-6, yH+11); cx.fillText("EQUILIBRIUM 50%", W-PR-6, yE-4); cx.fillText("DISCOUNT", W-PR-6, yL-5);
+    cx.font="10px"+F;
+  }
+
+  /* ---- order blocks: tied to a structure break; dashed once price has returned -- */
   if(S.show.ob) str.obs.forEach(o=>{
     if(o.i>=end) return;
-    const x0=Math.max(X(Math.max(o.i,start)),PL);
-    const x1=o.mitigated!=null&&o.mitigated<end?X(o.mitigated):W-PR;
+    const x0=Math.max(X(Math.max(o.i,start)),PL), x1=W-PR;
     if(x1<=x0) return;
-    const col=o.dir===1?C.up:C.dn, live=o.mitigated===null;
+    const col=o.dir===1?C.up:C.dn, live=o.mitigated==null;
     cx.fillStyle=col; cx.globalAlpha=live?.15:.06;
     cx.fillRect(x0,Y(o.top),x1-x0,Math.abs(Y(o.bot)-Y(o.top)));
     cx.globalAlpha=live?.75:.3; cx.strokeStyle=col; cx.lineWidth=1;
     cx.setLineDash(live?[]:[3,3]);
     cx.strokeRect(x0,Y(o.top),x1-x0,Math.abs(Y(o.bot)-Y(o.top))); cx.setLineDash([]);
     if(live&&x1-x0>44){ cx.globalAlpha=1; cx.fillStyle=col; cx.textAlign="left";
-      cx.font="600 8.5px"+F; cx.fillText("OB", x0+4, Y(o.top)+10); cx.font="10px"+F; }
+      cx.font="600 8.5px"+F; cx.fillText((o.dir===1?"Bull OB":"Bear OB")+(live?" · fresh":""), x0+4, Y(o.top)+10); cx.font="10px"+F; }
+    else if(x1-x0>60){ cx.globalAlpha=.7; cx.fillStyle=col; cx.textAlign="left"; cx.font="600 8.5px"+F;
+      cx.fillText((o.dir===1?"Bull OB":"Bear OB")+" · tested", x0+4, Y(o.top)+10); cx.font="10px"+F; }
     cx.globalAlpha=1;
   });
 
@@ -1147,8 +1364,10 @@ function draw(){
   if(S.show.fvg) str.fvg.forEach(f=>{
     if(f.i>=end) return;
     const x0=Math.max(X(Math.max(f.i,start)),PL);
-    cx.fillStyle=f.dir===1?C.up:C.dn; cx.globalAlpha=.10;
+    cx.fillStyle=f.dir===1?C.up:C.dn; cx.globalAlpha=f.partial?.07:.12;
     cx.fillRect(x0,Y(f.top),Math.max(W-PR-x0,0),Math.abs(Y(f.bot)-Y(f.top)));
+    if(W-PR-x0>50&&Math.abs(Y(f.bot)-Y(f.top))>9){ cx.globalAlpha=.8; cx.textAlign="left"; cx.font="600 8px"+F;
+      cx.fillText("FVG"+(f.partial?" · part filled":""), x0+4, Math.min(Y(f.top),Y(f.bot))+9); cx.font="10px"+F; }
     cx.globalAlpha=1;
   });
 
@@ -1162,7 +1381,7 @@ function draw(){
       cx.setLineDash([2,4]); cx.globalAlpha=p.swept!=null?.5:.9;
       cx.beginPath(); cx.moveTo(x0,y); cx.lineTo(W-PR,y); cx.stroke(); cx.setLineDash([]);
       cx.fillStyle=p.swept!=null?C.low:C.warn; cx.textAlign="left"; cx.font="600 8.5px"+F;
-      cx.fillText((up?"BSL":"SSL")+(p.swept!=null?" swept":" ×"+p.n), x0+4, y-4);
+      cx.fillText((up?"BSL · ":"SSL · ")+(p.lbl||"liquidity")+(p.swept!=null?" · swept":""), x0+4, y-4);
       cx.font="10px"+F; cx.globalAlpha=1;
       if(p.swept!=null&&inV(p.swept)){       // mark the sweep candle itself
         cx.fillStyle=C.warn; cx.globalAlpha=.85; cx.beginPath();
@@ -1170,6 +1389,22 @@ function draw(){
       }
     });
   }
+
+  /* ---- market structure: swing labels and BOS / CHoCH breaks ------------- */
+  if(S.show.struct&&str.ext){
+    cx.font="600 8.5px"+F; cx.textAlign="center";
+    str.ext.hi.concat(str.ext.lo).forEach(p=>{ if(!inV(p.i)) return;
+      const up=p.lab==="HH"||p.lab==="LH"||p.lab==="H", y=up?Y(b[p.i].h)-6:Y(b[p.i].l)+13;
+      cx.fillStyle=p.lab==="HH"||p.lab==="HL"?C.up:p.lab==="LH"||p.lab==="LL"?C.dn:C.mid; cx.fillText(p.lab,X(p.i),y); });
+    str.ext.ev.forEach(e=>{ if(e.i<start||e.from>=end) return;
+      const y=Math.round(Y(e.level))+.5, x0=X(Math.max(e.from,start)), x1=X(Math.min(e.i,end-1));
+      const col=e.dir===1?C.up:C.dn; cx.strokeStyle=col; cx.globalAlpha=.85; cx.lineWidth=1.2;
+      cx.setLineDash(e.type==="CHoCH"?[4,3]:[]); cx.beginPath(); cx.moveTo(x0,y); cx.lineTo(x1,y); cx.stroke(); cx.setLineDash([]);
+      cx.globalAlpha=1; cx.fillStyle=col; cx.fillText(e.type==="CHoCH"&&e.mss?"MSS":e.type, (x0+x1)/2, e.dir===1?y-4:y+11); });
+    cx.font="10px"+F;
+  }
+
+  cx.restore();
 
   /* ---- selected trade's levels ------------------------------------------- */
   /* Every signal gets a trade box from its entry candle to where it ended:
@@ -1239,9 +1474,9 @@ function draw(){
       if(!s){flush();dir=null;continue;} if(dir!==null&&s.dir!==dir)flush(); dir=s.dir; seg.push([X(g),Y(s.band)]);}
     flush();
   }
-  if(S.show.ema50) line(ind.e50,C.violet);
-  if(S.show.ema21) line(ind.e21,C.key);
-  if(S.show.ema9)  line(ind.e9,C.warn);
+  if(S.show.ema200) line(ind.e200,C.violet,null,.9,1.4);
+  if(S.show.ema50)  line(ind.e50,C.key);
+  if(S.show.ema20)  line(ind.e20,C.warn);
   if(S.show.vwap)  line(ind.vwap,C.fg,[5,3],.8,1.4);
 
   /* ---- candles ----------------------------------------------------------- */
@@ -1354,21 +1589,21 @@ function draw(){
 }
 
 function readout(i){
-  const ind=S.ind[S.tkr], b=S.bars[S.tkr], u=uni(S.tkr), x=b[i];
+  const ind=S.ind[S.tkr], b=S.bars[S.tkr], u=uni(S.tkr), x=b[i], str=S.struct[S.tkr], ctx=S.ctx[S.tkr], st=S.status[S.tkr];
   const it=(k,v,c)=>`<span>${k} <b style="color:${c||C.fg}">${v}</b></span>`;
-  const st=ind.st[i], m=ind.macd[i], r=ind.rsi[i], str=S.struct[S.tkr];
-  const liveOb=str.obs.filter(o=>o.mitigated===null).length;
-  const openLiq=[...str.bsl,...str.ssl].filter(p=>p.swept==null).length;
+  const m=ind.macd[i], r=ind.rsi[i], tr=str&&str.ext?str.ext.trend[i]:0, rv=ind.relVol[i];
+  let htfTr=0; if(ctx&&ctx.H){ const h=closedAt(ctx.H.b,ctx.htf,x.ts+S.tf*60000); htfTr=h>=0?ctx.H.ext.trend[h]:0; }
+  const rg=str&&str.range, zone=rg?(x.c>rg.eq?"Premium":"Discount"):"—";
   document.getElementById("rdo").innerHTML=
-    it("EMA9",px(ind.e9[i],u),C.warn)+it("EMA21",px(ind.e21[i],u),C.key)+
-    it("EMA50",px(ind.e50[i],u),C.violet)+
-    it("VWAP",px(ind.vwap[i],u), ind.vwap[i]==null?C.mid:(x.c>ind.vwap[i]?C.up:C.dn))+
+    (st?it("Status",st.state,st.state.startsWith("CALL")?C.up:st.state.startsWith("PUT")?C.dn:st.state==="WAIT"?C.warn:C.mid):"")+
+    it((ctx?tfName(ctx.htf):"")+" trend",htfTr>0?"Bullish":htfTr<0?"Bearish":"Unclear",htfTr>0?C.up:htfTr<0?C.dn:C.mid)+
+    it("Structure",tr>0?"Bullish":tr<0?"Bearish":"—",tr>0?C.up:tr<0?C.dn:C.mid)+it("Zone",zone,zone==="Discount"?C.up:zone==="Premium"?C.dn:C.mid)+
+    it("EMA20",px(ind.e20[i],u),C.warn)+it("EMA50",px(ind.e50[i],u),C.key)+it("EMA200",px(ind.e200[i],u),C.violet)+
+    (ind.hasVol?it("VWAP",px(ind.vwap[i],u), ind.vwap[i]==null?C.mid:(x.c>ind.vwap[i]?C.up:C.dn)):it("VWAP","no volume data",C.low))+
     it("RSI",r==null?"—":r.toFixed(1), r==null?C.mid:r>70?C.dn:r<30?C.up:C.fg)+
-    it("ATR",px(ind.atr[i],u))+
     it("ADX",ind.adx[i]==null?"—":ind.adx[i].toFixed(1), ind.adx[i]>20?C.up:C.mid)+
-    it("MACD",m?m.hist.toFixed(2):"—", m?(m.hist>0?C.up:C.dn):C.mid)+
-    it("Trend",st?(st.dir===1?"Up":"Down"):"—", st?(st.dir===1?C.up:C.dn):C.mid)+
-    it("Order blocks",liveOb+" live",C.fg)+it("Liquidity",openLiq+" open",C.warn);
+    it("MACD",m?m.hist.toFixed(2):"—", m?(m.hist>0?C.up:C.dn):C.mid)+it("ATR",px(ind.atr[i],u))+
+    (ind.hasVol?it("Rel. volume",rv==null?"—":rv.toFixed(2)+"x",rv>=1.2?C.up:C.mid):"");
 }
 
 function fit(){
@@ -1425,7 +1660,9 @@ function renderHome(){
       const b=document.createElement("button"); b.className="tile";
       b.innerHTML=`<div class="n">${esc(u.sym)}</div><div class="p">${q.ltp!=null?px(q.ltp,u):"—"}</div>`+
         `<div class="c">${q.chg!=null?`<span class="chg ${q.chg>=0?"up":"dn"}">${q.chg>=0?"▲":"▼"} ${Math.abs(q.chg).toFixed(2)}%</span>`:""}`+
-        (a?`<span class="sg" style="background:${a.side==="BUY"?C.up:C.dn}">${a.side}</span>`:"")+`</div>`;
+        `</div>`+(()=>{ const st=S.status[u.tkr]; if(!st) return "";
+          const col=st.state.startsWith("CALL")?C.up:st.state.startsWith("PUT")?C.dn:st.state==="WAIT"?C.warn:C.low;
+          return `<div class="stt" style="color:${col};border-color:${col}">${st.state}</div><div class="why">${esc(st.why)}</div>`; })();
       b.onclick=()=>goChart(u.tkr);
       t.appendChild(b);
     });
@@ -1458,9 +1695,8 @@ function renderStrictSegs(){
 function pastSignals(strict){
   const out=[];
   S.universe.filter(u=>u.seg!=="OPT").forEach(u=>{
-    const b=S.bars[u.tkr], ind=S.ind[u.tkr], str=S.struct[u.tkr];
-    if(!b||b.length<60||!ind||!str) return;
-    engine(u,b,ind,str,{all:true,strict,lite:true}).forEach(x=>{ if(x.res.state==="EXPIRED") out.push(x); });
+    const ctx=S.ctx[u.tkr]; if(!ctx) return;
+    engine(ctx,{all:true,strict,lite:true}).forEach(x=>{ if(x.res.state==="EXPIRED") out.push(x); });
   });
   return out.sort((a,b)=>a.ts-b.ts);
 }
@@ -1484,7 +1720,7 @@ function renderResults(){
   // verdict, in plain words
   const v=document.getElementById("resVerdict");
   if(!t.n) v.innerHTML=`No finished ${S.strict?"strict ":""}signals in this period, so there is nothing to judge yet.`;
-  else v.innerHTML=`<b>${S.strict?"Strict signals":"All signals"}:</b> ${t.n} signals, <b style="color:${C.up}">${t.won} won</b>, `+
+  else v.innerHTML=`<b>${S.strict?"Strict signals":"All signals"}:</b> ${t.n} signal${t.n===1?"":"s"}, <b style="color:${C.up}">${t.won} won</b>, `+
     `<b style="color:${C.dn}">${t.lost} lost</b>${t.flat?`, ${t.flat} ended flat`:""}. Win rate <b>${pc(t.rate)}</b>. `+
     `Average win ${rR(t.avgWin)}, average loss ${rR(t.avgLoss)}. `+
     (t.avg>0.05?`On balance they <b style="color:${C.up}">made money</b> in this period: ${rR(t.avg)} per signal.`
@@ -1524,8 +1760,8 @@ function renderResults(){
   table("resByDay","Day",by(x=>x.day).sort((a,b)=>a[0]<b[0]?1:-1),dfmt);
   document.getElementById("resNote").innerHTML=`How to read this: results are measured on the index, share or future price. <b>1R</b> is the distance from entry to stop loss, `+
     `so −1R is a full stop-out and +3R is all three targets. Stops are assumed to fill before targets inside a candle. `+
-    `Option trades move differently and usually by more, in both directions, and brokerage, taxes and slippage are not included, so real results will be lower. `+
-    `Strict signals need the bigger trend, trend strength and timing to agree; All signals is the original rule set.`;
+    `Results include an estimate of costs (0.04% of price per round trip). Option trades move differently and usually by more, in both directions. `+
+    `Strict = grade A; All = grades A and B. Every signal shown here is exactly what the site showed at the time: the analysis only uses candles that had closed by then.`;
 }
 
 /* ------------------------------------------ live option signals (home) -- */
@@ -1558,7 +1794,8 @@ async function buildTrade(s){
     const row=d.rows.reduce((b,r)=>Math.abs(r.strike-s.entry)<Math.abs(b.strike-s.entry)?r:b,d.rows[0]);
     const ty=s.side==="BUY"?"CE":"PE", leg=ty==="CE"?row.ce:row.pe;
     if(!leg||!leg.sym) throw new Error("no contract");
-    Object.assign(t,{sym:leg.sym,strike:row.strike,ty,expiry:d.expiry,expMs:Date.now()+d.daysOut*864e5,ivFeed:leg.iv});
+    Object.assign(t,{sym:leg.sym,strike:row.strike,ty,expiry:d.expiry,expMs:Date.now()+d.daysOut*864e5,ivFeed:leg.iv,
+      spread:leg.bid>0&&leg.ask>0?(leg.ask-leg.bid)/((leg.ask+leg.bid)/2)*100:null, optVol:leg.vol});
     await refreshTrade(s,t);
   }catch(e){ t.state="NONE"; t.err=e.message; t.retryAt=Date.now()+180000; }
 }
@@ -1586,13 +1823,15 @@ function evalTrade(s,t){
   // Follow it bar by bar. Stop is checked first; it moves to cost after Target 1 and to Target 1 after Target 2.
   const ub=S.bars[s.tkr]||[];
   const uExit=s.res.state==="EXPIRED"&&s.res.exit!=null&&ub[s.res.exit]?ub[s.res.exit].ts:null;
-  let stop=t.sl, hit=0, exit=null, why=null;
+  let stop=t.sl, hit=0, exit=null, why=null, peak=t.entry;
   for(let j=i0+1;j<c.length&&exit==null;j++){
     const ts=c[j][0], h=c[j][2], l=c[j][3], cl=c[j][4];
     if(l<=stop){ exit=stop; why=hit===0?"STOP":hit===1?"COST":"TRAIL"; break; }
     if(hit<1&&h>=t.t1){ hit=1; stop=t.entry; }
     if(hit<2&&h>=t.t2){ hit=2; stop=t.t1; }
     if(hit<3&&h>=t.t3){ hit=3; exit=t.t3; why="T3"; break; }
+    peak=Math.max(peak,h);
+    if(hit>=2) stop=Math.max(stop,tick05(t.entry+(peak-t.entry)*TRAIL_LOCK));   // trailing stop after Target 2
     if(uExit!=null&&ts>=uExit){ exit=cl; why="END"; }
   }
   if(exit==null&&s.res.state==="EXPIRED"){ exit=c.length?c[c.length-1][4]:t.entry; why="END"; }
@@ -1601,9 +1840,11 @@ function evalTrade(s,t){
   Object.assign(t,{hit,safe:stop,exit,why,state:exit!=null?"CLOSED":"ACTIVE",pct:(t.now-t.entry)/t.entry*100,warn:false});
   // Early warning: the option is under water and the chart has turned against the trade.
   const ind=S.ind[s.tkr];
-  if(t.state==="ACTIVE"&&ind&&ub.length&&t.now<t.entry){
-    const n=ub.length-1, L=s.side==="BUY", st=ind.st[n], e=ind.e21[n];
-    t.warn=!!((st&&st.dir===(L?-1:1))||(e!=null&&(L?ub[n].c<e:ub[n].c>e)));
+  t.rev=false;
+  if(t.state==="ACTIVE"&&ind&&ub.length){
+    const n=ub.length-2, d=s.side==="BUY"?1:-1, it=S.ctx[s.tkr]&&S.ctx[s.tkr].E.int.trend[n], e=ind.e20[n];
+    const against=!!(n>s.i&&(it===-d||(e!=null&&d*(ub[n].c-e)<0)));
+    t.warn=against&&t.now<t.entry; t.rev=against&&hit>=1&&t.now>t.entry;
   }
 }
 let trBusy=false;
@@ -1638,21 +1879,80 @@ const takeKey=s=>s.tkr+"|"+s.ts+"|"+s.side;
 function tradeModel(s){
   const u=uni(s.tkr), t=S.otr[sigKey(s)], when=`signal ${hhmm(s.ts)} IST, ${ago(s.ts)}`;
   if(t&&t.entry!=null) return { opt:true, d:1, f:pm, name:s.sym, chip:`${t.strike} ${t.ty}`, chipCol:t.ty==="CE"?C.up:C.dn, verb:"Buy",
-    sub:`${t.ty==="CE"?"Call":"Put"} option · expiry ${new Date(t.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})} · ${when}`,
-    entry:t.entry, sl:t.sl, t1:t.t1, t2:t.t2, t3:t.t3, now:t.now, hit:t.hit, active:t.state==="ACTIVE", safe:t.safe, warn:t.warn,
+    sub:(t.spread!=null&&t.spread>5?`<b style="color:${C.warn}">Thin option: ${t.spread.toFixed(1)}% bid-ask spread</b> · `:"")+
+      (t.optVol===0?`<b style="color:${C.warn}">No trades in this option yet today</b> · `:"")+
+      `${t.ty==="CE"?"Call":"Put"} option · expiry ${new Date(t.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})} · ${when}`,
+    expiry:t.expiry, strike:t.strike, ty:t.ty,
+    entry:t.entry, sl:t.sl, t1:t.t1, t2:t.t2, t3:t.t3, now:t.now, hit:t.hit, active:t.state==="ACTIVE", safe:t.safe, warn:t.warn, rev:t.rev,
     why:t.why, exit:t.exit, endNote:s.res.status, series:(t.bars||[]).slice(-20).map(c=>c[4]) };
   const b=S.bars[s.tkr]||[], q=S.quotes[s.tkr]||{}, ind=S.ind[s.tkr], live=s.res.state==="ACTIVE", d=s.side==="BUY"?1:-1, st=s.res.status;
   const now=live&&q.ltp!=null?q.ltp:s.res.px;
-  let warn=false;
-  if(live&&ind&&b.length&&d*(now-s.entry)<0){ const n=b.length-1, x=ind.st[n], e=ind.e21[n];
-    warn=!!((x&&x.dir===-d)||(e!=null&&d*(b[n].c-e)<0)); }
+  let warn=false, rev=false;
+  if(live&&ind&&b.length){ const n=b.length-2, it=S.ctx[s.tkr]&&S.ctx[s.tkr].E.int.trend[n], e=ind.e20[n];
+    const against=!!(n>s.i&&(it===-d||(e!=null&&d*(b[n].c-e)<0)));
+    warn=against&&d*(now-s.entry)<0; rev=against&&s.res.hit>=1&&d*(now-s.entry)>0; }
   return { opt:false, d, f:v=>px(v,u), name:s.sym, chip:s.side, chipCol:d>0?C.up:C.dn, verb:d>0?"Buy":"Sell",
     sub:`${u.seg==="MCX"?"Futures":u.seg==="IDX"?"Index":"Share"} price levels · ${when}`+(t&&t.state==="LOADING"?" · finding the option…":u.fo?" · option price not available":""),
     entry:s.entry, sl:s.sl, t1:s.t1, t2:s.t2, t3:s.t3, now, hit:s.res.hit, active:live,
-    safe:s.res.hit>=2?s.t1:s.res.hit===1?s.entry:s.sl, warn,
+    safe:s.res.stop!=null?s.res.stop:s.sl, warn, rev,
     why:st.startsWith("Stopped")?"STOP":st.startsWith("Breakeven")?"COST":st.startsWith("Trailed")?"TRAIL":st.startsWith("T3")?"T3":"END",
     exit:s.res.px, endNote:st, series:b.slice(-20).map(x=>x.c) };
 }
+/* Text for pasting into a WhatsApp group. Plain numbers, no grouping commas. */
+const sn=v=>String(Number(v.toFixed(2)));
+function shareSignal(s,m){
+  if(m.opt){ const ex=new Date(m.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"}).toUpperCase();
+    return `${s.sym} - ${ex} EXPIRY\nBUY ${m.strike} ${m.ty} @ ${sn(m.entry)}\nSL - ${sn(m.sl)}\nT1/T2/T3 - ${sn(m.t1)}/${sn(m.t2)}/${sn(m.t3)}`; }
+  const u=uni(s.tkr);
+  return `${s.sym} - ${u.seg==="MCX"?"FUTURES":u.seg==="IDX"?"INDEX":"SHARE"} LEVELS\n${m.verb.toUpperCase()} @ ${sn(m.entry)}\nSL - ${sn(m.sl)}\nT1/T2/T3 - ${sn(m.t1)}/${sn(m.t2)}/${sn(m.t3)}`;
+}
+function shareUpdate(s,m){
+  const head=m.opt?`${s.sym} ${m.strike} ${m.ty}`:`${s.sym} ${m.verb.toUpperCase()}`;
+  if(m.active){
+    if(m.rev) return `${head}\n⚠️ EXIT NOW near ${sn(m.now)} to book profit. Trailing SL ${sn(m.safe)}`;
+    if(m.warn) return `${head}\n⚠️ Turning against us. Exit near ${sn(m.now)}, don't wait for SL ${sn(m.sl)}`;
+    if(m.hit>=2) return `${head}\n✅ T${m.hit} ${sn(m[`t${m.hit}`])} DONE. Trail SL ${sn(m.safe)}`;
+    if(m.hit===1) return `${head}\n✅ T1 ${sn(m.t1)} DONE. SL moved to cost ${sn(m.safe)}`;
+    return `${head}\nNow ${sn(m.now)}. SL ${sn(m.sl)}`;
+  }
+  if(m.why==="T3") return `${head}\n🎯 T3 ${sn(m.t3)} DONE. All targets achieved`;
+  if(m.why==="STOP") return `${head}\n❌ SL ${sn(m.exit)} hit`;
+  if(m.why==="COST") return `${head}\nClosed at cost ${sn(m.exit)} after T1`;
+  if(m.why==="TRAIL") return `${head}\n✅ Closed at trailing SL ${sn(m.exit)} after T${m.hit}`;
+  return `${head}\nClosed at ${sn(m.exit)}`;
+}
+async function copyText(txt){
+  try{ await navigator.clipboard.writeText(txt); return true; }
+  catch(e){ const ta=document.createElement("textarea"); ta.value=txt; ta.style.position="fixed"; ta.style.opacity="0";
+    document.body.appendChild(ta); ta.select(); let ok=false; try{ ok=document.execCommand("copy"); }catch(err){} ta.remove(); return ok; }
+}
+
+/* ---- alerts: a sound and a notification when a trade reaches a target, its stop, or an exit alert.
+   They work only while the site is open in a browser tab or as an installed app. */
+const alerts={ on:store.get("sd_alerts","0")==="1", seen:new Set(), t0:Date.now(), ac:null,
+  enable(){ this.on=true; store.set("sd_alerts","1");
+    try{ this.ac=this.ac||new (window.AudioContext||window.webkitAudioContext)(); }catch(e){}
+    try{ if(window.Notification&&Notification.permission==="default") Notification.requestPermission(); }catch(e){} },
+  disable(){ this.on=false; store.set("sd_alerts","0"); },
+  beep(){ try{ const a=this.ac; if(!a) return; const o=a.createOscillator(), g=a.createGain(); o.frequency.value=880;
+    g.gain.setValueAtTime(.0001,a.currentTime); g.gain.exponentialRampToValueAtTime(.2,a.currentTime+.02); g.gain.exponentialRampToValueAtTime(.0001,a.currentTime+.5);
+    o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime+.55); }catch(e){} },
+  fire(key,txt){
+    if(this.seen.has(key)) return; this.seen.add(key);
+    if(Date.now()-this.t0<60000||!this.on) return;   // the first minute only records what had already happened
+    this.beep();
+    try{ if(window.Notification&&Notification.permission==="granted") new Notification("Signal Desk",{body:txt,icon:"/icon.svg",tag:key}); }catch(e){}
+  },
+};
+function alertEvents(s,m){
+  const k=takeKey(s), txt=shareUpdate(s,m).replace(/\n/g," · ");
+  if(m.active) alerts.fire(k+"|new",`New signal: ${shareSignal(s,m).replace(/\n/g," · ")}`);
+  for(let h=1;h<=Math.min(m.hit,3);h++) alerts.fire(k+"|t"+h,txt);
+  if(m.active&&m.rev) alerts.fire(k+"|rev",txt);
+  if(m.active&&m.warn) alerts.fire(k+"|warn",txt);
+  if(!m.active) alerts.fire(k+"|end",txt);
+}
+
 /* Which way the price has gone over the last three candles. */
 function moving(m){
   const a=m.series; if(a.length<4) return {txt:"Direction not known yet",arrow:"",col:C.mid};
@@ -1685,8 +1985,8 @@ function renderTrades(){
   const models=list.map(s=>({s,m:tradeModel(s)})), nLive=models.filter(x=>x.m.active).length;
   document.getElementById("homeSigTitle").textContent=(S.strict?"Strict signals":"Other signals")+" ("+nLive+" active)";
   document.getElementById("homeTabNote").textContent=S.strict
-    ?"Signals where the bigger trend, trend strength and timing all agree. Fewer, and better on the Results page so far, but they still lose sometimes."
-    :"Signals that passed the basic rules but not the strict filter. They are weaker; check the Results page before trusting them.";
+    ?"Grade A: every rule passed, the setup zone was an order block or fair value gap, the break was a structure shift or came on high volume, and there is room for 2R or more. They still lose sometimes."
+    :"Grade B: every core rule passed (trend, zone, sweep, break, room of 1.5R), but not the extra conditions for grade A. Check the Results page before trusting them.";
   document.getElementById("homeSigNote").textContent=list.length
     ?"Buy price is the option's actual price when the signal fired. Stop loss and targets come from the chart's stop and targets. \"I took this entry\" is remembered on this device only."
     :"";
@@ -1710,7 +2010,13 @@ function renderTrades(){
     if(m.active){
       badge="ACTIVE";
       if(m.warn){ cls="warn"; bcol=mcol=C.warn; msg=`Market is turning against this trade. Safe exit now near <b>${f(m.now)}</b>, without waiting for the stop loss at ${f(m.sl)}.`; }
-      else if(m.hit>0){ cls="pos"; bcol=mcol=C.up; msg=`Signal hit positive: Target ${m.hit} reached. Safe exit is now <b>${f(m.safe)}</b>${m.hit===1?", the original entry price":""}.`; }
+      else if(m.rev){ cls="warn"; bcol=mcol=C.warn;
+        msg=`<b>EXIT ALERT:</b> Target ${m.hit} was reached and the market is now turning against the trade. Exit now near <b>${f(m.now)}</b> `+
+          `to keep a profit of <b>${(m.d*(m.now-m.entry)/m.entry*100).toFixed(1)}%</b>. If you stay in, the trailing stop loss is <b>${f(m.safe)}</b>.`; }
+      else if(m.hit>=2){ cls="pos"; bcol=mcol=C.up;
+        msg=`Target ${m.hit} reached. <b>Trailing stop loss: ${f(m.safe)}</b>, which locks a profit of ${(m.d*(m.safe-m.entry)/m.entry*100).toFixed(1)}%. `+
+          `It moves up as the price makes new highs; exit if price falls back to it.`; }
+      else if(m.hit>0){ cls="pos"; bcol=mcol=C.up; msg=`Signal hit positive: Target ${m.hit} reached. Stop loss moved to the entry price, <b>${f(m.safe)}</b>, so this trade can no longer lose.`; }
       else if(m.d*(m.now-m.entry)>=0){ cls="pos"; bcol=mcol=C.up; msg=`Signal hit positive: price is beyond the entry. Next target ${f(m.t1)}. Safe exit if it reverses: <b>${f(m.sl)}</b>.`; }
       else { cls=""; bcol=C.warn; mcol=C.mid; msg=`Price is on the wrong side of the entry, but the signal is still valid. Safe exit at the stop loss, <b>${f(m.sl)}</b>.`; }
     } else {
@@ -1718,7 +2024,7 @@ function renderTrades(){
       cls=(m.d*(m.exit-m.entry)>=0?"pos":"neg")+" done"; badge=failed?"FAILED":"CLOSED"; bcol=failed?C.dn:C.mid; mcol=failed?C.dn:m.d*(m.exit-m.entry)>0?C.up:C.mid;
       msg=failed?`Signal failed, the market went the other way. Safe exit was <b>${f(m.exit)}</b>.`
         :m.why==="COST"?`Target 1 was reached, then price came back. Closed at the entry price, <b>${f(m.exit)}</b>, with no loss.`
-        :m.why==="TRAIL"?`Target ${m.hit} was reached, then price came back. Closed at safe exit <b>${f(m.exit)}</b>.`
+        :m.why==="TRAIL"?`Target ${m.hit} was reached, then price came back. Closed at the trailing stop loss, <b>${f(m.exit)}</b>, in profit.`
         :m.why==="T3"?`All three targets reached. Closed at <b>${f(m.exit)}</b>.`
         :`Signal ended (${esc(m.endNote.toLowerCase())}). Closed at <b>${f(m.exit)}</b>.`;
     }
@@ -1755,9 +2061,16 @@ function renderTrades(){
       `<div class="trl">${cell(m.verb+" @",`<span style="color:${C.key}">${f(m.entry)}</span>`)}${cell("Stop loss",`<span style="color:${C.dn}">${f(m.sl)}</span>`)}`+
         `${cell("Target 1 / 2 / 3",tg(m.t1,1)+" / "+tg(m.t2,2)+" / "+tg(m.t3,3))}</div>`+track+
       `<div class="trs" style="color:${mcol};background:color-mix(in srgb, ${mcol} 12%, transparent)">${msg}</div>`+entryBox+
-      `<div class="tra">${btn}<button class="btn act" data-a="chart">View on chart</button></div>`;
-    b.querySelectorAll("button.act").forEach(x=>x.onclick=()=>{
+      `<div class="tra">${btn}<button class="btn act wa" data-a="copy">Copy signal for WhatsApp</button>`+
+        `<button class="btn act" data-a="upd">Copy update</button>`+
+        `<a class="btn act" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(shareSignal(s,m))}">Send on WhatsApp</a>`+
+        `<button class="btn act" data-a="chart">View on chart</button></div>`;
+    alertEvents(s,m);
+    b.querySelectorAll("button.act").forEach(x=>x.onclick=async()=>{
       if(x.dataset.a==="chart") return goChart(s.tkr,s);
+      if(x.dataset.a==="copy"||x.dataset.a==="upd"){
+        const ok=await copyText(x.dataset.a==="copy"?shareSignal(s,m):shareUpdate(s,m));
+        const was=x.textContent; x.textContent=ok?"Copied ✓":"Copy failed"; setTimeout(()=>{ x.textContent=was; },1800); return; }
       if(x.dataset.a==="take") taken.set(k,{px:m.now, late:Math.abs(m.now-m.entry)/m.entry*100>=(m.opt?1.5:0.05), at:Date.now()});
       else taken.set(k,null);
       renderTrades();
@@ -1950,6 +2263,18 @@ function setTheme(light){
 document.getElementById("themeBtn").onclick=()=>setTheme(document.documentElement.dataset.theme!=="light");
 document.getElementById("themeBtn").textContent=document.documentElement.dataset.theme==="light"?"Dark":"Light";
 
+const alertBtn=document.getElementById("alertBtn");
+const alertLabel=()=>{ alertBtn.textContent=alerts.on?"🔔 Alerts on":"Turn on alerts"; alertBtn.classList.toggle("on",alerts.on); };
+alertBtn.onclick=()=>{ alerts.on?alerts.disable():alerts.enable(); alertLabel(); };
+alertLabel();
+for(const [id,key] of [["tfSetup","setup"],["tfTrend","htf"]])
+  document.getElementById(id).onchange=async e=>{
+    S.tfSet[key]=+e.target.value; store.set("sd_tfset",JSON.stringify(S.tfSet)); e.target.blur();
+    S.otr={}; setConn("ok","Loading "+tfName(+e.target.value)+" candles…");
+    for(const u of S.universe){ try{ await loadMTF(u.tkr,true); recompute(u.tkr); }catch(err){} }
+    setConn("ok",liveLabel()); renderAll(); pumpTrades();
+  };
+
 function setMode(simple){
   S.simple=simple; store.set("sd_mode",simple?"simple":"adv");
   document.body.classList.toggle("simple",simple);
@@ -2023,6 +2348,10 @@ function seg(el,items,isOn,click){
 function buildChrome(){
   seg(document.getElementById("tfs"), TF.map(m=>({l:m+"m",v:m})), it=>S.tf===it.v,
     async it=>{ S.tf=it.v; S.picked=null; S.otr={}; await refreshAll(); });
+  // which setup and trend timeframes go with the entry timeframe
+  const {stf,htf}=mtfOf(S.tkr), tsel=(id,cur,opts)=>{ const el=document.getElementById(id);
+    el.innerHTML=opts.filter(v=>v>=S.tf).map(v=>`<option value="${v}"${v===cur?" selected":""}>${tfName(v)}</option>`).join(""); };
+  tsel("tfSetup",stf,[5,15,30,60]); tsel("tfTrend",htf,[15,30,60,240]);
   seg(document.getElementById("stateSeg"),
     [{l:"All",v:"ALL"},{l:"Active",v:"ACTIVE"},{l:"Expired",v:"EXPIRED"}],
     it=>S.state===it.v, it=>{S.state=it.v; buildChrome(); renderBlotter(); renderCards();});
@@ -2037,9 +2366,10 @@ function buildChrome(){
     it=>S.scope===it.v, it=>{S.scope=it.v; buildChrome(); renderCards();});
 
   const groups=[
-    ["Overlays",[["ema9","EMA 9",C.warn],["ema21","EMA 21",C.key],["ema50","EMA 50",C.violet],
-      ["vwap","VWAP",C.fg],["st","Supertrend",C.up],["bb","Bollinger",C.mid]]],
-    ["Smart money",[["ob","Order blocks",C.up],["liq","Liquidity pools",C.warn],["fvg","Fair value gaps",C.key]]],
+    ["Overlays",[["ema20","EMA 20",C.warn],["ema50","EMA 50",C.key],["ema200","EMA 200",C.violet],
+      ["vwap","VWAP (needs volume)",C.fg],["bb","Bollinger",C.mid]]],
+    ["Smart money",[["struct","Structure: HH/HL, BOS, CHoCH",C.up],["ob","Order blocks",C.up],["fvg","Fair value gaps",C.key],
+      ["liq","Liquidity: swings, equal, day, week",C.warn],["pd","Premium / discount",C.mid]]],
     ["Panes",[["vol","Volume",C.mid],["rsi","RSI",C.mid],["macd","MACD",C.mid]]],
     ["Trade",[["levels","Signal levels",C.key]]],
   ];
@@ -2184,7 +2514,7 @@ function renderCards(){
         ${lv("Target 1",px(s.t1,u),tg(1))}${lv("Target 2",px(s.t2,u),tg(2))}${lv("Target 3",px(s.t3,u),tg(3))}</div>
       ${o?`<div class="opt">Option to buy: <b style="color:${col}">${o.ty==="CE"?"CALL":"PUT"}</b> · ${esc(s.tkr)} ${o.strike} ${o.ty}</div>`:""}
       ${on?`<div class="more">Result so far: <b style="color:${s.res.R>=0?C.up:C.dn}">${(s.res.R>=0?"+":"")+s.res.R.toFixed(2)}R</b>
-        (1R is the distance from entry to stop) · Confidence ${s.conf}/100`+
+        (1R is the distance from entry to stop) · Grade ${s.grade} · reward:risk ${s.rr.toFixed(1)} to Target 1`+
         (o?`<br>Option premium about ₹${nf(o.entry,1)}${o.live?"":" (estimate — open the option's own chart for the live price)"}`:"")+`</div>`:""}
     </button>`;
   }).join("")+(cut?`<button class="btn" id="moreCards" style="grid-column:1/-1;justify-self:center">Show all ${total} signals</button>`
@@ -2221,12 +2551,11 @@ function renderSide(){
     ${lv("Target 1",px(s.t1,u),s.res.hit>=1?C.up:C.mid)}
     ${lv("Target 2",px(s.t2,u),s.res.hit>=2?C.up:C.mid)}
     ${lv("Target 3",px(s.t3,u),s.res.hit>=3?C.up:C.mid)}
-    ${lv("Risk / share",px(s.risk,u))}${lv("Risk : reward","1 : 3.0",C.up)}
+    ${lv("Risk / share",px(s.risk,u))}${lv("Reward : risk to T1",s.rr.toFixed(1)+" : 1",s.rr>=2?C.up:C.fg)}
     ${lv("Open P&L",(s.res.R>=0?"+":"")+s.res.R.toFixed(2)+"R", s.res.R>=0?C.up:C.dn)}
-    <div style="margin-top:12px">
-      <div class="m" style="font-size:10.5px;color:${C.low};display:flex;justify-content:space-between">
-        <span>CONFIDENCE</span><span style="color:${C.fg}">${s.conf}/100</span></div>
-      <div class="bar"><i style="width:${s.conf}%;background:${s.conf>=78?C.up:C.warn}"></i></div>
+    <div style="margin-top:12px" class="m">
+      <span style="font-size:10.5px;color:${C.low}">GRADE</span> <b style="color:${s.grade==="A"?C.up:C.warn}">${s.grade}</b>
+      <span style="font-size:11px;color:${C.mid}">${s.grade==="A"?"zone + shift/volume + 2R room":"core rules only"}</span></div>
     </div>
     ${o?`<div style="margin-top:14px">
       <div class="hd" style="padding:0 0 6px">Option leg${o.live?"":" (estimated IV)"}</div>
@@ -2241,14 +2570,12 @@ function renderSide(){
     </div>`:""}
     <div style="margin-top:14px">
       <div class="hd" style="padding:0 0 6px">Why it fired</div>
-      ${CHECKS.map(c=>`<div class="m" style="display:flex;gap:8px;font-size:10.5px;padding:1.5px 0">
-        <span style="color:${s.checks[c.id]?C.up:C.low};width:10px">${s.checks[c.id]?"✓":"·"}</span>
-        <span style="flex:1;color:${s.checks[c.id]?C.fg:C.low}">${c.l}</span>
-        <span style="color:${s.checks[c.id]?C.warn:C.low}">${s.checks[c.id]?"+"+c.w:"0"}</span></div>`).join("")}
+      ${(s.reasons||[]).map(r=>`<div style="display:flex;gap:8px;font-size:11.5px;padding:2px 0;line-height:1.45">
+        <span style="color:${C.up}">✓</span><span>${esc(r)}</span></div>`).join("")}
     </div></div>`;
 }
 
-const COLS=["Symbol","Side","Posted","Age","Entry","Stop","T1","T2","T3","R:R","Conf","Option","State","Status","R"];
+const COLS=["Symbol","Side","Posted","Age","Entry","Stop","T1","T2","T3","R:R","Grade","Option","State","Status","R"];
 function rows(){
   let r = S.scope==="ONE" ? (S.sigs[S.tkr]||[])
     : S.universe.reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);
@@ -2274,7 +2601,7 @@ function renderBlotter(){
       <td style="color:${s.res.hit>=1?C.up:C.mid}">${px(s.t1,u)}</td>
       <td style="color:${s.res.hit>=2?C.up:C.mid}">${px(s.t2,u)}</td>
       <td style="color:${s.res.hit>=3?C.up:C.mid}">${px(s.t3,u)}</td>
-      <td>1:3.0</td><td>${s.conf}</td>
+      <td>${s.rr.toFixed(1)}</td><td>${s.grade}</td>
       <td>${s.opt?esc(s.tkr)+" "+s.opt.strike+" "+s.opt.ty:"—"}</td>
       <td><span class="tag" style="border:1px solid ${t};color:${t}">${s.res.state}</span></td>
       <td style="color:${t}">${s.res.status}</td>
@@ -2300,8 +2627,8 @@ function renderPerf(){
     `<b style="color:${C.warn}">${act}</b> active · <b>${done.length}</b> resolved · `+
     `hit rate <b style="color:${wr!=="—"&&+wr>=50?C.up:C.dn}">${wr}%</b> · `+
     `expectancy <b style="color:${ex!=="—"&&+ex>=0?C.up:C.dn}">${ex}R</b>. `+
-    `Stops are assumed to fill before targets within a bar. Slippage, brokerage and STT are not deducted — `+
-    `net results will be lower. A hit rate near 40% is normal at 1:3 R:R and can still be profitable.`+
+    `Stops are assumed to fill before targets within a candle. Results include an estimate of costs (0.04% of price); `+
+    `real slippage can be larger.`+
     (S.feed&&S.feed.delayed?` <b style="color:${C.warn}">Candles are delayed ${esc(S.feed.delayNote||"")}</b> — `+
       `signal times are candle times, not the moment you could have traded. The option chain is live.`:"");
   document.getElementById("simplePerf").innerHTML=
