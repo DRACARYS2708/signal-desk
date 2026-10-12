@@ -30,7 +30,7 @@ Visitors never see this part. It tells the site which Fyers app it is.
 
 ### 2. Put the files on GitHub
 
-Open your `signal-desk` repository, choose **Add file > Upload files**, drag in the four files and click **Commit changes**. Files with the same name are replaced. Render rebuilds the site by itself.
+Open your `signal-desk` repository, choose **Add file > Upload files**, drag in the four files (`index.html`, `server.js`, `package.json`, `README.md`) and click **Commit changes**. `package.json` must be included: it adds the compression package that makes the page about three times smaller to download. Files with the same name are replaced. Render rebuilds the site by itself.
 
 ### 3. Add two settings on Render
 
@@ -121,9 +121,23 @@ T1/T2/T3 - 290/350/390
 
 **Install as an app** — on a phone, open the site in Chrome or Safari and choose "Add to Home screen". It then opens full-screen from its own icon.
 
-**Signals** — fire on a fresh EMA cross or Supertrend flip that also scores 60 or more out of 100 on eleven checks. No new entries in the last 25 minutes of a session; open signals close 5 minutes before the session ends (15:30 for NSE, 23:30 for MCX). On an option's own chart, signals refer to the premium.
+**Signals** — come from the structure engine described above (liquidity sweep, structure break, pull-back entry, higher-timeframe agreement). No new entries near the end of a session; open signals close shortly before it ends (15:30 for NSE, 23:30 for MCX). On an option's own chart, signals refer to the premium.
 
 **Times** — everything is shown in India time (IST).
+
+**Search** — the box at the top finds any NSE or BSE stock or index and any MCX commodity (nearest futures contract), using the symbol lists Fyers publishes each day. Picking a result opens its chart with a plain summary underneath:
+- price card (last price, change, open/high/low, volume against usual), trend card (UP / DOWN / SIDEWAYS from the 1h, setup and entry timeframes, RSI, ADX, ATR), and the nearest support and resistance levels;
+- a status: **VALID CE SIGNAL**, **VALID PE SIGNAL**, **NO VALID SIGNAL** (nothing qualifies, with the reason), or **SIGNAL NOT CONFIRMED** (market closed, data stale or saved, or contract data missing). Only one direction is ever live at a time, so "both valid" does not occur;
+- when a signal is live and options are listed: the real contract from the Fyers option chain (strike, expiry, premium, bid/ask, open interest), entry range, stop, three targets, reward-to-risk, what cancels the setup, and a position-size helper (your capital and risk %, rounded to whole lots);
+- the reasons the rules passed, and any related headline from the news tab as a warning.
+Searched instruments stay in your list after a reload. Instruments without listed options (most BSE-only stocks, some MCX commodities) show the setup on the underlying only, marked "no options".
+
+**Simple chart** — in Simple view the chart shows only candles, the signal box (BUY/SELL, entry, stop, targets) and a trend badge (UPTREND / DOWNTREND / SIDEWAYS). Order blocks, gaps, liquidity and indicators still drive the signals in the background; switch to Advanced to see them drawn.
+
+**Market news** — headlines from public RSS feeds (Business Standard, Economic Times, Mint, Moneycontrol, CNBC, Google News), newest first, with source, publication time in IST and when they were read. Each item lists the instruments it may affect with their live trend and signal status, a short potential-impact note, direction, typical time horizon, risks and what to watch. The headline is the reported fact; everything under it is worked out automatically from the headline's words and is labelled as such. **News never creates a trade.** If a headline points against a live signal, the signal shows a news-risk warning. Feeds that fail are named at the top; the rest still show.
+
+**Data labels** — every price and signal says where it came from: **Live** (fresh from Fyers), **Delayed** or **Stale** (no fresh price or candle while the market should be open — a holiday, halt or feed problem), **Saved** (this browser's copy from the last visit, shown at once while fresh data loads), **Closed** (market shut; last candle time shown). Signals are only issued on live data during market hours.
+
 
 ## Audit of the previous signal engine (October 2026)
 
@@ -139,8 +153,11 @@ All of these are addressed by the new engine above.
 ## Limits to know
 
 - **MCX contracts** roll every month. The site picks the nearest live contract by itself each day and shows its month beside the name.
-- **Lot sizes** are a built-in table, not from the exchange. Check them with your broker.
-- **Free hosting sleeps** after about 15 minutes without visitors; the next visit takes up to a minute.
+- **Lot sizes** come from Fyers' daily symbol lists when they load, otherwise from a built-in table. Check them with your broker.
+- **Market holidays** are not built in. On a holiday the site sees no new candles and shows the market as closed or the data as delayed; it does not issue signals.
+- **Free hosting sleeps** after about 15 minutes without visitors; the next visit takes up to a minute. This is a Render rule and cannot be changed in code. The page now opens at once from the last saved data while the server wakes, and keeps retrying for three minutes. To keep it awake, either:
+  - create a free monitor at uptimerobot.com (HTTP(s), URL `https://signal-desk-8jcn.onrender.com/healthz`, every 5 minutes). Render's free plan gives 750 hours a month, enough for one site running all month; or
+  - move the service to Render's Starter plan (about $7 a month), which never sleeps.
 - **Each visitor sees data on their own Fyers login.** A visitor who is not logged in gets no prices.
 - **Free hosting is for trying it out.** With several users at once, move to a paid Render plan so the site stays awake and responsive.
 

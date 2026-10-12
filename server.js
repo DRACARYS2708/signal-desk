@@ -98,7 +98,12 @@ const OPT_RE = /^(NSE|BSE|MCX):[A-Z0-9&_-]{3,40}(CE|PE)$/;
 const optionOf = t => OPT_RE.test(t)
   ? { tkr: t, fy: t, name: t, seg: "OPT", fo: false, open: t.startsWith("MCX") ? 540 : 555, close: t.startsWith("MCX") ? 1410 : 930 }
   : null;
-const bySym = t => UNIVERSE.find(u => u.tkr === t && u.fy) || optionOf(String(t || ""));
+/* Any other NSE / BSE / MCX symbol found by search: allowed if it is in Fyers' own symbol list. */
+const searchedOf = t => {
+  const r = SYM.byTicker.get(t); if (!r) return null;
+  return { tkr: t, fy: t, name: r.short, seg: r.type, fo: r.fo, lot: r.lot || null, open: r.exch === "MCX" ? 540 : 555, close: r.exch === "MCX" ? 1410 : 930 };
+};
+const bySym = t => UNIVERSE.find(u => u.tkr === t && u.fy) || optionOf(String(t || "")) || searchedOf(String(t || ""));
 const live = () => UNIVERSE.filter(u => u.fy);
 
 /* ----------------------------------------------------------------- login -- */
@@ -158,8 +163,13 @@ const AUTH_CODES = [-8, -15, -16, -17];
 
 async function fy(pathname, params) {
   const tok = await access();
-  const r = await queued(() => fetch(DATA + pathname + "?" + new URLSearchParams(params),
-    { headers: { Authorization: APP_ID + ":" + tok, version: "3", Accept: "application/json" } }));
+  const url = DATA + pathname + "?" + new URLSearchParams(params);
+  const once = () => queued(() => fetch(url, { headers: { Authorization: APP_ID + ":" + tok, version: "3", Accept: "application/json" },
+    signal: AbortSignal.timeout(10000) }));
+  let r;
+  try { r = await once(); }
+  catch (e) { try { r = await once(); } catch (e2) { throw new Error("Fyers did not answer in time; try again shortly"); } }
+  if (r.status >= 500) { try { r = await once(); } catch (e) {} }
   const j = await r.json().catch(() => null);
   if (j && (j.s === "ok" || j.s === "no_data")) return j;
   const code = j ? Number(j.code) : 0;
@@ -188,29 +198,42 @@ function cached(key, ttlMs, fn) {
 /* Ask Fyers which candidate symbol is live for each instrument. Done once per
    login and again each new day, so MCX contracts roll by themselves. */
 let resolved = null;                          // { day, promise }
-async function probe(sym) {
-  try {
-    const j = await fy("/quotes", { symbols: sym });
-    const d = j.d && j.d[0];
-    return !!(d && d.s !== "error" && d.v && d.v.lp > 0);
-  } catch (e) {
-    if (e.message === NEED_LOGIN) throw e;
-    return false;
+/* Which candidate symbols are live: all candidates in one or two quote requests
+   (Fyers takes up to 50 symbols per request) instead of one request each. */
+async function liveSet(cands) {
+  const ok = new Set();
+  for (let i = 0; i < cands.length; i += 50) {
+    try {
+      const j = await fy("/quotes", { symbols: cands.slice(i, i + 50).join(",") });
+      for (const d of j.d || []) if (d && d.s !== "error" && d.v && d.v.lp > 0) ok.add(d.n);
+    } catch (e) {
+      if (e.message === NEED_LOGIN) throw e;
+      if (/did not answer|rate limit|HTTP 5/.test(e.message)) { ok.failed = e; continue; }
+      // Fyers refused the batch as a whole (for example one unknown symbol): ask one by one.
+      for (const s of cands.slice(i, i + 50)) {
+        try { const j = await fy("/quotes", { symbols: s }); const d = (j.d || [])[0]; if (d && d.s !== "error" && d.v && d.v.lp > 0) ok.add(d.n); }
+        catch (e2) { if (e2.message === NEED_LOGIN) throw e2; if (/did not answer|rate limit|HTTP 5/.test(e2.message)) ok.failed = e2; }
+      }
+    }
   }
+  return ok;
 }
 function ensureUniverse() {
   const day = istDay(Date.now());
   if (resolved && resolved.day === day) return resolved.promise;
   const promise = (async () => {
-    await Promise.all(UNIVERSE.map(async u => {
-      let found = null;
-      for (const c of u.cands()) { if (await probe(c)) { found = c; break; } }
+    const all = [...new Set(UNIVERSE.flatMap(u => u.cands()))];
+    const ok = await liveSet(all);
+    // If Fyers could not be asked, do not decide anything for the day: try again on the next request.
+    if (ok.failed) throw new Error("Fyers is not answering right now (" + ok.failed.message + ")");
+    for (const u of UNIVERSE) {
+      const found = u.cands().find(c => ok.has(c)) || null;
       if (found !== u.fy) cache.clear();
       u.fy = found;
       // "MCX:CRUDEOIL26OCTFUT" -> show the contract month beside the name
       const m = found && /(\d{2})([A-Z]{3})FUT$/.exec(found);
       u.label = m ? `${u.name} ${m[2][0]}${m[2].slice(1).toLowerCase()}` : u.name;
-    }));
+    }
     const lost = UNIVERSE.filter(u => !u.fy).map(u => u.name);
     console.log(`  instruments live: ${live().length}/${UNIVERSE.length}` + (lost.length ? " — not found: " + lost.join(", ") : ""));
   })();
@@ -219,8 +242,124 @@ function ensureUniverse() {
   return promise;
 }
 
+/* -------------------------------------------------------- symbol search -- */
+/* Fyers publishes its full symbol lists as CSV files. They are read in the
+   background at start-up and once a day; nothing waits for them. Each row is
+   matched by its ticker ("NSE:SBIN-EQ"), so a change in column order does not
+   break it. Lot sizes come from the futures and options lists. */
+const MASTERS = [
+  ["NSE_CM", "https://public.fyers.in/sym_details/NSE_CM.csv"],
+  ["BSE_CM", "https://public.fyers.in/sym_details/BSE_CM.csv"],
+  ["NSE_FO", "https://public.fyers.in/sym_details/NSE_FO.csv"],
+  ["BSE_FO", "https://public.fyers.in/sym_details/BSE_FO.csv"],
+  ["MCX_COM", "https://public.fyers.in/sym_details/MCX_COM.csv"],
+];
+const SYM = { list: [], byTicker: new Map(), at: 0, status: {}, busy: null };
+const TICK = /^(NSE|BSE|MCX):[A-Z0-9&_.-]+$/;
+async function loadMasters() {
+  const list = [], fo = new Map(), mcx = new Map(), status = {};
+  for (const [name, url] of MASTERS) {
+    try {
+      const r = await fetch(env("FYERS_MASTER_BASE") ? env("FYERS_MASTER_BASE") + "/" + name + ".csv" : url, { signal: AbortSignal.timeout(60000) });
+      if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
+      const dec = new TextDecoder(); let buf = "", rows = 0;
+      const row = line => {
+        const c = line.split(","), t = c.find(x => TICK.test(x)); if (!t) return;
+        rows++;
+        const exch = t.slice(0, 3), desc = (c[1] || "").trim(), lot = parseFloat(c[3]) || null, exp = parseFloat(c[8]) || 0;
+        if (name.endsWith("_FO")) {                       // remember which underlyings have options, and their lot size
+          const m = /^(NSE|BSE):([A-Z&-]+?)\d{2}/.exec(t), und = (c[13] && /^[A-Z&-]+$/.test(c[13])) ? c[13] : m && m[2];
+          if (und) { const k = exch + ":" + und, o = fo.get(k) || { opt: false, lot: null };
+            if (/(CE|PE)$/.test(t)) o.opt = true; if (lot && !o.lot) o.lot = lot; fo.set(k, o); }
+          return;
+        }
+        if (name === "MCX_COM") {
+          const m = /^MCX:([A-Z]+?)\d{2}[A-Z]{3}(FUT|\d+(CE|PE))$/.exec(t); if (!m) return;
+          const k = m[1], o = mcx.get(k) || { opt: false, fut: null };
+          if (m[3]) o.opt = true;
+          else if (exp * 1000 > Date.now() - 864e5 && (!o.fut || exp < o.fut.exp)) o.fut = { t, exp, lot, desc };
+          mcx.set(k, o); return;
+        }
+        const type = /-INDEX$/.test(t) ? "IDX" : "EQ";
+        if (type === "EQ" && exch === "NSE" && !/-(EQ|BE|BZ|SM|ST)$/.test(t)) return;   // skip bonds, ETFs' odd series, etc.
+        const short = t.slice(4).replace(/-(EQ|BE|BZ|SM|ST|INDEX|[A-Z]{1,2})$/, "");
+        list.push({ t, exch, type, short, name: desc || short, lot: null, fo: false });
+      };
+      for await (const chunk of r.body) { buf += dec.decode(chunk, { stream: true }); let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) { row(buf.slice(0, nl).replace(/\r$/, "")); buf = buf.slice(nl + 1); } }
+      if (buf.trim()) row(buf);
+      status[name] = { ok: true, rows };
+    } catch (e) { status[name] = { ok: false, error: e.message }; }
+  }
+  for (const x of list) { const f = fo.get(x.exch + ":" + (x.type === "IDX" ? idxUnder(x.short) : x.short)); if (f) { x.fo = f.opt; x.lot = f.lot; } }
+  for (const [k, o] of mcx) if (o.fut) {
+    const mm = /(\d{2})([A-Z]{3})FUT$/.exec(o.fut.t);
+    list.push({ t: o.fut.t, exch: "MCX", type: "MCX", short: k, name: `${k} futures ${mm ? mm[2][0] + mm[2].slice(1).toLowerCase() + " 20" + mm[1] : ""}`.trim(),
+      lot: o.fut.lot, fo: o.opt, expiry: o.fut.exp });
+  }
+  // the built-in watchlist is always searchable, even if the lists failed
+  for (const u of UNIVERSE) if (u.fy && !list.some(x => x.t === u.fy))
+    list.push({ t: u.fy, exch: u.fy.slice(0, 3), type: u.seg, short: u.tkr, name: u.label || u.name, lot: u.lot, fo: u.fo });
+  if (list.length) { SYM.list = list; SYM.byTicker = new Map(list.map(x => [x.t, x])); SYM.at = Date.now(); }
+  SYM.status = status;
+  console.log("  symbol lists: " + Object.entries(status).map(([k, v]) => k + (v.ok ? " " + v.rows : " FAILED (" + v.error + ")")).join(", "));
+}
+const idxUnder = s => ({ NIFTY50: "NIFTY", NIFTYBANK: "BANKNIFTY", FINNIFTY: "FINNIFTY", MIDCPNIFTY: "MIDCPNIFTY", SENSEX: "SENSEX", BANKEX: "BANKEX" }[s] || s);
+function mastersFresh() {
+  if (SYM.busy || Date.now() - SYM.at < 20 * 3600e3) return;
+  SYM.busy = loadMasters().catch(() => {}).finally(() => { SYM.busy = null; });
+}
+
+/* ------------------------------------------------------------------- news -- */
+/* Headlines from publishers' public RSS feeds. Each feed is fetched on its own
+   with a time limit, so one slow or failed feed never holds up the others. The
+   page is told which feeds worked and when each was last read. */
+const FEEDS = [
+  ["Business Standard", "https://www.business-standard.com/rss/markets-106.rss", "India"],
+  ["Business Standard", "https://www.business-standard.com/rss/economy-102.rss", "India"],
+  ["Economic Times", "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms", "India"],
+  ["Mint", "https://www.livemint.com/rss/markets", "India"],
+  ["Moneycontrol", "https://www.moneycontrol.com/rss/business.xml", "India"],
+  ["CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html", "Global"],
+  ["Google News", "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-IN&gl=IN&ceid=IN:en", "India"],
+];
+const NEWS = { items: [], feeds: [], at: 0, busy: null };
+const ent = s => String(s || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/<[^>]+>/g, "")
+  .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+  .replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n)).replace(/\s+/g, " ").trim();
+const tag = (x, t) => { const m = new RegExp("<" + t + "(?:\\s[^>]*)?>([\\s\\S]*?)</" + t + ">", "i").exec(x); return m ? ent(m[1]) : ""; };
+async function readFeed([name, url, region]) {
+  const t0 = Date.now();
+  try {
+    const r = await fetch(env("NEWS_FEED_BASE") ? env("NEWS_FEED_BASE") + "/" + encodeURIComponent(url) : url,
+      { headers: { "User-Agent": "Mozilla/5.0 SignalDesk/1.0", Accept: "application/rss+xml,application/xml,text/xml" }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const xml = await r.text(), out = [];
+    for (const m of xml.matchAll(/<item[\s>][\s\S]*?<\/item>/gi)) {
+      const x = m[0], title = tag(x, "title"), link = tag(x, "link") || (/<link[^>]*href="([^"]+)"/i.exec(x) || [])[1] || "";
+      const when = Date.parse(tag(x, "pubDate") || tag(x, "dc:date") || tag(x, "published") || "");
+      const src = tag(x, "source");
+      if (!title || !link) continue;
+      out.push({ title: src && title.endsWith(" - " + src) ? title.slice(0, -src.length - 3) : title, link,
+        source: src || name, via: src ? name : null, region, published: isFinite(when) ? when : null, summary: tag(x, "description").slice(0, 280) });
+    }
+    return { feed: name, url, ok: true, items: out, ms: Date.now() - t0, at: Date.now() };
+  } catch (e) { return { feed: name, url, ok: false, error: e.name === "TimeoutError" ? "no answer within 8 s" : e.message, items: [], ms: Date.now() - t0, at: Date.now() }; }
+}
+async function refreshNews() {
+  const res = await Promise.all(FEEDS.map(readFeed));
+  const seen = new Set(), items = [];
+  const key = t => t.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").slice(0, 70);
+  for (const it of res.flatMap(r => r.items).sort((a, b) => (b.published || 0) - (a.published || 0))) {
+    const k = key(it.title); if (seen.has(k) || seen.has(it.link)) continue;       // the same story from two feeds counts once
+    seen.add(k); seen.add(it.link); items.push(it);
+  }
+  NEWS.items = items.slice(0, 120); NEWS.feeds = res.map(({ items, ...r }) => ({ ...r, count: items.length })); NEWS.at = Date.now();
+}
+
 /* ------------------------------------------------------------------ app -- */
 const app = express();
+try { app.use(require("compression")()); } catch (e) { /* optional: responses are just not compressed */ }
 app.use(cors({ origin: process.env.ALLOW_ORIGIN || "*" }));
 app.use(express.json({ limit: "20kb" }));
 
@@ -229,6 +368,7 @@ app.use(express.json({ limit: "20kb" }));
 const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="96" fill="#0F1319"/>
 <path d="M96 344l88-96 72 56 112-152" fill="none" stroke="#26A96C" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
 <circle cx="368" cy="152" r="34" fill="#4C9AFF"/></svg>`;
+app.get("/healthz", (_req, res) => res.json({ ok: true, up: Math.round(process.uptime()), ts: Date.now() }));
 app.get("/icon.svg", (_req, res) => res.type("image/svg+xml").send(ICON));
 app.get("/manifest.webmanifest", (_req, res) => res.type("application/manifest+json").json({
   name: "Signal Desk", short_name: "Signal Desk", start_url: "/", scope: "/", display: "standalone",
@@ -260,7 +400,8 @@ app.use((req, res, next) => {
   visitor.run(s, next);
 });
 
-app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "index.html")));
+const sendApp = (_req, res) => { res.set("Cache-Control", "no-cache"); res.sendFile(path.join(__dirname, "index.html")); };
+app.get("/", sendApp);
 
 /* ---- login with Fyers ---------------------------------------------------- */
 const states = new Map();                     // one-time values that tie a login to this site
@@ -313,7 +454,35 @@ app.post("/auth/restore", async (req, res) => {
       await fy("/quotes", { symbols: "NSE:NIFTY50-INDEX" });
     }
     res.json({ ok: hasAccess(), a: auth.access });
-  } catch (e) { dropAccess(NEED_LOGIN); res.json({ ok: false }); }
+  } catch (e) {
+    // Only a clear "token rejected" answer from Fyers ends the login. If Fyers is
+    // merely slow or unreachable, keep the token so the site recovers by itself.
+    if (e.message === NEED_LOGIN || !hasAccess()) { dropAccess(NEED_LOGIN); return res.json({ ok: false }); }
+    res.json({ ok: true, a: auth.access, unverified: e.message });
+  }
+});
+
+app.get("/api/search", (req, res) => {
+  mastersFresh();
+  const q = String(req.query.q || "").trim().toUpperCase().replace(/\s+/g, " ").slice(0, 40);
+  if (q.length < 1) return res.json({ q, results: [], lists: SYM.status, ready: SYM.at > 0 });
+  const rank = x => {
+    const s = x.short, n = x.name.toUpperCase();
+    let r = s === q ? 0 : s.startsWith(q) ? 1 : n.startsWith(q) ? 2 : n.split(" ").some(w => w.startsWith(q)) ? 3 : (s.includes(q) || n.includes(q)) ? 4 : 99;
+    if (r === 99) return r;
+    return r + (x.exch === "NSE" ? 0 : x.exch === "MCX" ? 0.1 : 0.2) - (x.type === "IDX" ? 0.3 : 0) - (x.fo ? 0.2 : 0);
+  };
+  const results = SYM.list.map(x => [rank(x), x]).filter(r => r[0] < 99).sort((a, b) => a[0] - b[0]).slice(0, 25)
+    .map(([, x]) => ({ sym: x.t, short: x.short, name: x.name, exch: x.exch, type: x.type, lot: x.lot, fo: x.fo, expiry: x.expiry || null }));
+  res.json({ q, results, lists: SYM.status, ready: SYM.at > 0 });
+});
+
+app.get("/api/news", async (_req, res) => {
+  if (Date.now() - NEWS.at > 5 * 60000) {                       // at most one refresh every 5 minutes, shared by everyone
+    NEWS.busy = NEWS.busy || refreshNews().finally(() => { NEWS.busy = null; });
+    if (!NEWS.at) await NEWS.busy;                               // only the very first visitor waits
+  }
+  res.json({ at: NEWS.at, items: NEWS.items, feeds: NEWS.feeds });
 });
 
 app.get("/api/status", async (_req, res) => {
@@ -338,18 +507,19 @@ const guard = fn => async (req, res) => {
 };
 
 app.get("/api/instruments", guard(async (_req, res) => res.json(live().map(u => ({
-  sym: u.label || u.name, tkr: u.tkr, seg: u.seg, step: u.step, lot: u.lot, lotFromFeed: false,
+  sym: u.label || u.name, tkr: u.tkr, fy: u.fy, seg: u.seg, step: u.step, lot: (SYM.byTicker.get(u.fy) || {}).lot || u.lot,
+  lotFromFeed: !!(SYM.byTicker.get(u.fy) || {}).lot,
   fo: u.fo, open: u.open, close: u.close,
 })))));
 
 /* -------------------------------------------------------------- candles -- */
-const DAYS = { 1: 5, 3: 6, 5: 12, 15: 30, 30: 60, 60: 90 };
+const DAYS = { 1: 5, 3: 6, 5: 12, 15: 30, 30: 60, 60: 90, 240: 90 };
 
 app.get("/api/candles", guard(async (req, res) => {
   const u = bySym(req.query.tkr);
   if (!u) return res.status(404).json({ error: "unknown symbol" });
   const want = DAYS[+req.query.interval] ? +req.query.interval : 5;
-  res.json(await cached(`c:${u.tkr}:${want}`, 4000, async () => {
+  res.json(await cached(`c:${u.tkr}:${want}`, want >= 60 ? 60000 : want >= 15 ? 15000 : 4000, async () => {
     const j = await fy("/history", { symbol: u.fy, resolution: String(want), date_format: "1",
       range_from: istDay(Date.now() - DAYS[want] * 864e5), range_to: istDay(Date.now()), cont_flag: "1" });
     const candles = (j.candles || []).filter(c => c && c.length >= 5 && c[1] != null && c[4] != null)
@@ -362,7 +532,7 @@ app.get("/api/candles", guard(async (req, res) => {
 /* --------------------------------------------------------------- quotes -- */
 app.get("/api/quotes", guard(async (req, res) => {
   // `x` = option contracts the viewer has opened, quoted alongside the watchlist
-  const extra = [...new Set(String(req.query.x || "").split(",").filter(s => OPT_RE.test(s)))].slice(0, 20);
+  const extra = [...new Set(String(req.query.x || "").split(",").filter(s => OPT_RE.test(s) || SYM.byTicker.has(s)))].slice(0, 20);
   const out = await cached("quotes:" + extra.join(","), 3000, async () => {
     const j = await fy("/quotes", { symbols: live().map(u => u.fy).concat(extra).join(",") });
     const q = {};
@@ -436,10 +606,13 @@ app.get("/api/chain", guard(async (req, res) => {
              lot: u.lot, daysOut, rows, ivFromFeed: true });
 }));
 
+app.get(/^\/(?!api\/|auth\/).*/, sendApp);   // e.g. /home or /chart after a reload
+
 app.listen(PORT, () => {
   console.log(`\nSignal Desk (Fyers real-time feed) on ${BASE}`);
   console.log("  Fyers app  : " + (APP_ID && SECRET ? "set" : "NOT SET — add FYERS_APP_ID and FYERS_SECRET_ID"));
   console.log("  redirect   : " + REDIRECT + "   (enter exactly this in the Fyers app)");
   console.log("  visitors   : each logs in with their own Fyers account");
+  setTimeout(mastersFresh, 2000);                                // symbol lists load in the background
   console.log("  password   : " + (SITE_PASSWORD ? "on — asked before the page opens" : "off — the site opens normally") + "\n");
 });
