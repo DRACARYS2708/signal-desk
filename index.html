@@ -9,7 +9,7 @@
 <meta name="theme-color" content="#0B1220" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" media="print" onload="this.media='all'" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Manrope:wght@400..800&display=swap" media="print" onload="this.media='all'" />
 <script>try{ if(localStorage.getItem("sd_theme")==="light") document.documentElement.dataset.theme="light"; }catch(e){}</script>
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -476,6 +476,121 @@ button.pick:hover{background:var(--key);color:#fff;text-decoration:none}
   #connTxt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   .ana-hd>div:first-child{flex:1 1 100%!important}
 }
+
+/* ===================== Look: "trading ticket" skin =====================
+   Deep sea-ink surfaces, one teal accent for actions, copper / sky / violet
+   for the three market groups. Bricolage Grotesque carries names and prices;
+   Manrope (tabular figures) carries everything else. The signal card is the
+   one bold piece: a trade ticket with a coloured spine and a torn-off stub. */
+:root{
+  --bg:#0E191D; --panel:#15232A; --panel2:#1C2E36; --line:#284049;
+  --fg:#ECF3F1; --mid:#A1B5B5; --low:#71898A;
+  --up:#3FD08D; --dn:#FF6F6A; --key:#3CC4B6; --onkey:#062421; --warn:#F3B544; --violet:#A994F4; --onwarn:#1A1203;
+  --sky:#69AEEF; --copper:#E5975F;
+  --shadow:0 1px 0 rgba(255,255,255,.035) inset,0 14px 30px -24px rgba(0,0,0,.9);
+  --m:"Manrope",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --s:"Manrope",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --d:"Bricolage Grotesque","Manrope",system-ui,sans-serif;
+}
+:root[data-theme="light"]{
+  --bg:#EFF4F2; --panel:#FFFFFF; --panel2:#E6EEEB; --line:#D0DDD9;
+  --fg:#0F201E; --mid:#455D5A; --low:#6A817E;
+  --up:#0B9358; --dn:#D23A35; --key:#0C8A7F; --onkey:#FFFFFF; --warn:#A96400; --violet:#6A4FD0; --onwarn:#FFFFFF;
+  --sky:#2C78C4; --copper:#B8622A;
+  --shadow:0 1px 2px rgba(15,32,30,.05),0 14px 30px -24px rgba(15,32,30,.45);
+}
+body{background:var(--bg);font-feature-settings:"tnum" 1}
+.m{font-family:var(--m);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+header{background:var(--panel)!important;border-bottom:1px solid var(--line)!important;backdrop-filter:none;-webkit-backdrop-filter:none}
+header h1,body.simple header h1{font:700 21px/1 var(--d);letter-spacing:-.025em}
+.nav{background:var(--panel)!important;backdrop-filter:none;-webkit-backdrop-filter:none;padding-top:2px}
+.nav button{font:600 14.5px var(--s);border-radius:9px}
+.nav button.on{background:var(--key);color:var(--onkey)}
+.btn.pri,.btn.on,.seg button.on,.presets button.on,.badge{color:var(--onkey)}
+button.pick:hover{color:var(--onkey)}
+.pill{background:var(--panel2);border-color:transparent}
+.risk{background:color-mix(in srgb,var(--warn) 9%,var(--bg))!important;border-color:color-mix(in srgb,var(--warn) 25%,transparent)!important}
+.page h2,.mid-msg h2{font-family:var(--d);font-weight:700;letter-spacing:-.025em}
+.page h2{font-size:27px}
+.page h3,.grp-hd h3{font-family:var(--d);font-weight:650;letter-spacing:-.015em}
+.tile:hover,.trade:hover,.card:hover{transform:none}
+
+/* summary strip: one quiet panel, not four boxes */
+.hero{gap:0;border:1px solid var(--line);border-radius:16px;background:var(--panel);overflow:hidden;box-shadow:var(--shadow)}
+.hero>div{border:none;border-radius:0;box-shadow:none;background:none;padding:16px 20px;border-right:1px solid var(--line)}
+.hero>div:last-child{border-right:none}
+.hero span{text-transform:none;letter-spacing:0;font-size:13.5px;font-weight:600;color:var(--mid)}
+.hero b{font:700 32px/1.15 var(--d);letter-spacing:-.02em}
+@media(max-width:560px){.hero{grid-template-columns:1fr 1fr}.hero>div:nth-child(2){border-right:none}.hero>div:nth-child(-n+2){border-bottom:1px solid var(--line)}}
+
+/* market groups: a coloured edge and icon instead of a tinted box */
+.grp{--gc:var(--sky);background:var(--panel)!important;border:1px solid var(--line)!important;border-radius:18px!important;
+  border-style:solid!important;padding:16px 16px 18px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+.grp::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--gc)}
+.grp[data-g="MCX"]{--gc:var(--copper)}
+.grp[data-g="EQ"]{--gc:var(--violet)}
+.grp-hd .ic,.grp[data-g="MCX"] .ic,.grp[data-g="EQ"] .ic{border-radius:12px;background:color-mix(in srgb,var(--gc) 18%,transparent);color:var(--gc)}
+.grp-hd .ic svg{stroke:var(--gc)!important}
+.grp-hd .ct{font:700 12.5px var(--s);border:none;background:color-mix(in srgb,var(--gc) 15%,transparent);padding:5px 12px}
+
+/* price tiles: name, price, move, a small line of today's prices, and one status chip */
+.tiles{grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:10px}
+.grp .tile,.grp[data-g="MCX"] .tile,.grp[data-g="EQ"] .tile{border-radius:12px;border-top:1px solid var(--line)}
+.tile{background:var(--panel2);border-color:transparent;padding:12px 14px 12px;position:relative;transition:border-color .15s,background .15s}
+.tile:hover{border-color:var(--gc,var(--key));background:color-mix(in srgb,var(--panel2) 80%,var(--gc,var(--key)) 6%)}
+.tile .n{font:600 13.5px var(--s);color:var(--mid)}
+.tile .p{font:700 21px/1.2 var(--d);letter-spacing:-.01em;margin-top:4px}
+.tile .c{font:600 13px var(--s)}
+.tile .c .chg{padding:0;background:none!important}
+.tile .tsp{display:block;width:100%;height:28px;margin:8px 0 2px}
+.tile .why{display:none}
+.tile .stt{display:inline-block;margin-top:8px;border:none!important;border-radius:999px;padding:3px 10px;font:700 12px var(--s);letter-spacing:0;
+  text-transform:lowercase;background:color-mix(in srgb,currentColor 14%,transparent)}
+.tile .stt::first-letter{text-transform:uppercase}
+.tile .fr{font:600 12px var(--s)}
+
+/* the signal card: a trade ticket */
+.trade,.grp .trade,.grp[data-g="MCX"] .trade,.grp[data-g="EQ"] .trade{border-radius:16px;border:1px solid var(--line);border-left-width:6px;
+  background:var(--panel2);padding:16px 18px;position:relative}
+.trade .nm{font:700 22px/1.15 var(--d);letter-spacing:-.02em}
+.trade .st{font:700 12px var(--s);letter-spacing:.02em;border:none;background:color-mix(in srgb,currentColor 14%,transparent)}
+.trade .chip{border-radius:999px;font:800 12.5px var(--s);letter-spacing:.04em}
+.trade .chip.ghost{border-radius:999px}
+.nowrow{position:relative;padding-bottom:16px;margin-bottom:16px}
+.nowrow::after{content:"";position:absolute;left:-18px;right:-18px;bottom:0;border-bottom:2px dashed var(--line)}
+.trade{overflow:hidden}
+.nowrow::before{content:"";position:absolute;left:-30px;right:-30px;bottom:-11px;height:22px;pointer-events:none;
+  background:radial-gradient(circle at 11px 50%,var(--panel) 10.5px,transparent 11.5px),radial-gradient(circle at calc(100% - 11px) 50%,var(--panel) 10.5px,transparent 11.5px)}
+.nowrow .lbl,.trade .trl div>span,.cmp .g div>span{text-transform:none;letter-spacing:0;font-size:13px;font-weight:600}
+.nowrow .big{font:700 36px/1.05 var(--d);letter-spacing:-.025em}
+.trade .trl b{font:700 18px var(--s)}
+.trade .trs{border-radius:10px}
+.trade .ent{border-radius:10px}
+.trade .tra .btn{border-radius:10px;font-weight:600}
+.trade .tra .btn.wa{background:color-mix(in srgb,#25D366 12%,transparent)}
+
+/* tabs and buttons */
+.seg.tabs{background:var(--panel);border:1px solid var(--line);padding:4px;gap:4px}
+.seg.tabs button{border-radius:9px;min-height:42px}
+.btn{font-weight:600}
+
+/* chart page */
+#trendBadge{font-family:var(--s);font-weight:800;letter-spacing:.02em}
+#bigPx{font:700 34px var(--d)!important;letter-spacing:-.02em}
+.ana-card h4{text-transform:none!important;letter-spacing:0!important;font:650 15px var(--d)!important;color:var(--fg)!important}
+
+/* tables, news, results */
+table.rt{font-family:var(--s)}
+table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
+@media(max-width:560px){.grp{padding:14px 10px 12px 14px}.tile .stt{border-radius:8px}.tiles{grid-template-columns:1fr 1fr;gap:8px}.tile{padding:10px 11px}.tile .p{font-size:18.5px}.page h2{font-size:23px}.nowrow .big{font-size:30px}.trade .nm{font-size:19px}
+  .nowrow::after{left:-12px;right:-12px}.nowrow::before{left:-24px;right:-24px}}
+.grp-hd .ic svg [stroke]{stroke:var(--gc)!important}
+.grp-hd .ic svg [fill="#fff"]{fill:var(--gc)!important}
+.nw{border-radius:16px!important}
+.nw h3 a{font-family:var(--d);font-weight:650;letter-spacing:-.01em}
+.nw .imp>div,.nw .conf{display:grid;grid-template-columns:170px 1fr;gap:2px 14px;padding:3px 0}
+.nw .imp .lbl,.nw .conf .lbl{text-transform:none;letter-spacing:0;font:600 13.5px var(--s);color:var(--low);margin:0}
+@media(max-width:560px){.nw .imp>div,.nw .conf{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -1411,7 +1526,7 @@ let FS=1;
 const SIMPLE_SHOW={ ema20:false, ema50:false, ema200:false, vwap:false, bb:false, struct:false, pd:false,
   ob:false, liq:false, fvg:false, vol:false, rsi:false, macd:false, levels:true };
 S.showAdv=S.show;
-const F=' -apple-system, ui-monospace, monospace';
+const F=' Manrope, -apple-system, "Segoe UI", sans-serif';
 
 function panes(){
   const sub=[];
@@ -2086,7 +2201,7 @@ function renderHome(){
       const b=document.createElement("button"); b.className="tile";
       b.innerHTML=`<div class="n">${esc(u.sym)}</div><div class="p">${q.ltp!=null?px(q.ltp,u):"—"}</div>`+
         `<div class="c">${q.chg!=null?`<span class="chg ${q.chg>=0?"up":"dn"}">${q.chg>=0?"▲":"▼"} ${Math.abs(q.chg).toFixed(2)}%</span>`:""}`+
-        `</div>`+(()=>{ const st=statusOf(u.tkr);
+        `</div>`+tileSpark(u.tkr)+(()=>{ const st=statusOf(u.tkr); b.title=st.label+" — "+st.why;
           return `<div class="stt" style="color:${st.col};border-color:${st.col}">${st.label}</div><div class="why">${esc(st.why)}</div>`+
             `<div class="fr ${st.fr.k}" style="margin-top:5px">${esc(st.fr.short)}</div>`; })();
       b.onclick=()=>goChart(u.tkr);
@@ -2873,6 +2988,15 @@ const GROUPS=[
   ["MCX","Commodities","Crude oil, gold, silver, copper and natural gas on MCX",'<path d="M12 3c3.5 4.2 6 7.3 6 10.3A6 6 0 0 1 6 13.300C6 10.300 8.500 7.200 12 3z" fill="#fff"/>'],
   ["EQ","Stocks","Reliance, HDFC Bank, Federal Bank, Coal India and other shares",'<path d="M4 20V10M10 20V4M16 20v-8M21 20H2" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>'],
 ];
+/* A small line of the last session's prices for a tile (drawn from candles already loaded). */
+function tileSpark(tkr){
+  const b=S.bars[tkr]; if(!b||b.length<5) return "";
+  const day=b[b.length-1].day, pts=b.filter(x=>x.day===day).slice(-80); if(pts.length<5) return "";
+  let lo=Infinity,hi=-Infinity; pts.forEach(x=>{lo=Math.min(lo,x.c);hi=Math.max(hi,x.c);}); const r=hi-lo||1;
+  const d=pts.map((x,i)=>(i/(pts.length-1)*100).toFixed(1)+","+(26-(x.c-lo)/r*24).toFixed(1)).join(" ");
+  const col=pts[pts.length-1].c>=pts[0].c?"var(--up)":"var(--dn)";
+  return `<svg class="tsp" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="${d}" fill="none" stroke="${col}" stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>`;
+}
 function grpBox(k, count){
   const g=GROUPS.find(x=>x[0]===k)||[k,SEG_NAMES[k]||k,"",""], w=document.createElement("section");
   w.className="grp"; w.dataset.g=k;
