@@ -591,6 +591,48 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
 .nw .imp>div,.nw .conf{display:grid;grid-template-columns:170px 1fr;gap:2px 14px;padding:3px 0}
 .nw .imp .lbl,.nw .conf .lbl{text-transform:none;letter-spacing:0;font:600 13.5px var(--s);color:var(--low);margin:0}
 @media(max-width:560px){.nw .imp>div,.nw .conf{grid-template-columns:1fr}}
+
+.xgrid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr))}
+.xcard{background:var(--panel2);border:1px solid var(--line);border-left:6px solid var(--xc);border-radius:16px;padding:14px 16px;min-width:0}
+.xcard .xh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.xcard .xn{font:700 20px/1.2 var(--d);letter-spacing:-.02em}
+.xcard .chip{padding:3px 10px;border-radius:999px;font:800 12.5px var(--s);color:var(--onkey)}
+.xcard .xst{margin-left:auto;font:800 12.5px var(--s);padding:3px 11px;border-radius:999px;background:color-mix(in srgb,currentColor 14%,transparent)}
+.xcard .xsub{font-size:14px;color:var(--mid);margin:5px 0 12px}
+.xcard .xlv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px 16px}
+.xcard .xlv span{display:block;font-size:13px;color:var(--low);font-weight:600}
+.xcard .xlv b{font:700 17px var(--s)}
+.xcard .xopt{margin-top:10px;font-size:14px;color:var(--mid);line-height:1.5}
+.xcard .xres{margin-top:12px;padding:9px 12px;border-radius:10px;font-weight:600;font-size:15px;background:color-mix(in srgb,currentColor 11%,transparent)}
+.xcard .xwhy{margin-top:10px;font-size:14px;color:var(--mid);line-height:1.6}
+.xcard .xwhy summary{cursor:pointer;color:var(--fg);font-weight:600}
+.xcard .xact{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.xcard .xact .btn{min-height:40px;border-radius:10px}
+.notrade{margin-top:16px;border:2px solid var(--line);border-radius:16px;padding:18px 20px;background:var(--panel)}
+.notrade>b{display:block;font:700 22px var(--d);letter-spacing:-.01em;color:var(--warn)}
+.notrade>span{display:block;color:var(--mid);margin-top:4px;line-height:1.55}
+.xstates{display:grid;gap:6px 18px;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));margin-top:14px}
+.xstates div{font-size:14px;line-height:1.45}.xstates b{display:block}.xstates span{color:var(--mid)}
+#scalpPage .hero,#btstPage .hero{margin-top:14px}
+.xsec{margin-top:6px}.xsec .xsh{margin:22px 0 6px}
+
+.budget{margin-top:18px;max-width:640px;border:2px solid var(--key);border-radius:16px;padding:20px;background:var(--panel)}
+.budget>b{display:block;font:700 22px var(--d)}
+.budget>span{display:block;color:var(--mid);margin-top:6px;line-height:1.55}
+.bform{display:grid;gap:12px;margin-top:16px}
+.bform label{display:grid;gap:6px;font-weight:600;font-size:14.5px}
+.bform input{font:600 18px var(--s);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--fg);min-height:46px}
+.bform .btn{min-height:48px;font-size:16px;justify-self:start;padding:0 22px}
+.bmsg{color:var(--dn);margin-top:8px;font-weight:600}
+.bbar{margin-top:16px;display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;padding:10px 14px;border-radius:12px;background:var(--panel);border:1px solid var(--line);font-size:15px}
+.bbar .btn{margin-left:auto;min-height:36px}
+.xcard .xsize{margin-top:12px;padding:10px 12px;border-radius:10px;border:1px solid color-mix(in srgb,var(--key) 45%,var(--line));background:color-mix(in srgb,var(--key) 8%,transparent)}
+.xcard .xsize.no{border-color:color-mix(in srgb,var(--warn) 45%,var(--line));background:color-mix(in srgb,var(--warn) 8%,transparent)}
+.xcard .xsize span{display:block;font-size:13px;font-weight:600;color:var(--low)}
+.xcard .xsize b{display:block;font:700 18px var(--s);margin:2px 0;color:var(--fg)}
+.xcard .xsize small{display:block;font-size:13.5px;color:var(--mid);line-height:1.5}
+
+#strictHome{display:flex;max-width:100%;overflow-x:auto;scrollbar-width:none}#strictHome::-webkit-scrollbar{display:none}#strictHome button{white-space:nowrap;flex:0 0 auto}
 </style>
 </head>
 <body>
@@ -649,6 +691,21 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
   <div class="sub" id="homeSub"></div>
   <div class="hero" id="hero"></div>
   <div class="seg tabs" id="strictHome" aria-label="Which signals to show"></div>
+<div class="xsec" id="scalpPage" hidden>
+  <h3 class="xsh">Scalp signals</h3>
+  <div class="sub">Quick trades in the direction of the short-term trend on indices and MCX commodities, using 3-minute candles: a pull-back to the
+    20 EMA, then a breakout candle, with a tight stop, targets at 1R / 1.5R / 2R and an exit within 30 minutes. Separate from the other signals and judged on its own record below.
+    Rules-based analysis, not advice; scalps lose often, and fast.</div>
+  <div id="scalpBody"></div>
+</div>
+<div class="xsec" id="btstPage" hidden>
+  <h3 class="xsh">BTST — buy today, sell tomorrow</h3>
+  <div class="sub">Strong stocks bought in the last half hour and sold the next morning. Decided on the hourly candle that closes at 15:15 IST: daily uptrend,
+    up 1–6% on the day, closing near the high and above yesterday's high, on above-average volume, with NIFTY 50 also above its 20-day EMA. Sell by 10:15 next morning.
+    Overnight news can open a stock far past the stop. Rules-based analysis, not advice.</div>
+  <div id="btstBody"></div>
+</div>
+
   <div class="bar-row" style="margin-top:14px"><h3 id="homeSigTitle" style="margin:0 auto 0 0">Live signals</h3>
     <button class="btn" id="alertBtn" title="Sound and notification when a target, stop or exit alert happens">Turn on alerts</button></div>
   <div class="sub" id="homeTabNote" style="margin:-4px 0 12px"></div>
@@ -796,6 +853,7 @@ const S = {
   simple: store.get("sd_mode","simple")!=="adv",
   page: (location.hash.slice(1)||store.get("sd_page","home")), legs: [], preset: "Buy call",
   strict: store.get("sd_strict","1")==="1",
+  tab: store.get("sd_tab", store.get("sd_strict","1")==="1"?"strict":"other"),
   universe: [], bars:{}, quotes:{}, sigs:{}, ind:{}, struct:{}, ctx:{}, status:{}, mtf:{},
   tfSet: (()=>{ try{ return JSON.parse(store.get("sd_tfset","{}"))||{}; }catch(e){ return {}; } })(),
   ready:false, lastErr:null, feed:null,
@@ -882,7 +940,7 @@ async function boot(){
     S.fromCache=null;
     loadNews(true);                       // in the background: headlines for warnings on signals
     setConn(S.failedLoads?"err":"ok", S.failedLoads?liveLabel()+" · "+S.failedLoads+" symbols failed to load":liveLabel());
-    startPolling();
+    startPolling(); xPoll(); setTimeout(()=>{ loadScalp(true); loadBtst(true); },8000);   // counts for the Scalp and BTST tabs
   }catch(e){
     if(e.status===401){ S.ready=false; S.cacheShown=false; return boot(); }
     if(S.cacheShown||S.ready){ setConn("err","Data feed problem: "+e.message+" · retrying"); setTimeout(boot,15000); return; }
@@ -1372,6 +1430,582 @@ function engine(ctx, opt){
   if(pend&&b[n-1].day===b[pend.i0].day&&n-1-pend.i0<=18) out.pending=Object.assign({},pend,{side:pend.d>0?"BUY":"SELL",ts:b[pend.i0].ts});
   return opt.strict?out.filter(x=>x.strict):out;
 }
+/* ------------------------------------------- normal (trend) signals -- */
+/** Classic trend-following signals, more frequent than the structure engine.
+ *  On a closed entry candle, a BUY needs ALL of:
+ *   1. Trend timeframe (closed candles): EMA 20 above EMA 50 and price above EMA 50.
+ *   2. Entry timeframe: EMA 20 above EMA 50, and price pulled back to EMA 20
+ *      within the last three candles.
+ *   3. Trigger: a green candle that closes above EMA 20 and above the previous
+ *      candle's high, with a body of at least 0.4 ATR.
+ *   4. Momentum: RSI between 50 and 72, MACD histogram rising, ADX 18 or more.
+ *   5. Stop below the lowest low of the last five candles (0.6 to 2.2 ATR away).
+ *   6. Room: no unbroken swing high closer than 1.2R. Targets at 1R, 2R and 3R.
+ *  SELL is the mirror image. Entry is the close of the trigger candle. One
+ *  normal trade per instrument at a time, none against a live structure signal,
+ *  no entries in the first 15 or last 45 minutes. Everything uses closed candles
+ *  only, so a signal never changes after it appears. */
+function engineNormal(ctx, opt, smc){
+  opt=Object.assign({all:false, lite:false}, opt);
+  const {u, E, H, tf, htf}=ctx, out=[];
+  if(!E||!H) return out;
+  const b=E.b, n=b.length; if(n<60) return out;
+  const I=E.ind, A=I.atr, R=I.rsi, CL=u.close||930, OP=u.open||555, today=b[n-1].day;
+  const HI=H.ind;
+  let busy=-1;
+  for(let i=30;i<n-1;i++){
+    if(i<=busy||!A[i]||b[i].t<OP+CFG.skipOpen||b[i].t>=CL-CFG.skipClose) continue;
+    const h=closedAt(H.b,htf,b[i].ts+tf*60000); if(h<1) continue;
+    const x=b[i], p=b[i-1], a=A[i], m=I.macd[i], m0=I.macd[i-1], adx=I.adx[i];
+    if(!m||!m0||adx==null||R[i]==null||I.e20[i]==null||I.e50[i]==null||HI.e20[h]==null||HI.e50[h]==null) continue;
+    for(const d of [1,-1]){
+      const hc=H.b[h].c;
+      if(d>0 ? !(HI.e20[h]>HI.e50[h]&&hc>HI.e50[h]) : !(HI.e20[h]<HI.e50[h]&&hc<HI.e50[h])) continue;
+      if(d>0 ? !(I.e20[i]>I.e50[i]) : !(I.e20[i]<I.e50[i])) continue;
+      let touched=false; for(let k=i-3;k<i;k++) if(d>0? b[k].l<=I.e20[k]+0.2*A[k] : b[k].h>=I.e20[k]-0.2*A[k]) touched=true;
+      if(!touched) continue;
+      if(d>0 ? !(x.c>x.o&&x.c>I.e20[i]&&x.c>p.h) : !(x.c<x.o&&x.c<I.e20[i]&&x.c<p.l)) continue;
+      if(Math.abs(x.c-x.o)<0.4*a) continue;
+      if(d>0 ? !(R[i]>=50&&R[i]<=72) : !(R[i]<=50&&R[i]>=28)) continue;
+      if(d>0 ? !(m.hist>m0.hist) : !(m.hist<m0.hist)) continue;
+      if(adx<18) continue;
+      // not against a live structure signal
+      if((smc||[]).some(s=>s.i<=i&&(s.res.exit==null||s.res.exit>=i)&&(s.side==="BUY"?1:-1)!==d)) continue;
+      const entry=x.c; let ext=x[d>0?"l":"h"]; for(let k=i-4;k<=i;k++) ext=d>0?Math.min(ext,b[k].l):Math.max(ext,b[k].h);
+      let sl=ext-d*0.15*a, risk=d*(entry-sl);
+      if(risk>2.2*a||risk<=0) continue;
+      if(risk<0.6*a){ sl=entry-d*0.6*a; risk=0.6*a; }
+      const opp=E.ext[d>0?"hi":"lo"].concat(E.int[d>0?"hi":"lo"]).filter(q=>q.at<=i&&d*(q.px-entry)>0)
+        .filter(q=>{ for(let k=q.i+1;k<=i;k++) if(d>0?b[k].h>q.px:b[k].l<q.px) return false; return true; })
+        .sort((q1,q2)=>d*(q1.px-q2.px))[0];
+      if(opp&&d*(opp.px-entry)<1.2*risk) continue;
+      const cost=CFG.costPct*entry, t1=entry+d*risk, t2=entry+d*2*risk, t3=entry+d*3*risk;
+      const why=[`${tfName(htf)} trend ${d>0?"up":"down"}: EMA 20 ${d>0?"above":"below"} EMA 50 and price ${d>0?"above":"below"} EMA 50`,
+        `${tfName(tf)} pull-back to EMA 20, then a ${d>0?"green":"red"} candle closed ${d>0?"above the previous high":"below the previous low"}`,
+        `RSI ${R[i].toFixed(0)}, MACD histogram ${d>0?"rising":"falling"}, ADX ${adx.toFixed(0)} (trending)`,
+        opp?`nearest ${d>0?"swing high":"swing low"} at ${opp.px.toFixed(2)}, ${(d*(opp.px-entry)/risk).toFixed(1)}R away`:`no unbroken ${d>0?"swing high":"swing low"} in the way`,
+        "targets at 1R, 2R and 3R; entry at the close of the signal candle"];
+      if(I.hasVol&&I.relVol[i]!=null) why.push(`volume ${I.relVol[i].toFixed(1)}x its average (shown, not required)`);
+      const sig={ id:"N"+u.tkr.slice(0,3)+"-"+String(1000+i).slice(-4), day:x.day, strict:false, grade:"N", normal:true,
+        tkr:u.tkr, sym:u.sym, seg:u.seg, closeT:CL, side:d>0?"BUY":"SELL", i, ts:x.ts, setAt:x.ts,
+        entry, sl, t1, t2, t3, risk, rr:(risk-cost)/(risk+cost), cost, reasons:why, atr:a, rsi:R[i], vol:null, poi:"EMA 20 pull-back", trig:"trend resume" };
+      sig.opt=opt.lite?null:optionLeg(u,sig);
+      sig.res=track(b,sig);
+      if(opt.all||x.day===today) out.push(sig);
+      busy=sig.res.exit!=null?sig.res.exit:n;
+      break;
+    }
+  }
+  return out;
+}
+const istDay=ts=>new Date(ts+19800000).toISOString().slice(0,10);
+/* ======================================================================
+   SCALP and BTST — two separate modules with their own rules, data and
+   record. They do not change the structure, strict, other or normal
+   signals above; they only share the chart helpers (EMA, RSI, ATR, ...).
+   Both use closed candles only, so a signal never changes after it shows.
+   ====================================================================== */
+const XS={ scalp:{bars:{}, at:0, busy:false, err:null}, btst:{bars:{}, at:0, busy:false, err:null}, timer:null };
+function xPerf(list){
+  const R=list.map(x=>x.R), w=R.filter(v=>v>0.02), l=R.filter(v=>v<-0.02);
+  const gw=w.reduce((t,v)=>t+v,0), gl=-l.reduce((t,v)=>t+v,0);
+  let run=0,peak=0,dd=0; R.forEach(v=>{ run+=v; peak=Math.max(peak,run); dd=Math.max(dd,peak-run); });
+  return { n:R.length, won:w.length, lost:l.length, rate:w.length+l.length?w.length/(w.length+l.length)*100:null,
+    exp:R.length?run/R.length:0, pf:gl>0?gw/gl:(gw>0?Infinity:null), dd, net:run,
+    avgWin:w.length?gw/w.length:0, avgLoss:l.length?-gl/l.length:0 };
+}
+function xRecordHtml(p, unit, note){
+  const rR=v=>`<span style="color:${v>0.005?C.up:v<-0.005?C.dn:C.fg}">${v>=0?"+":"−"}${Math.abs(v).toFixed(2)}${unit}</span>`;
+  const cell=(k,v)=>`<div><span>${k}</span><b>${v}</b></div>`;
+  return `<div class="cmp"><div class="on"><h4>Record on the loaded history</h4><div class="g">`+
+    cell("Trades",p.n)+cell("Won / lost",`<span style="color:${C.up}">${p.won}</span> / <span style="color:${C.dn}">${p.lost}</span>`)+
+    cell("Win rate",p.rate==null?"—":p.rate.toFixed(0)+"%")+cell("Per trade",rR(p.exp))+
+    cell("Average win",rR(p.avgWin))+cell("Average loss",rR(p.avgLoss))+
+    cell("Profit factor",p.pf==null?"—":p.pf===Infinity?"no losses":p.pf.toFixed(2))+cell("Worst drawdown",rR(-p.dd))+cell("Total",rR(p.net))+
+    `</div></div></div><div class="sub" style="margin-top:8px">${note}</div>`;
+}
+function xTable(rows, unit){
+  if(!rows.length) return `<div class="empty" style="padding:18px 4px">No finished trades in the loaded history yet.</div>`;
+  rows=rows.slice().sort((a,b)=>a.ts-b.ts);
+  const dfm=ts=>new Date(ts).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false});
+  return `<div class="tblw"><table class="rt"><tr><th>When (IST)</th><th>Instrument</th><th>Side</th><th>Entry</th><th>Exit</th><th>How it ended</th><th>Result</th></tr>`+
+    rows.slice().reverse().slice(0,60).map(x=>`<tr><td>${dfm(x.ts)}</td><td>${esc(x.sym)}</td><td style="color:${x.d>0?C.up:C.dn}">${x.d>0?"BUY":"SELL"}</td>`+
+      `<td>${px(x.entry,uni(x.tkr))}</td><td>${px(x.exit,uni(x.tkr))}</td><td>${esc(x.how)}</td>`+
+      `<td style="color:${x.R>0.02?C.up:x.R<-0.02?C.dn:C.fg}">${x.R>=0?"+":"−"}${Math.abs(x.R).toFixed(2)}${unit}${x.pct!=null?` (${x.pct>=0?"+":"−"}${Math.abs(x.pct).toFixed(2)}%)`:""}</td></tr>`).join("")+`</table></div>`;
+}
+const xCopyBtn=(txt,label)=>`<button class="btn xcopy" data-t="${encodeURIComponent(txt)}">${label||"Copy for WhatsApp"}</button>`;
+function xWire(el){
+  el.querySelectorAll(".xcopy").forEach(b=>b.onclick=async()=>{ const ok=await copyText(decodeURIComponent(b.dataset.t));
+    const w=b.textContent; b.textContent=ok?"Copied ✓":"Copy failed"; setTimeout(()=>b.textContent=w,1600); });
+  el.querySelectorAll(".xchart").forEach(b=>b.onclick=()=>goChart(b.dataset.tkr));
+}
+const sn2=v=>String(Number(v.toFixed(2)));
+
+/* ------------------------------------------------------------- SCALP -- */
+/** Scalp = a quick trade in the direction of the short-term trend, on 3-minute
+ *  candles, for indices and MCX commodities. A BUY (call) needs ALL of:
+ *   1. 15-minute trend up: EMA 20 above EMA 50 and the 15-minute close above EMA 20
+ *      (15-minute candles built from closed 3-minute candles only).
+ *   2. 3-minute EMA 9 above EMA 20, and price pulled back to EMA 20 within the last
+ *      four candles.
+ *   3. Trigger: a green candle closing above the highs of the previous three
+ *      candles, body at least 0.3 ATR.
+ *   4. RSI between 55 and 78, ADX 20 or more; above VWAP where volume exists.
+ *   5. Stop below the last three lows (0.4 to 1.2 ATR). Targets 1R, 1.5R, 2R.
+ *   6. Stop moves to entry at T1 and to T1 at T2. Exit after 10 candles (30
+ *      minutes) if no target or stop, and before the session ends.
+ *  No new scalps in the first 15 or last 45 minutes. One at a time per
+ *  instrument, three candles of rest after each. SELL (put) is the mirror. */
+const SC={ tf:3, htf:15, maxBars:10, rest:3 };
+function scalpEngine(u, b){
+  const out=[], n=b.length; if(n<80) return {sigs:out, state:"Not enough 3-minute history yet"};
+  const c=b.map(x=>x.c), e9=ema(c,9), e20=ema(c,20), R=rsi(c,14), A=atr(b,14), X=adx(b,14);
+  const hasVol=b.slice(-60).some(x=>(x.v||0)>0), vw=hasVol?vwap(b).mid:null;
+  const OP=u.open||555, CL=u.close||930;
+  const H=aggregate(b,SC.htf,OP), hc=H.map(x=>x.c), h20=ema(hc,20), h50=ema(hc,50);
+  const cost=v=>CFG.costPct*v;
+  let busy=-1, last=null;
+  for(let i=25;i<n-1;i++){
+    const x=b[i];
+    if(i<=busy+SC.rest||!A[i]||x.t<OP+15||x.t>=CL-45) continue;
+    const k=closedAt(H,SC.htf,x.ts+SC.tf*60000); if(k<1||h20[k]==null||h50[k]==null) continue;
+    for(const d of [1,-1]){
+      if(!(d*(h20[k]-h50[k])>0&&d*(H[k].c-h20[k])>0)) continue;
+      if(!(e9[i]!=null&&e20[i]!=null&&d*(e9[i]-e20[i])>0)) continue;
+      let pulled=false; for(let j=i-4;j<i;j++) if(d>0?b[j].l<=e20[j]+0.1*A[j]:b[j].h>=e20[j]-0.1*A[j]) pulled=true;
+      if(!pulled) continue;
+      const ref=d>0?Math.max(b[i-1].h,b[i-2].h,b[i-3].h):Math.min(b[i-1].l,b[i-2].l,b[i-3].l);
+      if(!(d*(x.c-x.o)>=0.3*A[i]&&d*(x.c-ref)>0)) continue;
+      if(!(R[i]!=null&&(d>0?R[i]>=55&&R[i]<=78:R[i]<=45&&R[i]>=22))) continue;
+      if(!(X[i]!=null&&X[i]>=20)) continue;
+      if(vw&&!(d*(x.c-vw[i])>0)) continue;
+      const ext=d>0?Math.min(b[i].l,b[i-1].l,b[i-2].l):Math.max(b[i].h,b[i-1].h,b[i-2].h);
+      const entry=x.c; let sl=ext-d*0.1*A[i], risk=d*(entry-sl);
+      if(risk<=0||risk>1.2*A[i]) continue;
+      if(risk<0.4*A[i]){ risk=0.4*A[i]; sl=entry-d*risk; }
+      const s={ kind:"scalp", tkr:u.tkr, sym:u.sym, d, i, ts:x.ts, day:x.day, entry, sl, risk, cost:cost(entry),
+        t1:entry+d*risk, t2:entry+d*1.5*risk, t3:entry+d*2*risk, atr:A[i],
+        why:[`15-min trend ${d>0?"up":"down"}: EMA 20 ${d>0?"above":"below"} EMA 50`,
+             `3-min pull-back to EMA 20, then a ${d>0?"green":"red"} candle broke the last three ${d>0?"highs":"lows"}`,
+             `RSI ${R[i].toFixed(0)}, ADX ${X[i].toFixed(0)}${vw?`, ${d>0?"above":"below"} VWAP`:""}`,
+             `stop ${(risk/A[i]).toFixed(1)} ATR beyond the last three ${d>0?"lows":"highs"}; targets 1R / 1.5R / 2R; exit within 30 minutes`] };
+      s.res=scalpTrack(b,s,CL);
+      out.push(s); busy=s.res.exit!=null?s.res.exit:n; break;
+    }
+  }
+  // where things stand on the last closed candle, in words
+  const i=n-2, x=b[i], k=closedAt(H,SC.htf,x.ts+SC.tf*60000);
+  let state;
+  if(!sessionOpen(u)) state="Market closed";
+  else if(x.t<OP+15) state="First 15 minutes: no scalps yet";
+  else if(x.t>=CL-45) state="Last 45 minutes: no new scalps";
+  else if(k<1||h20[k]==null) state="Not enough 15-minute history";
+  else { const d=Math.sign(h20[k]-h50[k]);
+    if(!d||d*(H[k].c-h20[k])<=0) state="15-minute trend unclear: no scalp";
+    else if(!(d*(e9[i]-e20[i])>0)) state=`15-min trend ${d>0?"up":"down"}, but 3-min EMAs not aligned yet`;
+    else if(X[i]==null||X[i]<20) state=`15-min trend ${d>0?"up":"down"}, 3-min ADX ${X[i]==null?"—":X[i].toFixed(0)}: too quiet`;
+    else state=`15-min trend ${d>0?"up":"down"}: waiting for a pull-back and a breakout candle`; }
+  return {sigs:out, state};
+}
+function scalpTrack(b,s,CL){
+  const d=s.d; let stop=s.sl, hit=0;
+  const fin=(how,j,px)=>({done:true, how, exit:j, px, hit, R:(d*(px-s.entry)-s.cost)/s.risk});
+  for(let j=s.i+1;j<b.length;j++){
+    const x=b[j];
+    if(x.day!==b[s.i].day) return fin("Closed at session end",j-1,b[j-1].c);
+    if(d>0?x.l<=stop:x.h>=stop) return fin(hit===0?"Stop loss":hit===1?"Back to entry":"Stopped at T1",j,stop);
+    if(hit<1&&(d>0?x.h>=s.t1:x.l<=s.t1)){ hit=1; stop=s.entry; }
+    if(hit<2&&(d>0?x.h>=s.t2:x.l<=s.t2)){ hit=2; stop=s.t1; }
+    if(d>0?x.h>=s.t3:x.l<=s.t3){ hit=3; return fin("Target 3",j,s.t3); }
+    if(j<b.length-1){
+      if(j-s.i>=SC.maxBars) return fin("30-minute time exit",j,x.c);
+      if(x.t>=CL-5) return fin("Closed at session end",j,x.c);
+    }
+  }
+  const lst=b[b.length-1];
+  return {done:false, how:hit?`T${hit} reached, stop at ${hit===1?"entry":"T1"}`:"Working", exit:null, px:lst.c, hit, stop, R:(d*(lst.c-s.entry)-s.cost)/s.risk,
+    left:Math.max(0,SC.maxBars-(b.length-1-s.i))};
+}
+async function loadScalp(force){
+  const X=XS.scalp; if(X.busy) return; if(!force&&Date.now()-X.at<20000) return;
+  X.busy=true; X.err=null;
+  const list=S.universe.filter(u=>u.seg==="IDX"||u.seg==="MCX");
+  let i=0, fails=0;
+  const w=async()=>{ while(i<list.length){ const u=list[i++];
+    try{ const j=await api("/api/candles?tkr="+encodeURIComponent(u.tkr)+"&interval="+SC.tf); X.bars[u.tkr]={b:toBars(j.candles), at:Date.now()}; }
+    catch(e){ fails++; if(!X.bars[u.tkr]) X.err=e.message; } } };
+  try{ await Promise.all([w(),w(),w()]); X.at=Date.now(); if(fails===list.length) X.err=X.err||"no data"; }
+  finally{ X.busy=false; try{ scalpBuild(); }catch(e){} if(onHomeTab("scalp")) renderScalp(); if(S.page==="home") renderStrictSegs(); }
+}
+async function scalpOption(s){        // ATM contract and an estimate of its premium levels, from the live option chain
+  if(s.optAt&&Date.now()-s.optAt<60000) return;
+  s.optAt=Date.now();
+  try{
+    const d=await liteChain(s.tkr); if(!d||!d.rows||!d.rows.length) throw new Error("no strikes");
+    const row=d.rows.reduce((a,r)=>Math.abs(r.strike-s.entry)<Math.abs(a.strike-s.entry)?r:a,d.rows[0]);
+    const ty=s.d>0?"CE":"PE", leg=ty==="CE"?row.ce:row.pe; if(!leg||!(leg.ltp>0)) throw new Error("no premium");
+    const T=Math.max(d.daysOut/365,1/(365*24)), sp=d.spot||s.entry, iv=impliedVol(leg.ltp,sp,row.strike,T,ty)||leg.iv;
+    const mismatch=s.res.px&&Math.abs(sp-s.res.px)/s.res.px>0.01;     // chain spot and chart price disagree: don't estimate
+    const delta=iv&&!mismatch?Math.abs(bs(sp,row.strike,T,iv,ty).delta):null;
+    const now=leg.ltp, at=v=>delta?Math.max(0.05,now+delta*s.d*(v-sp)):null;
+    s.opt={ strike:row.strike, ty, expiry:d.expiry, ltp:now, delta, bid:leg.bid, ask:leg.ask, lot:d.lot||uni(s.tkr).lot||null,
+      spread:leg.bid>0&&leg.ask>0?(leg.ask-leg.bid)/((leg.ask+leg.bid)/2)*100:null,
+      sl:at(s.res.stop!=null?s.res.stop:s.sl), t1:at(s.t1), t2:at(s.t2), t3:at(s.t3), mismatch };
+  }catch(e){ s.opt={err:e.message}; }
+  if(onHomeTab("scalp")) renderScalp();
+}
+/* Your scalp budget: asked once, kept on this device, used to size every scalp. */
+const SCB={ budget:+store.get("sd_scalp_budget","0")||null, risk:+store.get("sd_scalp_risk","2")||2, edit:false };
+function scalpBudgetForm(el){
+  el.innerHTML=`<div class="budget"><b>Enter your scalping budget first</b>
+    <span>Scalp trades are shown after you set how much money you will use for scalping. Each trade then shows how many lots to buy and at what price, so that it fits your budget and risks no more than the share you choose if the stop loss is hit.</span>
+    <div class="bform"><label>Budget for scalping (₹)<input id="scBud" type="number" min="1000" step="1000" inputmode="numeric" placeholder="e.g. 50000" value="${SCB.budget||""}"></label>
+    <label>Most you will lose on one trade (% of budget)<input id="scRisk" type="number" min="0.5" max="10" step="0.5" value="${SCB.risk}"></label>
+    <button class="btn pri" id="scGo">Show scalp trades</button></div><div class="bmsg" id="scMsg"></div></div>`;
+  const go=()=>{ const v=Math.round(+document.getElementById("scBud").value||0), r=+document.getElementById("scRisk").value||0;
+    if(v<1000){ document.getElementById("scMsg").textContent="Enter a budget of at least ₹1,000."; return; }
+    if(r<0.5||r>10){ document.getElementById("scMsg").textContent="Choose between 0.5% and 10% per trade."; return; }
+    SCB.budget=v; SCB.risk=r; SCB.edit=false; store.set("sd_scalp_budget",String(v)); store.set("sd_scalp_risk",String(r)); renderScalp(); };
+  document.getElementById("scGo").onclick=go;
+  el.querySelectorAll("input").forEach(i=>i.onkeydown=e=>{ if(e.key==="Enter") go(); });
+}
+/* How many lots this budget allows for a scalp, and why. Options: the premium must fit the budget and
+   the loss at the (estimated) premium stop must stay within the chosen risk. Futures: risk only. */
+function scalpSize(s){
+  const u=s.u, o=s.opt&&!s.opt.err?s.opt:null, B=SCB.budget, maxLoss=B*SCB.risk/100;
+  if(u.fo){
+    if(!o) return {msg:s.opt&&s.opt.err?"Can't size this trade: the option price is not available.":"Working out the lot size once the option price loads…"};
+    const lot=o.lot; if(!lot) return {msg:"Can't size this trade: the lot size of this option is not known."};
+    // buy price: the ask, unless it is far from the last traded price (stale or thin quote)
+    const price=o.ask>0&&Math.abs(o.ask-o.ltp)/o.ltp<=0.2?o.ask:o.ltp, costLot=price*lot, byBudget=Math.floor(B/costLot);
+    // loss per lot: to the estimated premium stop, or, when that can't be estimated, a 25% fall in the premium
+    const est=o.delta&&o.sl!=null&&o.sl<price, riskLot=(est?price-o.sl:price*0.25)*lot, byRisk=Math.floor(maxLoss/riskLot);
+    const lots=Math.min(byBudget,byRisk);
+    if(lots<1) return {zero:true, msg:byBudget<1?`Your budget of ₹${nf(B,0)} is less than 1 lot (${lot} qty × ₹${nf(price,2)} = ₹${nf(costLot,0)}). Skip this trade.`
+      :`1 lot (₹${nf(costLot,0)}) would lose about ₹${nf(riskLot,0)} at the ${est?"estimated premium stop":"assumed 25% premium stop"}, more than your ${SCB.risk}% limit (₹${nf(maxLoss,0)}). Skip this trade, or raise the limit knowingly.`};
+    return {lots, qty:lots*lot, price, cost:lots*costLot, loss:riskLot!=null?lots*riskLot:null, lot,
+      line:`BUY ${lots} lot${lots>1?"s":""} (${lots*lot} qty) of ${o.strike} ${o.ty} at up to ₹${nf(price,2)}`,
+      why:`Uses ₹${nf(lots*costLot,0)} of your ₹${nf(B,0)} budget; `+(est?`loss if the estimated premium stop ₹${nf(o.sl,2)} is hit about ₹${nf(lots*riskLot,0)}`
+          :`the premium stop could not be estimated, so the size assumes you exit if the premium falls 25% (to ₹${nf(price*0.75,2)}), a loss of about ₹${nf(lots*riskLot,0)}`)+
+        ` (${(lots*riskLot/B*100).toFixed(1)}% of budget). ${byRisk<byBudget?"Limited by your risk per trade.":"Limited by your budget."} Premium moves fast: if it is already well above ₹${nf(price,2)}, skip rather than chase.`};
+  }
+  const lot=u.lot; if(!lot) return {msg:"Can't size this trade: the contract's lot size is not known."};
+  const riskLot=s.risk*lot, lots=Math.floor(maxLoss/riskLot);
+  if(lots<1) return {zero:true, msg:`1 lot would lose about ₹${nf(riskLot,0)} at the stop, more than your ${SCB.risk}% limit (₹${nf(maxLoss,0)}). Skip this trade.`};
+  return {lots, qty:lots*lot, price:s.entry, loss:lots*riskLot, lot,
+    line:`${s.d>0?"BUY":"SELL"} ${lots} lot${lots>1?"s":""} (${lots*lot} qty) at ${px(s.entry,u)}`,
+    why:`Loss at the stop about ₹${nf(lots*riskLot,0)} (${(lots*riskLot/B*100).toFixed(1)}% of budget). Futures need margin from your broker, which this site cannot see: check it fits your budget before entering.`};
+}
+const onHomeTab=t=>S.page==="home"&&S.tab===t;
+function scalpBuild(){
+  const X=XS.scalp, list=S.universe.filter(u=>u.seg==="IDX"||u.seg==="MCX"), all=[], states=[];
+  X.cache=X.cache||{};
+  list.forEach(u=>{ const e=X.bars[u.tkr]; if(!e){ states.push([u,"No 3-minute data"]); return; }
+    const key=u.tkr+"|"+e.at; let r=X.cache[u.tkr];
+    if(!r||r.key!==key){ const old=r&&r.sigs||[]; r=scalpEngine(u,e.b); r.key=key;
+      r.sigs.forEach(s=>{ const o=old.find(z=>z.ts===s.ts&&z.d===s.d); if(o&&o.opt){ s.opt=o.opt; s.optAt=o.optAt; } });
+      X.cache[u.tkr]=r; }
+    all.push(...r.sigs.map(s=>Object.assign(s,{u}))); states.push([u,r.state]); });
+  return {all, states, list};
+}
+function renderScalp(){
+  if(!onHomeTab("scalp")) return;
+  const X=XS.scalp, el=document.getElementById("scalpBody");
+  if(!SCB.budget||SCB.edit){ if(!el.querySelector("#scBud")) scalpBudgetForm(el); return; }   // don't wipe what is being typed
+  if(!Object.keys(X.bars).length){ el.innerHTML=`<div class="empty">${X.err?"Could not load 3-minute candles: "+esc(X.err):"Loading 3-minute candles…"}</div>`; return; }
+  const {all, states, list}=scalpBuild(); X.shownAt=X.at;
+  const today=istDay(Date.now()), todays=all.filter(s=>s.day===today), act=todays.filter(s=>!s.res.done);
+  const hist=all.filter(s=>s.res.done).map(s=>({ts:s.ts,tkr:s.tkr,sym:s.sym,d:s.d,entry:s.entry,exit:s.res.px,how:s.res.how,R:s.res.R}));
+  act.forEach(s=>{ if(s.u.fo) scalpOption(s); });
+  const card=s=>{
+    const u=s.u, f=v=>px(v,u), live=!s.res.done, o=s.opt&&!s.opt.err?s.opt:null;
+    const st=live?(s.res.hit?`T${s.res.hit} REACHED`:"ACTIVE"):s.res.R>0.02?"PROFIT":s.res.R<-0.02?"LOSS":"FLAT";
+    const col=live?(s.res.R>=0?C.up:C.warn):s.res.R>0.02?C.up:s.res.R<-0.02?C.dn:C.mid;
+    const chip=u.fo?(o?`${o.strike} ${o.ty}`:(s.d>0?"CALL":"PUT")):(s.d>0?"BUY":"SELL");
+    const share=`${s.sym} - SCALP\n${u.fo&&o?`BUY ${o.strike} ${o.ty} @ ${sn2(o.ltp)} (premium now)\n`+(o.delta?`SL - ${sn2(o.sl)}  T1/T2/T3 - ${sn2(o.t1)}/${sn2(o.t2)}/${sn2(o.t3)} (estimated)\n`:""):""}`+
+      `${u.fo?"SPOT":s.d>0?"BUY":"SELL"} ${sn2(s.entry)} | SL ${sn2(s.sl)}\nT1/T2/T3 - ${sn2(s.t1)}/${sn2(s.t2)}/${sn2(s.t3)}\nExit within 30 min`;
+    return `<div class="xcard" style="--xc:${s.d>0?C.up:C.dn}"><div class="xh"><b class="xn">${esc(s.sym)}</b><span class="chip" style="background:${s.d>0?C.up:C.dn}">${esc(chip)}</span>`+
+      `<span class="xst" style="color:${col}">${st}</span></div>`+
+      `<div class="xsub">${s.d>0?"Buy call":"Buy put"} scalp · signal ${hhmm(s.ts)} IST · ${u.seg==="MCX"?"futures":"index"} levels below${live?` · ${s.res.left} candle${s.res.left===1?"":"s"} (${s.res.left*3} min) left`:""}</div>`+
+      `<div class="xlv"><div><span>${u.fo?"Spot entry":s.d>0?"Buy @":"Sell @"}</span><b style="color:${C.key}">${f(s.entry)}</b></div><div><span>Stop loss</span><b style="color:${C.dn}">${f(live&&s.res.stop!=null?s.res.stop:s.sl)}</b></div>`+
+        `<div><span>Target 1 / 2 / 3</span><b>${f(s.t1)} / ${f(s.t2)} / ${f(s.t3)}</b></div><div><span>${live?"Now":"Exit"}</span><b style="color:${col}">${f(s.res.px)}</b></div></div>`+
+      (live&&u.fo?(o?`<div class="xopt">Option <b>${o.strike} ${o.ty}</b>, expiry ${new Date(o.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}: premium now <b>₹${nf(o.ltp,2)}</b>`+
+          (o.delta?` · estimated stop ₹${nf(o.sl,2)}, targets ₹${nf(o.t1,2)} / ${nf(o.t2,2)} / ${nf(o.t3,2)} (from delta ${o.delta.toFixed(2)}; actual premiums will differ)`:(o.mismatch?" · premium levels not estimated: the option chain's spot price differs from the chart price by over 1%":" · premium levels can't be estimated (no implied volatility)"))+
+          (o.spread!=null&&o.spread>3?` · <b style="color:${C.warn}">wide bid-ask spread ${o.spread.toFixed(1)}%</b>`:"")+`</div>`
+        :s.opt&&s.opt.err?`<div class="xopt">Option contract not available right now (${esc(s.opt.err)}). Spot levels only.</div>`:`<div class="xopt">Finding the ATM option…</div>`):"")+
+      (live?(()=>{ const z=scalpSize(s); return z.line?`<div class="xsize"><span>Suggested for your budget</span><b>${esc(z.line)}</b><small>${esc(z.why)}</small></div>`
+        :`<div class="xsize ${z.zero?"no":""}"><span>Suggested for your budget</span><small>${esc(z.msg)}</small></div>`; })():"")+
+      `<div class="xres" style="color:${col}">${live?`${s.res.how}. Now ${s.res.R>=0?"+":"−"}${Math.abs(s.res.R).toFixed(2)}R.`:`${s.res.how}: ${s.res.R>=0?"+":"−"}${Math.abs(s.res.R).toFixed(2)}R after estimated costs.`}</div>`+
+      `<details class="xwhy"><summary>Why this scalp</summary>${s.why.map(w=>"✓ "+esc(w)).join("<br>")}</details>`+
+      `<div class="xact">${xCopyBtn(share)}<button class="btn xchart" data-tkr="${u.tkr}">View on chart</button></div></div>`;
+  };
+  const open=list.filter(u=>sessionOpen(u)).length;
+  el.innerHTML=
+    `<div class="bbar">Scalping budget <b>₹${nf(SCB.budget,0)}</b> · most loss per trade <b>${SCB.risk}% (₹${nf(SCB.budget*SCB.risk/100,0)})</b><button class="btn" id="scEdit">Change</button></div>`+
+    `<div class="hero">`+
+      `<div><span>Active scalps</span><b style="color:${act.length?C.up:C.fg}">${act.length}</b><small>being followed now</small></div>`+
+      `<div><span>Scalps today</span><b>${todays.length}</b><small>${todays.filter(s=>s.res.done&&s.res.R>0.02).length} won, ${todays.filter(s=>s.res.done&&s.res.R<-0.02).length} lost</small></div>`+
+      `<div><span>Markets open</span><b>${open}</b><small>of ${list.length} indices and commodities</small></div>`+
+      `<div><span>Data</span><b style="font-size:20px">${X.at?hhmm(X.at):"—"}</b><small>3-minute candles, refreshed every 20 s</small></div></div>`+
+    (act.length?`<h3>Active now</h3><div class="xgrid">${act.map(card).join("")}</div>`
+      :`<div class="notrade"><b>NO SCALP TRADE right now</b><span>No instrument meets every scalp rule on its last closed 3-minute candle. Waiting is a decision too.</span>`+
+        `<div class="xstates">${states.map(([u,t])=>`<div><b>${esc(u.sym)}</b><span>${esc(t)}</span></div>`).join("")}</div></div>`)+
+    (todays.filter(s=>s.res.done).length?`<h3>Finished today</h3><div class="xgrid">${todays.filter(s=>s.res.done).reverse().map(card).join("")}</div>`:"")+
+    `<h3>Scalp record</h3>`+xRecordHtml(xPerf(hist),"R",`Every scalp the rules gave over the last ${[...new Set(all.map(s=>s.day))].length} trading days of 3-minute candles, wins and losses alike, `+
+      `measured on the index or futures price in R (1R = entry-to-stop distance), after an estimated ${(CFG.costPct*100).toFixed(2)}% for costs. `+
+      `Option premiums move differently (time decay, spread), so option results will not match exactly. A short history shows a tendency, not a promise.`)+
+    xTable(hist,"R");
+  xWire(el);
+  const ed=document.getElementById("scEdit"); if(ed) ed.onclick=()=>{ SCB.edit=true; renderScalp(); };
+}
+
+/* -------------------------------------------------------------- BTST -- */
+/** BTST = buy a strong stock in the last hour, sell next morning. Stocks only
+ *  (cash delivery, so BUY only). Decided on the hourly candle that closes at
+ *  15:15 IST; ALL of these must hold on that close:
+ *   1. Daily trend: price above the 20-day EMA, and the 20-day above the 50-day.
+ *   2. Up 1% to 6% on the day (strong, not exhausted).
+ *   3. Close in the top 30% of the day's range, and above yesterday's high.
+ *   4. Volume by 15:15 at least 1.2x the 20-day average volume by 15:15.
+ *   5. Daily RSI between 55 and 75.
+ *   6. Market filter: NIFTY 50 above its 20-day EMA at the same time.
+ *  Entry: the 15:15 price (buy 15:15–15:29). Stop: below today's low, between
+ *  0.4 and 0.8 daily ATR. Targets: +0.6 and +1.0 daily ATR.
+ *  Next day: exit at the open if it gaps beyond the stop or Target 2; otherwise
+ *  the first hour (to 10:15) decides: Target 2, then Target 1, then the stop
+ *  (if one hourly candle touches both a target and the stop, the stop is counted
+ *  first, to stay on the safe side); if none, exit at 10:15.
+ *  Costs: 0.25% of the price for delivery charges both ways. */
+const BT={ decideT:855, entryT:915, costPct:0.0025 };
+function dailyOf(b){ const days=[]; let cur=null;
+  for(const x of b){ if(!cur||cur.day!==x.day){ cur={day:x.day,o:x.o,h:x.h,l:x.l,c:x.c,v:x.v||0,bars:[x]}; days.push(cur); }
+    else { cur.h=Math.max(cur.h,x.h); cur.l=Math.min(cur.l,x.l); cur.c=x.c; cur.v+=x.v||0; cur.bars.push(x); } }
+  return days; }
+const lastOf=a=>a[a.length-1];
+function niftyOk(nd, day){        // NIFTY 50 above its 20-day EMA at 15:15 on `day`
+  const k=nd.findIndex(x=>x.day===day); if(k<20) return null;
+  const bar=nd[k].bars.find(x=>x.t===BT.decideT); if(!bar) return null;
+  const e=lastOf(ema(nd.slice(0,k).map(x=>x.c).concat([bar.c]),20)); return e==null?null:bar.c>e;
+}
+function btstEngine(u, b, nd){
+  const D=dailyOf(b), out=[]; let watch=null;
+  for(let k=50;k<D.length;k++){
+    const day=D[k], upTo=day.bars.filter(x=>x.t<=BT.decideT), dec=upTo.find(x=>x.t===BT.decideT);
+    const isToday=k===D.length-1;
+    if(!dec){ if(isToday&&upTo.length) watch={day:day.day}; continue; }
+    const decClosed=dec.ts+3600e3<=Date.now();
+    const o=upTo[0].o, h=Math.max(...upTo.map(x=>x.h)), l=Math.min(...upTo.map(x=>x.l)), c=dec.c, v=upTo.reduce((t,x)=>t+(x.v||0),0);
+    const prev=D.slice(0,k), pc=lastOf(prev).c, ph=lastOf(prev).h;
+    const closes=prev.map(x=>x.c).concat([c]), e20=lastOf(ema(closes,20)), e50=lastOf(ema(closes,50)), r=lastOf(rsi(closes,14));
+    const da=lastOf(atr(prev,14)), avgV=prev.slice(-20).reduce((t,x)=>t+x.bars.filter(y=>y.t<=BT.decideT).reduce((a,y)=>a+(y.v||0),0),0)/20, hasVol=prev.slice(-20).some(x=>x.v>0);
+    const chg=(c-pc)/pc*100, pos=h>l?(c-l)/(h-l):0, mkt=nd?niftyOk(nd,day.day):null;
+    const checks=[
+      ["Daily trend", e20!=null&&e50!=null&&c>e20&&e20>e50, `price ${c>e20?"above":"below"} the 20-day EMA ${e20==null?"":nf(e20,2)}, 20-day ${e20>e50?"above":"below"} 50-day`],
+      ["Strong day", chg>=1&&chg<=6, `${chg>=0?"+":""}${chg.toFixed(2)}% on the day`],
+      ["Closing strength", pos>=0.7&&c>ph, `close in the top ${Math.round((1-pos)*100)}% of the range, ${c>ph?"above":"not above"} yesterday's high ${nf(ph,2)}`],
+      ["Volume", hasVol&&v>=1.2*avgV, hasVol?`${(v/avgV).toFixed(1)}x the 20-day average volume by 15:15`:"no volume data"],
+      ["Daily RSI", r!=null&&r>=55&&r<=75, `RSI ${r==null?"—":r.toFixed(0)}`],
+      ["Market (NIFTY 50)", mkt===true, mkt==null?"NIFTY 50 data not available":mkt?"NIFTY 50 above its 20-day EMA":"NIFTY 50 below its 20-day EMA"],
+    ];
+    const pass=checks.every(x=>x[1]);
+    if(isToday&&!decClosed){ watch={day:day.day, checks, pass, forming:true}; continue; }
+    if(isToday) watch={day:day.day, checks, pass};
+    if(!pass||!da) continue;
+    let risk=Math.min(Math.max(c-l,0.4*da),0.8*da); const sl=c-risk;
+    const s={ kind:"btst", tkr:u.tkr, sym:u.sym, d:1, day:day.day, ts:dec.ts+3600e3, entry:c, sl, risk, t1:c+0.6*da, t2:c+1.0*da,
+      cost:BT.costPct*c, atr:da, why:checks.map(x=>x[0]+": "+x[2]) };
+    // next day
+    const nx=D[k+1];
+    if(!nx) s.res={done:false, how:isToday?"Buy before 15:29 today; sell tomorrow by 10:15":"Waiting for the next session"};
+    else {
+      const f=nx.bars[0], gap=(f.o-c)/c*100; let px=null, how;
+      if(f.o<=sl){ px=f.o; how=`Gap down ${gap.toFixed(2)}%: sold at the open, below the stop`; }
+      else if(f.o>=s.t2){ px=f.o; how=`Gap up ${gap.toFixed(2)}%: sold at the open, above Target 2`; }
+      else if(f.ts+3600e3>Date.now()&&nx===lastOf(D)){ s.res={done:false, how:`Holding: opened ${gap>=0?"+":""}${gap.toFixed(2)}%. Sell by 10:15`, px:f.c, gap,
+          R:((f.c-c)-s.cost)/risk}; out.push(s); continue; }
+      else if(f.l<=sl){ px=sl; how="Stop loss in the first hour"; }
+      else if(f.h>=s.t2){ px=s.t2; how="Target 2 in the first hour"; }
+      else if(f.h>=s.t1){ px=s.t1; how="Target 1 in the first hour"; }
+      else { px=f.c; how="Sold at 10:15, no target or stop"; }
+      s.res={done:true, how, px, gap, R:((px-c)-s.cost)/risk, pct:((px-c)-s.cost)/c*100};
+    }
+    out.push(s);
+  }
+  return {sigs:out, watch};
+}
+async function loadBtst(force){
+  const X=XS.btst; if(X.busy) return; if(!force&&Date.now()-X.at<300000) return;
+  X.busy=true; X.err=null;
+  const list=S.universe.filter(u=>u.seg==="EQ").concat(S.universe.filter(u=>u.tkr==="NIFTY"));
+  let i=0, fails=0;
+  const w=async()=>{ while(i<list.length){ const u=list[i++];
+    try{ const j=await api("/api/candles?tkr="+encodeURIComponent(u.tkr)+"&interval=60"); X.bars[u.tkr]={b:toBars(j.candles), at:Date.now()}; }
+    catch(e){ fails++; if(!X.bars[u.tkr]) X.err=e.message; } } };
+  try{ await Promise.all([w(),w(),w()]); X.at=Date.now(); if(fails===list.length) X.err=X.err||"no data"; }
+  finally{ X.busy=false; try{ btstCount(); }catch(e){} if(onHomeTab("btst")) renderBtst(); if(S.page==="home") renderStrictSegs(); }
+}
+function btstCount(){
+  const X=XS.btst, nd=X.bars.NIFTY?dailyOf(X.bars.NIFTY.b):null, today=istDay(Date.now()); let n=0;
+  S.universe.filter(u=>u.seg==="EQ").forEach(u=>{ const e=X.bars[u.tkr]; if(e) n+=btstEngine(u,e.b,nd).sigs.filter(s=>s.day===today).length; });
+  X.picks=n;
+}
+function renderBtst(){
+  if(!onHomeTab("btst")) return;
+  const X=XS.btst, el=document.getElementById("btstBody"); X.shownAt=X.at;
+  if(!Object.keys(X.bars).length){ el.innerHTML=`<div class="empty">${X.err?"Could not load hourly candles: "+esc(X.err):"Loading hourly candles…"}</div>`; return; }
+  const nd=X.bars.NIFTY?dailyOf(X.bars.NIFTY.b):null;
+  const stocks=S.universe.filter(u=>u.seg==="EQ"), all=[], watch=[];
+  stocks.forEach(u=>{ const e=X.bars[u.tkr]; if(!e) return; const r=btstEngine(u,e.b,nd);
+    all.push(...r.sigs.map(s=>Object.assign(s,{u}))); if(r.watch&&r.watch.checks) watch.push([u,r.watch]); });
+  const today=istDay(Date.now()), picks=all.filter(s=>s.day===today), holding=all.filter(s=>s.day!==today&&!s.res.done);
+  const lastDay=[...new Set(all.filter(s=>s.res.done).map(s=>s.day))].sort().pop();
+  const recon=all.filter(s=>s.day===lastDay&&s.res.done);
+  const hist=all.filter(s=>s.res.done).map(s=>({ts:s.ts,tkr:s.tkr,sym:s.sym,d:1,entry:s.entry,exit:s.res.px,how:s.res.how,R:s.res.R,pct:s.res.pct}));
+  const card=s=>{
+    const u=s.u, f=v=>px(v,u), done=s.res.done, col=done?(s.res.R>0.02?C.up:s.res.R<-0.02?C.dn:C.mid):C.key;
+    const st=done?(s.res.R>0.02?"PROFIT":s.res.R<-0.02?"LOSS":"FLAT"):s.day===today?"TODAY'S PICK":"HOLDING";
+    const share=`${s.sym} - BTST\nBUY @ ${sn2(s.entry)}\nSL - ${sn2(s.sl)}\nT1/T2 - ${sn2(s.t1)}/${sn2(s.t2)}\nExit by 10:15 tomorrow`;
+    return `<div class="xcard" style="--xc:${C.up}"><div class="xh"><b class="xn">${esc(s.sym)}</b><span class="chip" style="background:${C.up}">BTST BUY</span>`+
+      `<span class="xst" style="color:${col}">${st}</span></div>`+
+      `<div class="xsub">Decided ${new Date(s.ts).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false})} IST · shares (delivery)</div>`+
+      `<div class="xlv"><div><span>Buy @</span><b style="color:${C.key}">${f(s.entry)}</b></div><div><span>Stop loss</span><b style="color:${C.dn}">${f(s.sl)} (−${((s.entry-s.sl)/s.entry*100).toFixed(1)}%)</b></div>`+
+        `<div><span>Target 1 / 2</span><b>${f(s.t1)} / ${f(s.t2)} (+${((s.t1-s.entry)/s.entry*100).toFixed(1)}% / +${((s.t2-s.entry)/s.entry*100).toFixed(1)}%)</b></div>`+
+        (s.res.px!=null?`<div><span>${done?"Sold at":"Now"}</span><b style="color:${col}">${f(s.res.px)}</b></div>`:"")+`</div>`+
+      `<div class="xres" style="color:${col}">${esc(s.res.how)}${done?` · ${s.res.pct>=0?"+":"−"}${Math.abs(s.res.pct).toFixed(2)}% after charges (${s.res.R>=0?"+":"−"}${Math.abs(s.res.R).toFixed(2)}R)`:""}</div>`+
+      `<details class="xwhy"><summary>Why this BTST</summary>${s.why.map(w=>"✓ "+esc(w)).join("<br>")}</details>`+
+      `<div class="xact">${xCopyBtn(share)}<button class="btn xchart" data-tkr="${u.tkr}">View on chart</button></div></div>`;
+  };
+  const nowT=(()=>{ const x=new Date(Date.now()+19800000); return x.getUTCHours()*60+x.getUTCMinutes(); })();
+  const forming=watch.filter(([u,w])=>w.forming&&w.pass);
+  el.innerHTML=
+    `<div class="hero">`+
+      `<div><span>Today's picks</span><b style="color:${picks.length?C.up:C.fg}">${picks.length}</b><small>${nowT<915?"decided at 15:15 IST":"buy 15:15–15:29 IST"}</small></div>`+
+      `<div><span>Holding overnight</span><b>${holding.length}</b><small>sell by 10:15 IST</small></div>`+
+      `<div><span>Last session result</span><b>${recon.length?recon.filter(s=>s.res.R>0.02).length+" / "+recon.length:"—"}</b><small>${lastDay?"picks from "+new Date(lastDay+"T00:00:00Z").toLocaleDateString("en-IN",{timeZone:"UTC",day:"2-digit",month:"short"})+" in profit":"no finished picks yet"}</small></div>`+
+      `<div><span>Data</span><b style="font-size:20px">${X.at?hhmm(X.at):"—"}</b><small>hourly candles, ${stocks.length} stocks</small></div></div>`+
+    (holding.length?`<h3>Holding overnight — sell tomorrow by 10:15</h3><div class="xgrid">${holding.map(card).join("")}</div>`:"")+
+    (picks.length?`<h3>Today's BTST picks</h3><div class="xgrid">${picks.map(card).join("")}</div>`
+      :`<div class="notrade"><b>NO BTST TRADE ${nowT>=BT.decideT+60?"today":"yet"}</b><span>${nowT<BT.decideT+60?`Picks are decided on the hourly candle that closes at 15:15 IST.${forming.length?` Forming now (not a signal until 15:15): ${forming.map(([u])=>esc(u.sym)).join(", ")}.`:""}`:"No stock met every BTST rule at 15:15 today. No trade is the right call on such days."}</span>`+
+        (watch.length?`<div class="xstates">${watch.map(([u,w])=>{ const f=w.checks.find(x=>!x[1]); return `<div><b>${esc(u.sym)}</b><span>${f?esc(f[0]+": "+f[2]):w.forming?"all rules met so far (forming)":"all rules met"}</span></div>`; }).join("")}</div>`:"")+`</div>`)+
+    (recon.length?`<h3>Next-day check of the last picks</h3><div class="xgrid">${recon.map(card).join("")}</div>`:"")+
+    `<h3>BTST record</h3>`+xRecordHtml(xPerf(hist),"R",`Every BTST pick the rules gave over the loaded hourly history (about the last ${Math.max(0,(X.bars.NIFTY?dailyOf(X.bars.NIFTY.b).length:0)-50)} sessions that have 50 days of history before them), `+
+      `checked against what actually happened next morning, after 0.25% for delivery charges. R = entry-to-stop distance. Gaps can jump past a stop; those losses are counted at the opening price.`)+
+    xTable(hist,"R");
+  xWire(el);
+}
+function xPoll(){
+  if(XS.timer) clearInterval(XS.timer);
+  XS.timer=setInterval(()=>{ if(document.hidden||!S.ready) return;
+    if(onHomeTab("scalp")) loadScalp(); else if(onHomeTab("btst")) loadBtst(); },20000);
+}
+
+/* ------------------------------------------ trendline (grade A) signals -- */
+/** Classic trendline trades, shown on the Other tab. Lines join the two most
+ *  recent CONFIRMED major swing points (a swing counts only after 5 candles
+ *  on each side), so a line never moves once drawn. Two setups:
+ *   Breakout (CALL): a falling resistance line from two lower highs, never
+ *     closed above since it began, is broken by a strong candle (body 0.5 ATR,
+ *     close in the top 40% of its range) that closes 0.1 ATR or more above it.
+ *   Bounce (CALL): a rising support line from two higher lows, never closed
+ *     below, is touched again (the third touch) and price closes green above
+ *     the previous candle's high.
+ *  Both need ALL of: 1-hour EMA 20 above EMA 50 and 1-hour structure not down;
+ *  RSI 52-72 (breakout) or 45-68 (bounce); ADX 18 or more; MACD histogram above
+ *  zero (breakout) or rising (bounce); volume 1.2x average where the feed has
+ *  volume; stop 0.6-2 ATR away beyond the line or the recent lows; the first
+ *  unbroken swing level in the way at least 2R away after costs (targets are
+ *  those levels, or 2R / 3R / 4R when none). A breakout line must have been
+ *  touched three times, or broken on 1.5x volume. PUT is the mirror image.
+ *  One trade per instrument at a time, never against a live structure signal,
+ *  no entries in the first 15 or last 45 minutes. Only grade A setups are shown. */
+function engineTrend(ctx, opt, smc){
+  opt=Object.assign({all:false, lite:false}, opt);
+  const {u, E, H, tf, htf}=ctx, out=[];
+  if(!E||!H) return out;
+  const b=E.b, n=b.length; if(n<80) return out;
+  const I=E.ind, A=I.atr, R=I.rsi, HI=H.ind, CL=u.close||930, OP=u.open||555, today=b[n-1].day;
+  const piv={hi:E.ext.hi, lo:E.ext.lo}, swHi=E.ext.hi.concat(E.int.hi), swLo=E.ext.lo.concat(E.int.lo);
+  let busy=-1;
+  const lineOf=(p1,p2)=>{ const m=(p2.px-p1.px)/(p2.i-p1.i); return x=>p1.px+m*(x-p1.i); };
+  for(let i=40;i<n-1;i++){
+    if(i<=busy||!A[i]||b[i].t<OP+CFG.skipOpen||b[i].t>=CL-CFG.skipClose) continue;
+    const h=closedAt(H.b,htf,b[i].ts+tf*60000); if(h<1||HI.e20[h]==null||HI.e50[h]==null) continue;
+    const x=b[i], a=A[i], m=I.macd[i], m0=I.macd[i-1], adx=I.adx[i], rv=I.hasVol?I.relVol[i]:null;
+    if(!m||!m0||adx==null||R[i]==null||adx<18) continue;
+    let made=false;
+    for(const d of [1,-1]){
+      if(made) break;
+      if(!(d*(HI.e20[h]-HI.e50[h])>0&&H.ext.trend[h]!==-d)) continue;
+      if((smc||[]).some(s=>s.i<=i&&(s.res.exit==null||s.res.exit>=i)&&(s.side==="BUY"?1:-1)!==d)) continue;
+      for(const kind of ["breakout","bounce"]){
+        // the two latest confirmed pivots for this line
+        const set=kind==="breakout"?(d>0?piv.hi:piv.lo):(d>0?piv.lo:piv.hi);
+        const P=set.filter(p=>p.at<=i); if(P.length<2) continue;
+        const p1=P[P.length-2], p2=P[P.length-1];
+        if(p2.i-p1.i<6||i-p1.i>150) continue;
+        const slopeOk=kind==="breakout"?d*(p2.px-p1.px)<0:d*(p2.px-p1.px)>0;   // breakout: falling resistance / rising support for puts
+        if(!slopeOk) continue;
+        const y=lineOf(p1,p2);
+        // the line must be intact from its first point to the previous candle
+        let intact=true;
+        for(let j=p1.i+1;j<i;j++){ const dv=d*(b[j].c-y(j));
+          if(kind==="breakout"?dv>0.05*A[j]:dv<-0.05*A[j]){ intact=false; break; } }
+        if(!intact) continue;
+        // touches of the line (separate visits, at least 3 candles apart)
+        let touches=0, lastT=-9;
+        for(let j=p1.i;j<i;j++){ const ext=kind==="breakout"?(d>0?b[j].h:b[j].l):(d>0?b[j].l:b[j].h);
+          if(Math.abs(ext-y(j))<=0.15*A[j]&&j-lastT>=3){ touches++; lastT=j; } }
+        const why=[`1-hour trend ${d>0?"up":"down"}: EMA 20 ${d>0?"above":"below"} EMA 50`];
+        let entry=x.c, sl;
+        if(kind==="breakout"){
+          const rng=x.h-x.l, pos=rng?(d>0?(x.c-x.l):(x.h-x.c))/rng:0;
+          if(!(d*(x.c-y(i))>=0.1*a&&d*(b[i-1].c-y(i-1))<=0.05*A[i-1]&&d*(x.c-x.o)>=0.5*a&&pos>=0.6)) continue;
+          if(d>0?!(R[i]>=52&&R[i]<=72):!(R[i]<=48&&R[i]>=28)) continue;
+          if(!(d*m.hist>0)) continue;
+          if(I.hasVol&&!(rv>=1.2)) continue;
+          if(!(touches>=3||(I.hasVol&&rv>=1.5))) continue;
+          const ext=d>0?Math.min(b[i].l,b[i-1].l,b[i-2].l):Math.max(b[i].h,b[i-1].h,b[i-2].h);
+          sl=ext-d*0.1*a;
+          why.push(`${d>0?"falling resistance":"rising support"} trendline from ${hhmm(b[p1.i].ts)} and ${hhmm(b[p2.i].ts)}, touched ${touches} times, ${d>0?"broken upward":"broken downward"} by a strong candle`);
+        } else {
+          const tx=d>0?Math.min(x.l,b[i-1].l):Math.max(x.h,b[i-1].h), ti=(d>0?x.l<=b[i-1].l:x.h>=b[i-1].h)?i:i-1, dv=d*(tx-y(ti));
+          if(!(dv<=0.2*a&&dv>=-0.3*a)) continue;                                   // touched the line, did not slice through
+          if(!(d*(x.c-x.o)>=0.4*a&&d*(x.c-(d>0?b[i-1].h:b[i-1].l))>0)) continue;
+          if(d>0?!(R[i]>=45&&R[i]<=68):!(R[i]<=55&&R[i]>=32)) continue;
+          if(!(d*(m.hist-m0.hist)>0)) continue;
+          if(I.hasVol&&!(rv>=1.2)) continue;
+          sl=d>0?Math.min(tx,y(i)-0.3*a)-0.1*a:Math.max(tx,y(i)+0.3*a)+0.1*a;
+          why.push(`${d>0?"rising support":"falling resistance"} trendline from ${hhmm(b[p1.i].ts)} and ${hhmm(b[p2.i].ts)} held on its third touch, then a ${d>0?"green":"red"} candle closed ${d>0?"above the previous high":"below the previous low"}`);
+        }
+        let risk=d*(entry-sl);
+        if(risk<=0||risk>2*a) continue;
+        if(risk<0.6*a){ risk=0.6*a; sl=entry-d*risk; }
+        const cost=CFG.costPct*entry, net=v=>(d*(v-entry)-cost)/(risk+cost);
+        const lv=(d>0?swHi:swLo).filter(p=>p.at<=i&&d*(p.px-entry)>0.1*a)
+          .filter(p=>{ for(let j=p.i+1;j<=i;j++) if(d>0?b[j].h>p.px:b[j].l<p.px) return false; return true; })
+          .map(p=>p.px).sort((p,q)=>d*(p-q)).filter((v,k,arr)=>k===0||Math.abs(v-arr[k-1])>0.3*a);
+        let t1,t2,t3,rr;
+        if(lv.length){ rr=net(lv[0]); if(rr<2) continue;
+          t1=lv[0]; t2=lv[1]!=null?lv[1]:t1+d*risk; t3=lv[2]!=null?lv[2]:t2+d*risk;
+          why.push(`first swing ${d>0?"high":"low"} in the way at ${t1.toFixed(2)}: ${rr.toFixed(1)}R after costs`); }
+        else { t1=entry+d*2*risk; t2=entry+d*3*risk; t3=entry+d*4*risk; rr=net(t1); why.push("no swing level in the way; targets at 2R, 3R and 4R"); }
+        why.push(`RSI ${R[i].toFixed(0)}, ADX ${adx.toFixed(0)}, MACD histogram ${kind==="breakout"?(d>0?"above zero":"below zero"):(d>0?"rising":"falling")}`+
+          (I.hasVol?`, volume ${rv.toFixed(1)}x average`:", no volume data for this instrument"));
+        why.push(`stop ${(risk/a).toFixed(1)} ATR away, ${kind==="breakout"?"below the breakout candles":"beyond the trendline and the touch"}`);
+        const sig={ id:"T"+u.tkr.slice(0,3)+"-"+String(1000+i).slice(-4), day:x.day, strict:false, grade:"T", trend:true, setup:kind,
+          tkr:u.tkr, sym:u.sym, seg:u.seg, closeT:CL, side:d>0?"BUY":"SELL", i, ts:x.ts, setAt:x.ts,
+          entry, sl, t1, t2, t3, risk, rr, cost, reasons:why, atr:a, rsi:R[i], vol:I.hasVol?rv>=1.2:null,
+          poi:"trendline "+kind, trig:"trendline "+kind, tl:{i1:p1.i,p1:p1.px,i2:p2.i,p2:p2.px} };
+        sig.opt=opt.lite?null:optionLeg(u,sig);
+        sig.res=track(b,sig);
+        if(opt.all||x.day===today) out.push(sig);
+        busy=sig.res.exit!=null?sig.res.exit:n; made=true; break;
+      }
+    }
+  }
+  return out;
+}
+
 const tfName=m=>m>=60?(m/60)+"h":m+"m";
 
 /** Where each instrument stands right now, in one of four states:
@@ -1494,8 +2128,9 @@ function recompute(tkr){
   const H=hb&&hb.length>=30?(hb===b?E:hb===sb?St:analyseTF(hb)):null;
   const ctx={u, E, St, H, tf:S.tf, stf, htf};
   S.ctx[tkr]=ctx; S.ind[tkr]=E.ind; S.struct[tkr]=chartStructure(E);
-  S.sigs[tkr]=engine(ctx);
-  S.status[tkr]=instrumentState(ctx,S.sigs[tkr]);
+  const smc=engine(ctx), nor=engineNormal(ctx,{},smc), tre=engineTrend(ctx,{},smc);
+  S.sigs[tkr]=smc.concat(nor,tre).sort((a,b)=>a.ts-b.ts); S.sigs[tkr].pending=smc.pending;
+  S.status[tkr]=instrumentState(ctx,smc);
   S.marks=S.marks||{}; S.marks[tkr]=[];
 }
 
@@ -1693,6 +2328,17 @@ function draw(){
     });
   });
 
+  // the trendline behind a trendline signal (picked one, or the latest)
+  if(S.show.levels) (sel?[sel]:latest?[latest]:[]).filter(s=>s.tl).forEach(s=>{
+    const t=s.tl, yAt=k=>t.p1+(t.p2-t.p1)/(t.i2-t.i1)*(k-t.i1), a=Math.max(t.i1,start), z=Math.min(s.i+2,end-1);
+    if(z<=a) return;
+    cx.save(); cx.beginPath(); cx.rect(PL,PT,W-PL-PR,lay.price); cx.clip();
+    cx.strokeStyle=C.warn; cx.lineWidth=1.6; cx.setLineDash([6,4]);
+    cx.beginPath(); cx.moveTo(X(a),Y(yAt(a))); cx.lineTo(X(z),Y(yAt(z))); cx.stroke(); cx.setLineDash([]);
+    [t.i1,t.i2].forEach(k=>{ if(k>=start&&k<end){ cx.fillStyle=C.warn; cx.beginPath(); cx.arc(X(k),Y(yAt(k)),3,0,7); cx.fill(); } });
+    cx.font="600 9px"+F; cx.fillStyle=C.warn; cx.textAlign="left"; cx.fillText("Trendline "+s.setup,X(a)+4,Y(yAt(a))-6); cx.font="10px"+F;
+    cx.restore();
+  });
   if(sel&&S.show.levels&&inV(sel.i)){
     const x0=X(sel.i), x1=sel.res.exit!=null&&inV(sel.res.exit)?X(sel.res.exit):W-PR;
     const NAMES={SL:"Stop",ENTRY:"Entry",T1:"Target 1",T2:"Target 2",T3:"Target 3"};
@@ -1869,6 +2515,7 @@ function fit(){
 /* ------------------------------------------------------------ pages -- */
 const PAGES=[["home","Home"],["chart","Charts & signals"],["chain","Option chain"],["oi","Open interest"],["strat","Strategy builder"],["results","Results"],["news","Market news"]];
 function setPage(p){
+  if(p==="scalp"||p==="btst"){ S.tab=p; store.set("sd_tab",p); p="home"; }     // old links to the former Scalp / BTST pages
   if(!PAGES.some(x=>x[0]===p)) p="home";
   S.page=p; store.set("sd_page",p);
   try{ if(location.hash.slice(1)!==p) history.replaceState(null,"","#"+p); }catch(e){}
@@ -1930,6 +2577,11 @@ function statusOf(tkr){
     why:"This instrument has no exchange-listed options, so only the underlying levels are shown. "+st.why, fr, sig:st.sig};
   if(st.state==="CALL BUY SETUP") return {kind:"ce", label:"VALID CE SIGNAL", col:C.up, why:st.why, fr, sig:st.sig};
   if(st.state==="PUT BUY SETUP") return {kind:"pe", label:"VALID PE SIGNAL", col:C.dn, why:st.why, fr, sig:st.sig};
+  const lv2=(S.sigs[tkr]||[]).filter(x=>(x.grade==="N"||x.grade==="T")&&x.res.state==="ACTIVE");
+  const nl=lv2.filter(x=>x.grade==="T").pop()||lv2.pop();
+  if(nl){ const w=`${nl.grade==="T"?"Grade A trendline "+nl.setup:"Normal trend"} signal from ${hhmm(nl.ts)} (structure rules: ${st.why.charAt(0).toLowerCase()+st.why.slice(1)})`;
+    if(!u.fo) return {kind:"ul", label:nl.side==="BUY"?"BUY SETUP · NO OPTIONS":"SELL SETUP · NO OPTIONS", col:nl.side==="BUY"?C.up:C.dn, why:w, fr, sig:nl};
+    return {kind:nl.side==="BUY"?"ce":"pe", label:nl.side==="BUY"?"VALID CE SIGNAL":"VALID PE SIGNAL", col:nl.side==="BUY"?C.up:C.dn, why:w, fr, sig:nl, normal:true}; }
   return {kind:st.state==="WAIT"?"wait":"none", label:"NO VALID SIGNAL", col:st.state==="WAIT"?C.warn:C.mid, why:(st.state==="WAIT"?"Setup forming. ":"")+st.why, fr, pending:st.pending};
 }
 /* One plain trend word for the simple chart: up, down or sideways. */
@@ -2069,7 +2721,7 @@ function renderAnalysis(){
       </div>`;
     } else if(u.fo) html+=`<div class="why">Finding the option contract and its live premium…</div>`;
     else html+=kv([["Entry",f(s.entry)],["Stop loss",f(s.sl)],["Targets",`${f(s.t1)} / ${f(s.t2)} / ${f(s.t3)}`],["Reward : risk (T1)",s.rr.toFixed(1)+" : 1"]]);
-    html+=`<div class="rs"><b>Why this signal</b> (grade ${s.grade}, signal source: ${src.label})<br>${(s.reasons||[]).map(r=>"✓ "+esc(r)).join("<br>")}</div>`;
+    html+=`<div class="rs"><b>Why this signal</b> (${s.grade==="N"?"normal trend signal":s.grade==="T"?"grade A trendline "+s.setup:"grade "+s.grade}, signal source: ${src.label})<br>${(s.reasons||[]).map(r=>"✓ "+esc(r)).join("<br>")}</div>`;
     if(src.items.length) html+=`<div class="newsrisk"><b>${src.label}:</b> ${src.items.slice(0,2).map(n=>`“${esc(n.title)}” (${esc(n.source)}, ${n.published?hhmm(n.published):"time not given"})`).join("; ")}. ${esc(src.note)}</div>`;
   } else if(st.pending){
     html+=kv([["Waiting to enter at",f(st.pending.entry)],["Stop loss",f(st.pending.sl)],["Targets",`${f(st.pending.t1)} / ${f(st.pending.t2)} / ${f(st.pending.t3)}`]]);
@@ -2190,7 +2842,7 @@ function renderHome(){
   const all=S.universe.reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);
   const act=all.filter(s=>s.res.state==="ACTIVE").sort((a,b)=>b.ts-a.ts);
   document.getElementById("homeSub").textContent=(S.feed&&S.feed.delayed?"Delayed prices":"Live prices")+
-    " · "+all.length+(S.strict?" strict":"")+" signals today · India time · analysis only, not advice";
+    " · "+all.length+" signals today · India time · analysis only, not advice";
   const groups={}; S.universe.filter(u=>u.seg!=="OPT").forEach(u=>(groups[u.seg]=groups[u.seg]||[]).push(u));
   const g=document.getElementById("homeGrid"); g.innerHTML=`<h2 style="margin-top:34px">Market now</h2>`;
   Object.keys(groups).forEach(k=>{
@@ -2210,26 +2862,42 @@ function renderHome(){
     w.appendChild(t);
   });
   renderStrictSegs();
+  { const xs=S.tab==="scalp"||S.tab==="btst";
+    ["homeTabNote","homeSigs","homeSigNote"].forEach(id=>document.getElementById(id).hidden=xs);
+    document.getElementById("homeSigTitle").parentElement.hidden=xs;
+    document.getElementById("scalpPage").hidden=S.tab!=="scalp"; document.getElementById("btstPage").hidden=S.tab!=="btst";
+    if(S.tab==="scalp"){ if(XS.scalp.shownAt!==XS.scalp.at||!document.getElementById("scalpBody").innerHTML) renderScalp(); loadScalp(); }
+    if(S.tab==="btst"){ if(XS.btst.shownAt!==XS.btst.at||!document.getElementById("btstBody").innerHTML) renderBtst(); loadBtst(); } }
   const past=tally(pastSignals(true)), nAct=all.filter(x=>x.res.state==="ACTIVE").length;
   document.getElementById("hero").innerHTML=
     `<div><span>Active now</span><b style="color:${nAct?C.up:C.fg}">${nAct}</b><small>signals being followed</small></div>`+
-    `<div><span>Signals today</span><b>${all.length}</b><small>${all.filter(x=>x.strict).length} strict, ${all.filter(x=>!x.strict).length} other</small></div>`+
+    `<div><span>Signals today</span><b>${all.length}</b><small>${all.filter(x=>tabOf(x)==="strict").length} strict, ${all.filter(x=>tabOf(x)==="other").length} other, ${all.filter(x=>tabOf(x)==="normal").length} normal</small></div>`+
     `<div><span>Strict win rate</span><b>${past.rate==null?"—":past.rate.toFixed(0)+"%"}</b><small>${past.won} won, ${past.lost} lost · see Results</small></div>`+
     `<div><span>Instruments</span><b>${S.universe.filter(u=>u.seg!=="OPT").length}</b><small>indices, stocks, MCX</small></div>`;
   renderTrades();
 }
 
 /* -------------------------------------------- strict filter + results -- */
+const resTab=()=>S.resTab||(["strict","other","normal"].includes(S.tab)?S.tab:"strict");
+function setTab(t){
+  S.tab=t; S.strict=t==="strict"; store.set("sd_tab",t); store.set("sd_strict",S.strict?"1":"0");
+  renderStrictSegs(); renderHome(); pumpTrades();
+  if(S.page==="results") renderResults();
+}
+const tabOf=x=>x.grade==="N"?"normal":x.strict?"strict":"other";   // trendline (grade T) and grade B go to Other
 function setStrict(v){
   S.strict=v; store.set("sd_strict",v?"1":"0");
   renderStrictSegs(); renderHome(); pumpTrades();
   if(S.page==="results") renderResults();
 }
 function renderStrictSegs(){
-  const today=S.universe.filter(u=>u.seg!=="OPT").reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]), nS=today.filter(x=>x.strict).length;
-  const pick=it=>{ if(S.strict!==it.v) setStrict(it.v); };
-  seg(document.getElementById("strictHome"),[{l:`Strict signals · ${nS}`,v:true},{l:`Other signals · ${today.length-nS}`,v:false}],it=>S.strict===it.v,pick);
-  seg(document.getElementById("strictRes"),[{l:"Strict signals",v:true},{l:"All signals",v:false}],it=>S.strict===it.v,pick);
+  const today=S.universe.filter(u=>u.seg!=="OPT").reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]), cnt=t=>today.filter(x=>tabOf(x)===t).length;
+  const pick=it=>{ if(S.tab!==it.v) setTab(it.v); };
+  const sc=XS.scalp.cache?Object.values(XS.scalp.cache).reduce((t,r)=>t+r.sigs.filter(x=>x.day===istDay(Date.now())).length,0):null;
+  seg(document.getElementById("strictHome"),[{l:`Strict signals · ${cnt("strict")}`,v:"strict"},{l:`Other signals · ${cnt("other")}`,v:"other"},{l:`Normal signals · ${cnt("normal")}`,v:"normal"},
+    {l:sc==null?"Scalp":`Scalp · ${sc}`,v:"scalp"},{l:XS.btst.picks==null?"BTST":`BTST · ${XS.btst.picks}`,v:"btst"}],it=>S.tab===it.v,pick);
+  seg(document.getElementById("strictRes"),[{l:"Strict signals",v:"strict"},{l:"All structure signals",v:"other"},{l:"Trendline signals",v:"trend"},{l:"Normal signals",v:"normal"}],
+    it=>resTab()===it.v,it=>{ S.resTab=it.v; renderResults(); });
 }
 /* Every signal the rules would have given over the loaded history, with how it ended.
    Measured on the index, share or future price in R: 1R is the distance from entry to stop. */
@@ -2237,7 +2905,9 @@ function pastSignals(strict){
   const out=[];
   S.universe.filter(u=>u.seg!=="OPT").forEach(u=>{
     const ctx=S.ctx[u.tkr]; if(!ctx) return;
-    engine(ctx,{all:true,strict,lite:true}).forEach(x=>{ if(x.res.state==="EXPIRED") out.push(x); });
+    const list=strict==="normal"?engineNormal(ctx,{all:true,lite:true},engine(ctx,{all:true,lite:true}))
+      :strict==="trend"?engineTrend(ctx,{all:true,lite:true},engine(ctx,{all:true,lite:true})):engine(ctx,{all:true,strict,lite:true});
+    list.forEach(x=>{ if(x.res.state==="EXPIRED") out.push(x); });
   });
   return out.sort((a,b)=>a.ts-b.ts);
 }
@@ -2250,8 +2920,10 @@ function tally(list){
 function renderResults(){
   if(S.page!=="results") return;
   renderStrictSegs();
-  const strictL=pastSignals(true), allL=pastSignals(false), cur=S.strict?strictL:allL, t=tally(cur);
-  const days=[...new Set(allL.concat(strictL).map(x=>x.day))].sort();
+  const RT=resTab(), strictL=pastSignals(true), allL=pastSignals(false), normL=pastSignals("normal"), trL=pastSignals("trend");
+  const cur=RT==="normal"?normL:RT==="strict"?strictL:RT==="trend"?trL:allL, t=tally(cur);
+  const days=[...new Set(allL.concat(strictL,normL,trL).map(x=>x.day))].sort();
+  const curName=RT==="normal"?"Normal signals":RT==="strict"?"Strict signals":RT==="trend"?"Trendline signals (grade A)":"All structure signals";
   const rR=v=>`<span style="color:${v>0.005?C.up:v<-0.005?C.dn:C.fg}">${v>=0?"+":"−"}${Math.abs(v).toFixed(2)}R</span>`;
   const pc=v=>v==null?"—":v.toFixed(0)+"%";
   const dfmt=d=>new Date(d+"T00:00:00Z").toLocaleDateString("en-IN",{timeZone:"UTC",day:"2-digit",month:"short"});
@@ -2260,8 +2932,8 @@ function renderResults(){
     :"No finished signals in the loaded history yet.";
   // verdict, in plain words
   const v=document.getElementById("resVerdict");
-  if(!t.n) v.innerHTML=`No finished ${S.strict?"strict ":""}signals in this period, so there is nothing to judge yet.`;
-  else v.innerHTML=`<b>${S.strict?"Strict signals":"All signals"}:</b> ${t.n} signal${t.n===1?"":"s"}, <b style="color:${C.up}">${t.won} won</b>, `+
+  if(!t.n) v.innerHTML=`No finished ${curName.toLowerCase()} in this period, so there is nothing to judge yet.`;
+  else v.innerHTML=`<b>${curName}:</b> ${t.n} signal${t.n===1?"":"s"}, <b style="color:${C.up}">${t.won} won</b>, `+
     `<b style="color:${C.dn}">${t.lost} lost</b>${t.flat?`, ${t.flat} ended flat`:""}. Win rate <b>${pc(t.rate)}</b>. `+
     `Average win ${rR(t.avgWin)}, average loss ${rR(t.avgLoss)}. `+
     (t.avg>0.05?`On balance they <b style="color:${C.up}">made money</b> in this period: ${rR(t.avg)} per signal.`
@@ -2272,7 +2944,7 @@ function renderResults(){
     `<div><span>Signals</span><b>${x.n}</b></div><div><span>Won / lost</span><b><span style="color:${C.up}">${x.won}</span> / <span style="color:${C.dn}">${x.lost}</span></b></div>`+
     `<div><span>Win rate</span><b>${pc(x.rate)}</b></div><div><span>Per signal</span><b>${rR(x.avg)}</b></div>`+
     `<div><span>Total</span><b>${rR(x.net)}</b></div><div><span>Per day</span><b>${days.length?(x.n/days.length).toFixed(1):"—"}</b></div></div></div>`;
-  document.getElementById("resCompare").innerHTML=`<div class="cmp">${block("Strict signals",tally(strictL),S.strict)}${block("All signals",tally(allL),!S.strict)}</div>`;
+  document.getElementById("resCompare").innerHTML=`<div class="cmp">${block("Strict signals",tally(strictL),RT==="strict")}${block("All structure signals",tally(allL),RT==="other")}${block("Trendline signals (grade A)",tally(trL),RT==="trend")}${block("Normal signals",tally(normL),RT==="normal")}</div>`;
   // running total
   const svg=document.getElementById("resCurve");
   if(cur.length<2) svg.innerHTML=`<text x="400" y="130" text-anchor="middle" font-size="15" fill="${C.low}">Not enough finished signals to draw yet</text>`;
@@ -2312,12 +2984,12 @@ function renderResults(){
    option premium, and the trade is then followed on that option's own candles. */
 S.otr={}; S.lite={};
 const tick05=v=>Math.max(0.05,Math.round(v*20)/20);
-const sigKey=s=>S.tf+"|"+s.tkr+"|"+s.ts+"|"+s.side;
+const sigKey=s=>S.tf+"|"+s.tkr+"|"+s.ts+"|"+s.side+(s.grade==="N"?"|N":s.grade==="T"?"|T":"");
 const pm=v=>v>=100?nf(v,1):nf(v,2);
 function homeSignals(){
   const all=S.universe.filter(u=>u.seg!=="OPT").reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);
   const live=s=>{ const t=S.otr[sigKey(s)]; return (t&&t.entry!=null?t.state:s.res.state)==="ACTIVE"; };
-  return all.filter(x=>x.strict===S.strict).sort((a,b)=>(live(a)?0:1)-(live(b)?0:1)||b.ts-a.ts);
+  return all.filter(x=>tabOf(x)===S.tab).sort((a,b)=>(live(a)?0:1)-(live(b)?0:1)||b.ts-a.ts);
 }
 async function liteChain(tkr){
   const c=S.lite[tkr];
@@ -2524,10 +3196,12 @@ function renderTrades(){
   if(S.page!=="home") return;
   const el=document.getElementById("homeSigs"), list=homeShown();
   const models=list.map(s=>({s,m:tradeModel(s)})), nLive=models.filter(x=>x.m.active).length;
-  document.getElementById("homeSigTitle").textContent=(S.strict?"Strict signals":"Other signals")+" ("+nLive+" active)";
-  document.getElementById("homeTabNote").textContent=S.strict
+  document.getElementById("homeSigTitle").textContent=({strict:"Strict signals",other:"Other signals",normal:"Normal signals"}[S.tab])+" ("+nLive+" active)";
+  document.getElementById("homeTabNote").textContent=S.tab==="normal"
+    ?"Trend signals from standard market analysis: the 1-hour trend (EMA 20 over EMA 50), a pull-back to EMA 20 on the chart timeframe, then a candle that resumes the trend with RSI, MACD and ADX agreeing. They come more often than structure signals and are checked less strictly, so expect more losers; see their own record on the Results page."
+    :S.strict
     ?"Grade A: every rule passed, the setup zone was an order block or fair value gap, the break was a structure shift or came on high volume, and there is room for 2R or more. They still lose sometimes."
-    :"Grade B: every core rule passed (trend, zone, sweep, break, room of 1.5R), but not the extra conditions for grade A. Check the Results page before trusting them.";
+    :"Two kinds: grade A trendline trades (a breakout of a falling or rising trendline, or a bounce off it on its third touch, with the 1-hour trend, RSI, MACD, ADX and volume agreeing and room of 2R or more), and grade B structure signals (core rules passed, not the extra grade A conditions). Check each one's record on the Results page.";
   document.getElementById("homeSigNote").textContent=list.length
     ?"Buy price is the option's actual price when the signal fired. Stop loss and targets come from the chart's stop and targets. \"I took this entry\" is remembered on this device only."
     :"";
@@ -2538,7 +3212,7 @@ function renderTrades(){
     const mine=total.filter(s=>uni(s.tkr).seg===g[0]), act=models.filter(x=>uni(x.s.tkr).seg===g[0]&&x.m.active).length;
     const w=grpBox(g[0], mine.length?`${mine.length} signal${mine.length===1?"":"s"} · ${act} active`:"no signals");
     const grid=document.createElement("div"); grid.className="trades"; w.appendChild(grid);
-    if(!mine.length) grid.outerHTML=`<div class="none">No ${S.strict?"strict":"other"} signals in ${g[1].toLowerCase()} today.</div>`;
+    if(!mine.length) grid.outerHTML=`<div class="none">No ${S.tab} signals in ${g[1].toLowerCase()} today.</div>`;
     else if(mine.length>6){ const n=document.createElement("div"); n.className="none"; n.textContent=`Showing the latest 6 of ${mine.length}. The rest are on the Charts & signals page.`; w.appendChild(n); }
     boxes[g[0]]=w.querySelector(".trades"); el.appendChild(w);
   });
@@ -2594,7 +3268,7 @@ function renderTrades(){
 
     const b=document.createElement("div"); b.className="trade "+cls;
     b.innerHTML=`<div class="tr1"><span class="nm">${esc(m.name)}</span><span class="chip" style="background:${m.chipCol}">${esc(m.chip)}</span>`+
-        `${s.strict?'<span class="chip ghost">STRICT</span>':""}<span class="st" style="color:${bcol};border-color:${bcol}">${badge}</span></div>`+
+        `${s.strict?'<span class="chip ghost">STRICT</span>':s.grade==="N"?'<span class="chip ghost">NORMAL</span>':s.grade==="T"?'<span class="chip ghost">TRENDLINE · A</span>':""}<span class="st" style="color:${bcol};border-color:${bcol}">${badge}</span></div>`+
       `<div class="tr2">${m.sub}</div>`+
       `<div class="nowrow"><div><span class="lbl">${m.active?"Current price":"Closed at"}</span>`+
         `<b class="big" style="color:${up?C.up:C.dn}">${f(m.now)}</b><span class="pc" style="color:${up?C.up:C.dn}">${pc}</span></div>`+
@@ -3105,8 +3779,8 @@ function renderSide(){
     ${lv("Risk / share",px(s.risk,u))}${lv("Reward : risk to T1",s.rr.toFixed(1)+" : 1",s.rr>=2?C.up:C.fg)}
     ${lv("Open P&L",(s.res.R>=0?"+":"")+s.res.R.toFixed(2)+"R", s.res.R>=0?C.up:C.dn)}
     <div style="margin-top:12px" class="m">
-      <span style="font-size:10.5px;color:${C.low}">GRADE</span> <b style="color:${s.grade==="A"?C.up:C.warn}">${s.grade}</b>
-      <span style="font-size:11px;color:${C.mid}">${s.grade==="A"?"zone + shift/volume + 2R room":"core rules only"}</span></div>
+      <span style="font-size:10.5px;color:${C.low}">GRADE</span> <b style="color:${s.grade==="A"||s.grade==="T"?C.up:s.grade==="N"?C.key:C.warn}">${s.grade==="N"?"Normal":s.grade==="T"?"A (trendline)":s.grade}</b>
+      <span style="font-size:11px;color:${C.mid}">${s.grade==="A"?"zone + shift/volume + 2R room":s.grade==="T"?"trendline "+s.setup+" with 1h trend, momentum and 2R room":s.grade==="N"?"trend pull-back, EMA / RSI / MACD / ADX":"core rules only"}</span></div>
     </div>
     ${o?`<div style="margin-top:14px">
       <div class="hd" style="padding:0 0 6px">Option leg${o.live?"":" (estimated IV)"}</div>

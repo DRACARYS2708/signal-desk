@@ -125,6 +125,39 @@ T1/T2/T3 - 290/350/390
 
 **Times** — everything is shown in India time (IST).
 
+**Normal signals tab** — a third tab next to Strict and Other. These are classic trend signals from standard market analysis, and they come more often than the structure signals:
+- 1-hour trend: EMA 20 above EMA 50 and price above EMA 50 for a buy (the reverse for a sell);
+- on the chart timeframe, price pulls back to EMA 20, then a candle closes back in the trend direction beyond the previous candle's high (or low);
+- RSI between 50 and 72 (28 to 50 for a sell), MACD histogram rising (falling), ADX at least 18;
+- stop beyond the last five candles (0.6 to 2.2 ATR), targets at 1R, 2R and 3R, and no unbroken swing level closer than 1.2R;
+- one at a time per instrument, never against a live structure signal, and none in the first 15 or last 45 minutes.
+They use closed candles only, so they never change after they appear. Being looser, they lose more often; the Results page shows their own record separately.
+
+**Home sub-tabs** — Strict signals, Other signals, Normal signals, Scalp and BTST. (Scalp and BTST used to be separate menu pages; old links to them now open the right Home tab.)
+
+**Other signals: grade A trendline trades** — besides the grade B structure signals, the Other tab shows trendline signals for intraday options:
+- lines join the two most recent confirmed major swing points (5 candles each side), so a line never moves once drawn;
+- breakout: a falling resistance line (two lower highs), never closed above since it began and touched 3 times (or broken on 1.5x volume), is broken by a strong candle closing 0.1 ATR above it; bounce: a rising support line (two higher lows), never closed below, holds on its third touch and price closes above the previous high; puts are the mirror image;
+- all of: 1-hour EMA 20 above EMA 50 and 1-hour structure not against the trade; RSI 52–72 (breakout) or 45–68 (bounce); ADX 18+; MACD histogram above zero (breakout) or rising (bounce); volume 1.2x where available; stop 0.6–2 ATR; first swing level in the way at least 2R away after costs;
+- the trendline is drawn on the chart for the picked or latest signal; Results has a separate "Trendline signals" record.
+
+**Scalp tab (on Home)** — quick trades on indices and MCX commodities using 3-minute candles, separate from all other signals:
+- 15-minute trend (EMA 20 vs EMA 50) sets the direction; on 3-minute candles EMA 9 and EMA 20 agree, price pulls back to EMA 20, then a candle breaks the last three highs (lows for a put);
+- RSI 55–78 (22–45 for puts), ADX 20 or more, and the right side of VWAP where volume exists;
+- stop beyond the last three candles (0.4–1.2 ATR), targets 1R / 1.5R / 2R, stop to entry at T1 and to T1 at T2, exit after 30 minutes or before the session ends;
+- the ATM option and its current premium come from the live option chain; premium stop and targets are estimates from delta, shown only when the chain's spot matches the chart;
+- before any scalp is shown you enter a scalping budget and the most you will lose on one trade (% of budget); both are kept on that device and can be changed any time;
+- each active scalp then suggests how many lots (and quantity) to buy and at what price: the premium must fit the budget, and the loss at the estimated premium stop (or, if it can't be estimated, a 25% fall in premium) must stay within your limit; if even 1 lot doesn't fit, it says skip. For futures without options it sizes by risk only and reminds you to check margin with your broker;
+- "NO SCALP TRADE right now" lists what each instrument is waiting for; the record below counts every past scalp, wins and losses, after estimated costs.
+
+**BTST tab (on Home)** — buy a strong stock at 15:15–15:29, sell next morning by 10:15. Stocks only. Decided on the hourly candle that closes at 15:15 IST:
+- daily uptrend (price above 20-day EMA, 20-day above 50-day), up 1–6% on the day, closing in the top 30% of the range and above yesterday's high;
+- volume by 15:15 at least 1.2x the 20-day average volume by 15:15, daily RSI 55–75, and NIFTY 50 above its 20-day EMA;
+- stop below today's low (0.4–0.8 daily ATR), targets +0.6 and +1.0 daily ATR;
+- next-day check: gap past the stop or Target 2 exits at the open; otherwise the first hour decides; if a candle touches both a target and the stop, the stop is counted (the cautious choice); charges of 0.25% are included;
+- before 15:15 stocks that meet the rules so far are listed as "forming", not as picks.
+Both tabs use closed candles only (no repainting: checked on 1,000+ cut points of test data).
+
 **Search** — the box at the top finds any NSE or BSE stock or index and any MCX commodity (nearest futures contract), using the symbol lists Fyers publishes each day. Picking a result opens its chart with a plain summary underneath:
 - price card (last price, change, open/high/low, volume against usual), trend card (UP / DOWN / SIDEWAYS from the 1h, setup and entry timeframes, RSI, ADX, ATR), and the nearest support and resistance levels;
 - a status: **VALID CE SIGNAL**, **VALID PE SIGNAL**, **NO VALID SIGNAL** (nothing qualifies, with the reason), or **SIGNAL NOT CONFIRMED** (market closed, data stale or saved, or contract data missing). Only one direction is ever live at a time, so "both valid" does not occur;
