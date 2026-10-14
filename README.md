@@ -196,6 +196,10 @@ Searched instruments stay in your list after a reload. Instruments without liste
 
 All of these are addressed by the new engine above.
 
+## Fyers request limits
+
+Fyers allows about 10 requests a second, 200 a minute and a daily total. The server keeps every visitor together under 6 a second and 150 a minute. If Fyers still answers "too many requests", it pauses for 30 seconds (longer if it repeats) and keeps serving the last good prices, marked as older, instead of failing. While all markets are closed the page checks only every 5 minutes and the server reuses its data for up to 30 minutes, so a page left open overnight no longer uses up the daily allowance. `/healthz` shows requests in the last minute and today.
+
 ## Limits to know
 
 - **MCX contracts** roll every month. The site picks the nearest live contract by itself each day and shows its month beside the name.

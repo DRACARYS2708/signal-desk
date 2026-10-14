@@ -963,10 +963,12 @@ async function boot(){
     S.fromCache=null;
     loadNews(true);                       // in the background: headlines for warnings on signals
     setConn(S.failedLoads?"err":"ok", S.failedLoads?liveLabel()+" · "+S.failedLoads+" symbols failed to load":liveLabel());
-    startPolling(); xPoll(); setTimeout(()=>{ loadScalp(true); loadBtst(true); },8000);   // counts for the Scalp and BTST tabs
+    startPolling(); xPoll(); setTimeout(()=>{ if(Date.now()>(S.pauseUntil||0)&&S.universe.some(u=>sessionOpen(u))){ loadScalp(true); setTimeout(()=>loadBtst(true),30000); } },60000);   // counts for the Scalp and BTST tabs
   }catch(e){
     if(e.status===401){ S.ready=false; S.cacheShown=false; return boot(); }
-    if(S.cacheShown||S.ready){ setConn("err","Data feed problem: "+e.message+" · retrying"); setTimeout(boot,15000); return; }
+    const busy=/rate limit|not answering|did not answer|slowing down/i.test(e.message);
+    if(S.cacheShown||S.ready){ setConn("err",busy?"Fyers is busy · showing saved data · retrying in 30 s":"Data feed problem: "+e.message+" · retrying"); setTimeout(boot,busy?30000:15000); return; }
+    if(busy){ showSetup("Fyers asked this site to slow down for a moment (too many requests). Trying again by itself in 30 seconds — no need to do anything."); setConn("err","Fyers busy · retrying"); setTimeout(boot,30000); return; }
     showSetup("Couldn't load data from "+S.api+" — "+e.message+".");
     setConn("err","Offline");
   }
@@ -1001,12 +1003,16 @@ function showSetup(msg, login){
 let pollTimer=null;
 // Back to the page after a while (phone unlocked, tab switched back): bring everything up to date at once.
 document.addEventListener("visibilitychange",()=>{ if(document.hidden||!S.ready) return;
-  if(Date.now()-(S.lastFull||0)>60000){ S.lastFull=Date.now(); refreshAll().catch(()=>{}); } });
+  if(Date.now()-(S.lastFull||0)>120000&&Date.now()>(S.pauseUntil||0)){ S.lastFull=Date.now(); refreshAll().catch(()=>{}); } });
 function startPolling(){
   if(pollTimer) clearInterval(pollTimer);
-  let busy=false, turn=0, hidTick=0, fturn=0;
+  let busy=false, turn=0, hidTick=0, fturn=0, closedTick=0;
   pollTimer = setInterval(async ()=>{
     if(busy) return;                            // never stack requests
+    if(Date.now()<(S.pauseUntil||0)) return;    // Fyers asked us to slow down
+    // All markets shut: prices can't change, so check only every 5 minutes (stops all-night requests)
+    const anyOpen=S.universe.some(u=>u.seg!=="OPT"&&sessionOpen(u,Date.now()-10*60000)||sessionOpen(u));
+    if(!anyOpen&&(closedTick++%60)){ return; }
     if(document.hidden&&(hidTick++%4)) return;  // in the background: every 20 s instead of every 5 s
     busy=true;
     try{
@@ -1019,18 +1025,20 @@ function startPolling(){
         S.chainBusy=true; loadChain(S.chainTkr,S.chainExp).catch(()=>{}).finally(()=>S.chainBusy=false); }
       // one focus-list symbol per tick (each about every 45 s) ...
       const foc=S.universe.filter(u=>u.tkr!==S.tkr&&isFocus(u.tkr));
+      turn++;
       if(foc.length){ const o=foc[fturn++%foc.length];
         try{ await loadCandles(o.tkr); await loadMTF(o.tkr); recompute(o.tkr); }catch(e){} }
       // ... and one other symbol per tick, in rotation, so the whole watchlist's signals stay current
       const rest=S.universe.filter(u=>u.tkr!==S.tkr&&!isFocus(u.tkr));
-      if(rest.length){ const o=rest[turn++%rest.length];
+      if(rest.length&&turn%3===0){ const o=rest[Math.floor(turn/3)%rest.length];
         try{ await loadCandles(o.tkr); await loadMTF(o.tkr); recompute(o.tkr); }catch(e){} }
       renderLive();
       pumpTrades();                             // option contracts behind the home-page signals
       setConn("ok", liveLabel()); S.lastErr=null;
     }catch(e){
       if(e.status===401){ clearInterval(pollTimer); pollTimer=null; S.ready=false; boot(); return; }   // login ran out
-      setConn("err","Feed error"); S.lastErr=e.message; }
+      if(/rate limit|slowing down/i.test(e.message)){ S.pauseUntil=Date.now()+30000; setConn("err","Fyers is busy · prices may be up to a minute old · resuming shortly"); }
+      else setConn("err","Feed error"); S.lastErr=e.message; }
     finally{ busy=false; }
   }, (S.feed&&S.feed.pollMs)||5000);
 }
@@ -1659,7 +1667,7 @@ function scalpTrack(b,s,CL){
     left:Math.max(0,SC.maxBars-(b.length-1-s.i))};
 }
 async function loadScalp(force){
-  const X=XS.scalp; if(X.busy) return; if(!force&&Date.now()-X.at<20000) return;
+  const X=XS.scalp; if(X.busy) return; if(!force&&Date.now()-X.at<45000) return;
   X.busy=true; X.err=null;
   const list=S.universe.filter(u=>u.seg==="IDX"||u.seg==="MCX");
   let i=0, fails=0;
@@ -1928,6 +1936,7 @@ function renderBtst(){
 function xPoll(){
   if(XS.timer) clearInterval(XS.timer);
   XS.timer=setInterval(()=>{ if(document.hidden||!S.ready) return;
+    if(!S.universe.some(u=>sessionOpen(u))&&(XS.closedTick=(XS.closedTick||0)+1)%15) return;   // markets shut: every 5 minutes
     if(onHomeTab("scalp")) loadScalp(); else if(onHomeTab("btst")) loadBtst();
     if(onHomeTab("mine")) MT.list.forEach(tr=>mtEval(tr)); },20000);
 }
@@ -3324,7 +3333,7 @@ async function pumpTrades(){
       const t=S.otr[sigKey(s)];
       if(!t||(t.state==="NONE"&&Date.now()>t.retryAt)){ if(builds++<3) await buildTrade(s); continue; }
       if(t.state==="NONE"||t.state==="LOADING") continue;
-      if(t.state==="ACTIVE"&&Date.now()-t.at>14000&&refreshes<3){ refreshes++; try{ await refreshTrade(s,t); }catch(e){} }
+      if(t.state==="ACTIVE"&&Date.now()-t.at>30000&&refreshes<2){ refreshes++; try{ await refreshTrade(s,t); }catch(e){} }
       else evalTrade(s,t);
     }
   }catch(e){} finally{ trBusy=false; renderTrades(); }

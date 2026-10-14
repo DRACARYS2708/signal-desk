@@ -150,14 +150,36 @@ async function access() {
 /* Fyers allows 10 requests a second and 200 a minute. One queue with a gap
    keeps us well inside both. */
 let tail = Promise.resolve(), lastCall = 0;
+/* Fyers allows 10 requests a second, 200 a minute and 1,00,000 a day. Stay well
+   inside: at most 6 a second and 150 in any 60 seconds, shared by all visitors.
+   After a "too many requests" answer, pause for 30 s (longer if it repeats).
+   If too many requests are already waiting, refuse new ones at once so callers
+   fall back to the last good data instead of waiting minutes. */
+const RL = { perMin: 150, gapMs: 170, sent: [], waiting: 0, maxWaiting: 40, pauseUntil: 0, strikes: 0, day: "", dayCount: 0, limited: 0 };
 function queued(fn) {
+  if (RL.waiting >= RL.maxWaiting) return Promise.reject(new Error("Fyers rate limit reached; slowing down."));
+  RL.waiting++;
   const run = tail.then(async () => {
-    const wait = lastCall + 130 - Date.now();
-    if (wait > 0) await sleep(wait);
+    for (;;) {
+      const now = Date.now();
+      RL.sent = RL.sent.filter(t => now - t < 60000);
+      let wait = Math.max(lastCall + RL.gapMs - now, RL.pauseUntil - now, 0);
+      if (RL.sent.length >= RL.perMin) wait = Math.max(wait, RL.sent[0] + 60000 - now + 50);
+      if (wait <= 0) break;
+      await sleep(Math.min(wait, 5000));
+    }
+    const d = istDay(Date.now()); if (d !== RL.day) { RL.day = d; RL.dayCount = 0; }
+    RL.sent.push(Date.now()); RL.dayCount++;
     try { return await fn(); } finally { lastCall = Date.now(); }
   });
+  run.finally(() => { RL.waiting--; }).catch(() => {});
   tail = run.catch(() => {});
   return run;
+}
+function rateLimited() {
+  RL.limited++; RL.strikes = Math.min(RL.strikes + 1, 4);
+  RL.pauseUntil = Date.now() + 30000 * RL.strikes;           // 30 s, then 60, 90, 120
+  console.log("  Fyers said too many requests: pausing " + 30 * RL.strikes + " s");
 }
 const AUTH_CODES = [-8, -15, -16, -17];
 
@@ -177,7 +199,8 @@ async function fy(pathname, params) {
     dropAccess(NEED_LOGIN);
     throw new Error(NEED_LOGIN);
   }
-  if (r.status === 429 || code === -429) throw new Error("Fyers rate limit reached; slowing down.");
+  if (r.status === 429 || code === -429) { rateLimited(); throw new Error("Fyers rate limit reached; slowing down."); }
+  if (RL.strikes && Date.now() > RL.pauseUntil + 120000) RL.strikes = 0;     // calm again
   const e = new Error((j && (j.message || j.errmsg)) || ("Fyers answered HTTP " + r.status));
   e.code = code; throw e;
 }
@@ -189,7 +212,12 @@ function cached(key, ttlMs, fn) {
   if (hit && (hit.pending || Date.now() - hit.at < ttlMs)) return hit.pending || Promise.resolve(hit.val);
   const pending = fn().then(
     val => { cache.set(key, { at: Date.now(), val }); return val; },
-    err => { if (hit && hit.val !== undefined) cache.set(key, { at: hit.at, val: hit.val }); else cache.delete(key); throw err; });
+    err => {
+      if (hit && hit.val !== undefined && err.message !== NEED_LOGIN) {      // keep showing the last good answer
+        cache.set(key, { at: Date.now() - ttlMs + Math.min(ttlMs, 15000), val: hit.val });   // and ask again a little later
+        return hit.val;
+      }
+      cache.delete(key); throw err; });
   cache.set(key, { at: hit ? hit.at : 0, val: hit ? hit.val : undefined, pending });
   return pending;
 }
@@ -197,7 +225,7 @@ function cached(key, ttlMs, fn) {
 /* --------------------------------------------------- instrument look-up -- */
 /* Ask Fyers which candidate symbol is live for each instrument. Done once per
    login and again each new day, so MCX contracts roll by themselves. */
-let resolved = null;                          // { day, promise }
+let resolved = null, lastProbeFailed = false;                          // { day, promise }
 /* Which candidate symbols are live: all candidates in one or two quote requests
    (Fyers takes up to 50 symbols per request) instead of one request each. */
 async function liveSet(cands) {
@@ -223,11 +251,14 @@ function ensureUniverse() {
   if (resolved && resolved.day === day) return resolved.promise;
   const promise = (async () => {
     const all = [...new Set(UNIVERSE.flatMap(u => u.cands()))];
-    const ok = await liveSet(all);
+    const ok = await liveSet(all); lastProbeFailed = !!ok.failed;
     // If Fyers could not be asked, do not decide anything for the day: try again on the next request.
-    if (ok.failed) throw new Error("Fyers is not answering right now (" + ok.failed.message + ")");
+    // If Fyers could not be asked (busy or rate limited), use the symbol lists instead and ask again in 5 minutes.
+    const fallback = ok.failed && (SYM.byTicker.size || UNIVERSE.some(u => u.fy));
+    if (ok.failed && !fallback) throw new Error("Fyers is not answering right now (" + ok.failed.message + ")");
+    if (ok.failed) setTimeout(() => { if (resolved && resolved.partial) resolved = null; }, 300000);
     for (const u of UNIVERSE) {
-      const found = u.cands().find(c => ok.has(c)) || null;
+      const found = u.cands().find(c => ok.has(c)) || (ok.failed ? (u.fy || u.cands().find(c => SYM.byTicker.has(c)) || u.cands()[0] || null) : null);
       if (found !== u.fy) cache.clear();
       u.fy = found;
       // "MCX:CRUDEOIL26OCTFUT" -> show the contract month beside the name
@@ -238,6 +269,7 @@ function ensureUniverse() {
     console.log(`  instruments live: ${live().length}/${UNIVERSE.length}` + (lost.length ? " — not found: " + lost.join(", ") : ""));
   })();
   resolved = { day, promise };
+  promise.then(() => { if (resolved && resolved.promise === promise) resolved.partial = !!lastProbeFailed; }).catch(() => {});
   promise.catch(() => { resolved = null; });
   return promise;
 }
@@ -368,7 +400,9 @@ app.use(express.json({ limit: "20kb" }));
 const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="96" fill="#0F1319"/>
 <path d="M96 344l88-96 72 56 112-152" fill="none" stroke="#26A96C" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
 <circle cx="368" cy="152" r="34" fill="#4C9AFF"/></svg>`;
-app.get("/healthz", (_req, res) => res.json({ ok: true, up: Math.round(process.uptime()), ts: Date.now() }));
+const usage = () => ({ lastMinute: RL.sent.filter(t => Date.now() - t < 60000).length, today: RL.dayCount, waiting: RL.waiting,
+  pausedFor: Math.max(0, Math.round((RL.pauseUntil - Date.now()) / 1000)), limitedTimes: RL.limited });
+app.get("/healthz", (_req, res) => res.json({ ok: true, up: Math.round(process.uptime()), ts: Date.now(), fyers: usage() }));
 app.get("/icon.svg", (_req, res) => res.type("image/svg+xml").send(ICON));
 app.get("/manifest.webmanifest", (_req, res) => res.type("application/manifest+json").json({
   name: "Signal Desk", short_name: "Signal Desk", start_url: "/", scope: "/", display: "standalone",
@@ -489,7 +523,7 @@ app.get("/api/status", async (_req, res) => {
   let ok = true;
   try { await access(); } catch (e) { ok = false; auth.error = auth.error || e.message; }
   res.json({ authenticated: ok, error: ok ? null : auth.error, login: APP_ID && SECRET ? "/auth/login" : null,
-             redirect: REDIRECT, provider: "fyers", delayed: false, pollMs: 5000, ts: Date.now() });
+             redirect: REDIRECT, provider: "fyers", delayed: false, pollMs: 5000, ts: Date.now(), fyers: usage() });
 });
 
 const guard = fn => async (req, res) => {
@@ -515,11 +549,18 @@ app.get("/api/instruments", guard(async (_req, res) => res.json(live().map(u => 
 /* -------------------------------------------------------------- candles -- */
 const DAYS = { 1: 5, 3: 6, 5: 12, 15: 30, 30: 60, 60: 90, 240: 90 };
 
+/* Is this instrument's market open now (IST)? Slightly wider than the session so the last candle is caught. */
+function openNow(u) {
+  const x = new Date(Date.now() + IST), wd = x.getUTCDay(), m = x.getUTCHours() * 60 + x.getUTCMinutes();
+  return wd >= 1 && wd <= 5 && m >= (u.open || 555) - 5 && m <= (u.close || 930) + 10;
+}
+const anyOpen = () => UNIVERSE.some(u => u.fy && openNow(u));
 app.get("/api/candles", guard(async (req, res) => {
   const u = bySym(req.query.tkr);
   if (!u) return res.status(404).json({ error: "unknown symbol" });
   const want = DAYS[+req.query.interval] ? +req.query.interval : 5;
-  res.json(await cached(`c:${u.tkr}:${want}`, want >= 60 ? 60000 : want >= 15 ? 15000 : 4000, async () => {
+  // market shut: the candles can't change, so ask Fyers at most every 30 minutes
+  res.json(await cached(`c:${u.tkr}:${want}`, !openNow(u) ? 1800000 : want >= 60 ? 120000 : want >= 15 ? 45000 : 15000, async () => {
     const j = await fy("/history", { symbol: u.fy, resolution: String(want), date_format: "1",
       range_from: istDay(Date.now() - DAYS[want] * 864e5), range_to: istDay(Date.now()), cont_flag: "1" });
     const candles = (j.candles || []).filter(c => c && c.length >= 5 && c[1] != null && c[4] != null)
@@ -533,7 +574,7 @@ app.get("/api/candles", guard(async (req, res) => {
 app.get("/api/quotes", guard(async (req, res) => {
   // `x` = option contracts the viewer has opened, quoted alongside the watchlist
   const extra = [...new Set(String(req.query.x || "").split(",").filter(s => OPT_RE.test(s) || SYM.byTicker.has(s)))].slice(0, 20);
-  const out = await cached("quotes:" + extra.join(","), 3000, async () => {
+  const out = await cached("quotes:" + extra.join(","), anyOpen() ? 4000 : 600000, async () => {
     const j = await fy("/quotes", { symbols: live().map(u => u.fy).concat(extra).join(",") });
     const q = {};
     for (const d of j.d || []) {
@@ -555,7 +596,7 @@ async function rawChain(u, epoch) {
   try { return await fy("/options-chain-v3", { ...p, greeks: "1" }); }
   catch (e) { if (e.message === NEED_LOGIN) throw e; return fy("/options-chain-v3", p); }
 }
-const chainOf = (u, epoch) => cached(`ch:${u.tkr}:${epoch || ""}`, 6000, () => rawChain(u, epoch));
+const chainOf = (u, epoch) => cached(`ch:${u.tkr}:${epoch || ""}`, openNow(u) ? 15000 : 900000, () => rawChain(u, epoch));
 async function expiriesOf(u) {
   const j = await chainOf(u, "");
   const list = (j.data?.expiryData || []).map(e => ({ iso: isoOf(e.date), epoch: String(e.expiry) }))
