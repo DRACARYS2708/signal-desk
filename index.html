@@ -655,6 +655,9 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
 .mtrow input{flex:1 1 260px;font:600 17px var(--s);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--fg);min-height:48px}
 .mtrow .btn{min-height:48px;padding:0 20px;font-size:16px}
 .xcard .mtadv{font:800 24px/1.2 var(--d);letter-spacing:-.01em;margin:4px 0 12px}
+
+.fnof{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:12px 0 4px}
+.fnof input{flex:1 1 200px;font:600 15px var(--s);padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--fg);min-height:42px}
 </style>
 </head>
 <body>
@@ -720,6 +723,7 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
     Rules-based analysis, not advice; scalps lose often, and fast.</div>
   <div id="scalpBody"></div>
 </div>
+<div class="xsec" id="fnoPage" hidden><h3 class="xsh">All F&amp;O — call / put buy signals on every instrument with options</h3><div id="fnoBody"></div></div>
 <div class="xsec" id="minePage" hidden><h3 class="xsh">My trades — advice on the option you took</h3><div id="mineBody"></div></div>
 <div class="xsec" id="btstPage" hidden>
   <h3 class="xsh">BTST — buy today, sell tomorrow</h3>
@@ -876,7 +880,7 @@ const S = {
   simple: store.get("sd_mode","simple")!=="adv",
   page: (location.hash.slice(1)||store.get("sd_page","home")), legs: [], preset: "Buy call",
   strict: store.get("sd_strict","1")==="1",
-  tab: store.get("sd_tab", store.get("sd_strict","1")==="1"?"strict":"other"),
+  tab: store.get("sd_tab", "fno"),
   universe: [], bars:{}, quotes:{}, sigs:{}, ind:{}, struct:{}, ctx:{}, status:{}, mtf:{},
   tfSet: (()=>{ try{ return JSON.parse(store.get("sd_tfset","{}"))||{}; }catch(e){ return {}; } })(),
   ready:false, lastErr:null, feed:null,
@@ -963,7 +967,7 @@ async function boot(){
     S.fromCache=null;
     loadNews(true);                       // in the background: headlines for warnings on signals
     setConn(S.failedLoads?"err":"ok", S.failedLoads?liveLabel()+" · "+S.failedLoads+" symbols failed to load":liveLabel());
-    startPolling(); xPoll(); setTimeout(()=>{ if(Date.now()>(S.pauseUntil||0)&&S.universe.some(u=>sessionOpen(u))){ loadScalp(true); setTimeout(()=>loadBtst(true),30000); } },60000);   // counts for the Scalp and BTST tabs
+    startPolling(); xPoll(); setTimeout(()=>loadFno(true),3000); setTimeout(()=>{ if(Date.now()>(S.pauseUntil||0)&&S.universe.some(u=>sessionOpen(u))){ loadScalp(true); setTimeout(()=>loadBtst(true),30000); } },60000);   // counts for the Scalp and BTST tabs
   }catch(e){
     if(e.status===401){ S.ready=false; S.cacheShown=false; return boot(); }
     const busy=/rate limit|not answering|did not answer|slowing down/i.test(e.message);
@@ -1938,7 +1942,8 @@ function xPoll(){
   XS.timer=setInterval(()=>{ if(document.hidden||!S.ready) return;
     if(!S.universe.some(u=>sessionOpen(u))&&(XS.closedTick=(XS.closedTick||0)+1)%15) return;   // markets shut: every 5 minutes
     if(onHomeTab("scalp")) loadScalp(); else if(onHomeTab("btst")) loadBtst();
-    if(onHomeTab("mine")) MT.list.forEach(tr=>mtEval(tr)); },20000);
+    if(onHomeTab("mine")) MT.list.forEach(tr=>mtEval(tr));
+    if(onHomeTab("fno")) loadFno(); else if(Date.now()-FN.at>120000) loadFno(true); },20000);
 }
 
 /* ------------------------------------------ trendline (grade A) signals -- */
@@ -2252,6 +2257,90 @@ function renderMine(){
   box.querySelectorAll(".mtdel").forEach(b=>b.onclick=()=>{ MT.list=MT.list.filter(x=>x.id!==b.dataset.id); delete MT.live[b.dataset.id]; mtSave(); renderMine(); });
   box.querySelectorAll(".mtref").forEach(b=>b.onclick=()=>{ const tr=MT.list.find(x=>x.id===b.dataset.id); if(tr) mtEval(tr,true); });
   MT.list.forEach(tr=>{ if(!MT.live[tr.id]) mtEval(tr); });
+}
+
+/* ------------------------------------------------- ALL F&O (server scan) -- */
+/* Every instrument with listed options is scanned on the server after each
+   5-minute candle closes; this tab shows the CALL / PUT buy signals it found. */
+const FN={ d:null, at:0, busy:false, err:null, show:store.get("sd_fno_show","live"), kind:store.get("sd_fno_kind","all"), q:"" };
+async function loadFno(force){
+  if(FN.busy||(!force&&Date.now()-FN.at<25000)) return;
+  FN.busy=true;
+  try{ FN.d=await api("/api/scan",20000); FN.at=Date.now(); FN.err=null; }
+  catch(e){ FN.err=e.message; }
+  finally{ FN.busy=false; }
+  if(FN.d) FN.d.signals.filter(s=>s.state==="ACTIVE"&&s.tab!=="normal").forEach(s=>{ const o=s.opt&&s.opt.strike?s.opt:null;
+    alerts.fire("fno|"+s.tkr+"|"+s.ts+"|"+s.side,`${s.sym}: BUY ${o?o.strike+" "+o.ty+" @ ₹"+o.buy:s.side==="BUY"?"CALL":"PUT"} (${s.tab})`); });
+  if(S.page==="home") renderStrictSegs();
+  if(onHomeTab("fno")) renderFno();
+}
+const FNO_KIND={strict:"STRICT",other:"OTHER",normal:"NORMAL"};
+function fnoWhats(s){
+  const o=s.opt&&s.opt.strike?s.opt:null;
+  if(!o) return `${s.sym} - ${s.side==="BUY"?"CALL":"PUT"} SIGNAL\n${s.side==="BUY"?"BUY CE":"BUY PE"} near ${sn2(s.entry)} (spot)\nSPOT SL - ${sn2(s.sl)}\nSPOT T1/T2/T3 - ${sn2(s.t1)}/${sn2(s.t2)}/${sn2(s.t3)}`;
+  const ex=new Date(o.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"}).toUpperCase();
+  return `${s.sym} - ${ex} EXPIRY\nBUY ${o.strike} ${o.ty} @ ${sn2(o.buy)}\nSL - ${sn2(o.sl)}\nT1/T2/T3 - ${sn2(o.t1)}/${sn2(o.t2)}/${sn2(o.t3)}`;
+}
+function renderFno(){
+  if(!onHomeTab("fno")) return;
+  const el=document.getElementById("fnoBody"), d=FN.d;
+  if(!d){ el.innerHTML=`<div class="empty">${FN.err?"Could not load the scan: "+esc(FN.err):"Loading the scan of all F&O instruments…"}</div>`; return; }
+  if(!d.engineOk){ el.innerHTML=`<div class="empty">The server could not load the signal rules (${esc(d.engineErr||"unknown")}). The other tabs still work.</div>`; return; }
+  const f2=v=>v==null||!isFinite(v)?"—":nf(v,v>=1000?1:2);
+  let list=d.signals.slice();
+  const live=list.filter(s=>s.state==="ACTIVE");
+  if(FN.show==="live") list=live;
+  if(FN.kind!=="all") list=list.filter(s=>s.tab===FN.kind);
+  if(FN.q) list=list.filter(s=>s.sym.toLowerCase().includes(FN.q)||s.tkr.toLowerCase().includes(FN.q));
+  const nextScan=Math.ceil((Date.now()+1)/300000)*300000+25000;
+  const card=s=>{
+    const o=s.opt&&s.opt.strike?s.opt:null, on=s.state==="ACTIVE", d1=s.side==="BUY"?1:-1;
+    const pnl=o&&o.now?((o.now-o.buy)/o.buy*100):null;
+    const good=s.R>0.05, bad=s.R<-0.05, st=on?(s.hit?`T${s.hit} HIT · LIVE`:"LIVE"):good?"ENDED IN PROFIT":bad?"STOPPED / LOSS":"ENDED FLAT";
+    const col=on?(s.hit?C.up:C.key):good?C.up:bad?C.dn:C.mid;
+    return `<div class="xcard" style="--xc:${d1>0?C.up:C.dn}"><div class="xh"><b class="xn">${esc(s.sym)}</b>`+
+      `<span class="chip" style="background:${d1>0?C.up:C.dn}">${o?o.strike+" "+o.ty:(d1>0?"CALL":"PUT")}</span>`+
+      `<span class="chip ghost" style="color:${C.key};border:1px solid ${C.key};background:none">${FNO_KIND[s.tab]}${s.grade==="O"?" · OPENING RANGE":s.grade==="T"?" · TRENDLINE":""}</span>`+
+      `<span class="xst" style="color:${col}">${st}</span></div>`+
+      `<div class="xsub">Buy ${d1>0?"call (CE)":"put (PE)"} · signal ${hhmm(s.ts)} IST${o?` · expiry ${new Date(o.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}${o.lot?" · lot "+o.lot:""}`:""}</div>`+
+      (o?`<div class="xlv"><div><span>Buy @ (premium)</span><b style="color:${C.key}">₹${f2(o.buy)}</b></div><div><span>Stop loss</span><b style="color:${C.dn}">₹${f2(o.sl)}</b></div>`+
+          `<div><span>Target 1 / 2 / 3</span><b>₹${f2(o.t1)} / ${f2(o.t2)} / ${f2(o.t3)}</b></div>`+
+          (on&&o.now?`<div><span>Premium now</span><b style="color:${pnl>=0?C.up:C.dn}">₹${f2(o.now)} (${pnl>=0?"+":""}${pnl.toFixed(1)}%)</b></div>`:"")+`</div>`
+        :`<div class="xopt">${s.opt&&s.opt.err?"Option contract not available ("+esc(s.opt.err)+"). ":on?"Finding the option contract… ":"Ended before an option was picked. "}Spot levels below.</div>`)+
+      `<div class="xopt">${esc(s.sym)} levels: entry ${f2(s.entry)}, stop ${f2(on&&s.stop!=null?s.stop:s.sl)}, targets ${f2(s.t1)} / ${f2(s.t2)} / ${f2(s.t3)}`+
+        `${o&&o.spread!=null&&o.spread>5?` · <b style="color:${C.warn}">wide bid-ask spread ${o.spread.toFixed(1)}%</b>`:""}</div>`+
+      `<div class="xres" style="color:${col}">${esc(s.status)}${on?"":` · ${s.R>=0?"+":"−"}${Math.abs(s.R).toFixed(2)}R on the ${s.seg==="IDX"?"index":s.seg==="MCX"?"future":"share"}`}</div>`+
+      `<details class="xwhy"><summary>Why this signal</summary>${(s.reasons||[]).map(r=>"✓ "+esc(r)).join("<br>")}</details>`+
+      `<div class="xact">${xCopyBtn(fnoWhats(s))}<button class="btn fnochart" data-tkr="${esc(s.tkr)}">View on chart</button></div></div>`;
+  };
+  const pend=(d.pending||[]).filter(p=>FN.kind==="all"||(FN.kind==="strict"?p.grade==="A":FN.kind==="other"&&p.grade!=="A"))
+    .filter(p=>!FN.q||p.sym.toLowerCase().includes(FN.q));
+  let html=`<div class="bbar">${d.running?`Scanning now: ${d.done} of ${d.total} instruments…`:`Scanned <b>${d.instruments}</b> instruments with options`}`+
+    ` · last scan ${d.at?hhmm(d.at):"—"} IST · next about ${hhmm(nextScan)}${d.failed?` · ${d.failed} could not be read`:""}</div>`+
+    `<div class="fnof"><div class="seg" id="fnoShow"></div><div class="seg" id="fnoKind"></div>`+
+    `<input id="fnoQ" type="search" placeholder="Filter by name, e.g. TATA" value="${esc(FN.q)}" autocomplete="off"></div>`;
+  if(pend.length) html+=`<div class="waits"><h4>Confirmed, waiting for entry (${pend.length})</h4>`+pend.map(p=>`<div class="wait"><b>${esc(p.sym)}</b>`+
+    `<span class="chip" style="background:${p.side==="BUY"?C.up:C.dn}">${p.side==="BUY"?"CALL":"PUT"}</span><span>Grade ${p.grade} at ${hhmm(p.ts)}: enter only if ${esc(p.sym)} comes back to <b>${f2(p.entry)}</b>. `+
+    `Stop ${f2(p.sl)}, targets ${f2(p.t1)} / ${f2(p.t2)} / ${f2(p.t3)}.</span></div>`).join("")+`</div>`;
+  if(!list.length) html+=`<div class="notrade"><b>${FN.show==="live"?"NO LIVE CALL / PUT SIGNAL right now":"NO SIGNAL today yet"}</b><span>${d.signals.length?`${d.signals.length} signal${d.signals.length===1?"":"s"} today in total`+(FN.show==="live"?"; tap \"All today\" to see the ones that already ended.":"; try another filter."):"No instrument has met every rule today. Signals appear here within a minute of a 5-minute candle closing."}</span></div>`;
+  else for(const g of [["IDX","Indices"],["MCX","Commodities"],["EQ","Stocks"]]){
+    const mine=list.filter(s=>s.seg===g[0]); if(!mine.length) continue;
+    html+=`<section class="grp" data-g="${g[0]}" style="margin-top:16px"><div class="grp-hd"><div><h3>${g[1]}</h3><small>${mine.filter(s=>s.state==="ACTIVE").length} live · ${mine.length} shown</small></div></div>`+
+      `<div class="xgrid">${mine.slice(0,60).map(card).join("")}</div>${mine.length>60?`<div class="none">Showing 60 of ${mine.length}. Use the filter box to find one.</div>`:""}</section>`;
+  }
+  html+=`<div class="sub" style="margin-top:12px">Same rules as the Strict, Other and Normal tabs, applied to every NSE F&amp;O stock, index option and MCX commodity with options, on 5-minute candles (setup 15 minutes, trend 1 hour). `+
+    `The option is the strike nearest the price, in the nearest expiry with more than half a day left. The buy price is that option's last traded premium when the signal was found; premium stop and targets are estimates from its implied volatility. `+
+    `Signals use closed candles only and do not change once shown. Rules-based analysis, not advice.</div>`;
+  const qf=document.activeElement&&document.activeElement.id==="fnoQ", caret=qf?document.activeElement.selectionStart:0;
+  el.innerHTML=html;
+  seg(document.getElementById("fnoShow"),[{l:`Live now · ${live.length}`,v:"live"},{l:`All today · ${d.signals.length}`,v:"all"}],it=>FN.show===it.v,it=>{ FN.show=it.v; store.set("sd_fno_show",it.v); renderFno(); });
+  seg(document.getElementById("fnoKind"),[{l:"All types",v:"all"},{l:"Strict",v:"strict"},{l:"Other",v:"other"},{l:"Normal",v:"normal"}],it=>FN.kind===it.v,it=>{ FN.kind=it.v; store.set("sd_fno_kind",it.v); renderFno(); });
+  const qi=document.getElementById("fnoQ"); qi.oninput=()=>{ FN.q=qi.value.trim().toLowerCase(); renderFno(); };
+  if(qf){ qi.focus(); try{ qi.setSelectionRange(caret,caret); }catch(e){} }
+  xWire(el);
+  el.querySelectorAll(".fnochart").forEach(b=>b.onclick=()=>{ const t=b.dataset.tkr, s=d.signals.find(x=>x.tkr===t);
+    if(S.universe.some(u=>u.tkr===t)) return goChart(t);
+    pickInstrument({sym:s.fy||t, short:s.sym, name:s.sym, exch:(s.fy||t).slice(0,3), type:s.seg, lot:s.lot, fo:true}); });
 }
 
 const tfName=m=>m>=60?(m/60)+"h":m+"m";
@@ -3110,7 +3199,9 @@ function renderHome(){
     w.appendChild(t);
   });
   renderStrictSegs();
-  { const xs=S.tab==="scalp"||S.tab==="btst"||S.tab==="mine";
+  { const xs=S.tab==="scalp"||S.tab==="btst"||S.tab==="mine"||S.tab==="fno";
+    document.getElementById("fnoPage").hidden=S.tab!=="fno";
+    if(S.tab==="fno"){ if(!document.getElementById("fnoBody").innerHTML||FN.shownAt!==FN.at){ FN.shownAt=FN.at; renderFno(); } loadFno(); }
     document.getElementById("minePage").hidden=S.tab!=="mine";
     if(S.tab==="mine"&&!document.getElementById("mineBody").innerHTML) renderMine();
     ["homeTabNote","homeSigs","homeSigNote"].forEach(id=>document.getElementById(id).hidden=xs);
@@ -3152,7 +3243,8 @@ function renderStrictSegs(){
   const today=S.universe.filter(u=>u.seg!=="OPT").reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]), cnt=t=>today.filter(x=>tabOf(x)===t&&(t!=="other"||isFocus(x.tkr))).length;
   const pick=it=>{ if(S.tab!==it.v) setTab(it.v); };
   const sc=XS.scalp.cache?Object.values(XS.scalp.cache).reduce((t,r)=>t+r.sigs.filter(x=>x.day===istDay(Date.now())).length,0):null;
-  seg(document.getElementById("strictHome"),[{l:`Strict signals · ${cnt("strict")}`,v:"strict"},{l:`Other signals · ${cnt("other")}`,v:"other"},{l:`Normal signals · ${cnt("normal")}`,v:"normal"},
+  const fl=FN.d?FN.d.signals.filter(x=>x.state==="ACTIVE").length:null;
+  seg(document.getElementById("strictHome"),[{l:fl==null?"All F&O":`All F&O · ${fl} live`,v:"fno"},{l:`Strict signals · ${cnt("strict")}`,v:"strict"},{l:`Other signals · ${cnt("other")}`,v:"other"},{l:`Normal signals · ${cnt("normal")}`,v:"normal"},
     {l:sc==null?"Scalp":`Scalp · ${sc}`,v:"scalp"},{l:XS.btst.picks==null?"BTST":`BTST · ${XS.btst.picks}`,v:"btst"},{l:MT.list.length?`My trades · ${MT.list.filter(x=>x.day===istDay(Date.now())).length}`:"My trades",v:"mine"}],it=>S.tab===it.v,pick);
   seg(document.getElementById("strictRes"),[{l:"Strict signals",v:"strict"},{l:"All structure signals",v:"other"},{l:"Trendline signals",v:"trend"},{l:"Opening range",v:"orb"},{l:"Normal signals",v:"normal"}],
     it=>resTab()===it.v,it=>{ S.resTab=it.v; renderResults(); });
@@ -3246,7 +3338,7 @@ const tick05=v=>Math.max(0.05,Math.round(v*20)/20);
 const sigKey=s=>S.tf+"|"+s.tkr+"|"+s.ts+"|"+s.side+(s.grade==="N"?"|N":s.grade==="T"?"|T":s.grade==="O"?"|O":"");
 const pm=v=>v>=100?nf(v,1):nf(v,2);
 function homeSignals(){
-  const all=S.universe.filter(u=>u.seg!=="OPT").reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);
+  const all=S.universe.filter(u=>u.seg!=="OPT"&&u.fo!==false).reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);   // call / put buys only: instruments with options
   const live=s=>{ const t=S.otr[sigKey(s)]; return (t&&t.entry!=null?t.state:s.res.state)==="ACTIVE"; };
   const want=S.tab==="active"?(x=>live(x)&&sessionOpen(uni(x.tkr))&&(tabOf(x)!=="other"||isFocus(x.tkr))):S.tab==="today"?(x=>tabOf(x)!=="other"||isFocus(x.tkr))
     :S.tab==="other"?(x=>tabOf(x)==="other"&&isFocus(x.tkr)):(x=>tabOf(x)===S.tab);

@@ -133,6 +133,14 @@ T1/T2/T3 - 290/350/390
 - one at a time per instrument, never against a live structure signal, and none in the first 15 or last 45 minutes.
 They use closed candles only, so they never change after they appear. Being looser, they lose more often; the Results page shows their own record separately.
 
+**All F&O tab (first on Home)** — CALL / PUT buy signals on every instrument with listed options: all NSE F&O stocks, the index options (NIFTY, BANK NIFTY, FIN NIFTY, MIDCAP NIFTY, SENSEX, BANKEX) and MCX commodities with options.
+- The server scans them all once after each 5-minute candle closes, with exactly the same rules as the Strict, Other and Normal tabs (it reads them from index.html, so there is one copy). One scan serves every device; the page only reads the result.
+- Each signal shows the option to buy (strike nearest the price, nearest expiry with more than half a day left), its premium when the signal was found, premium stop and three targets (estimated from its implied volatility), the premium now, the underlying's levels, and why. Copy for WhatsApp in the usual format; View on chart opens any of them.
+- Filters: Live now / All today, All types / Strict / Other / Normal, and a name filter. Setups confirmed but waiting for entry are listed at the top.
+- The scan is paced at about 100 Fyers requests a minute so the pages' own requests still fit under Fyers' 200 a minute. It runs on the Fyers login of whoever used the site most recently, and pauses if nobody has used the site for 4 hours.
+- On the free Render plan the server has little CPU; a full scan of about 220 instruments took about 3.5 minutes in testing, inside the 5-minute candle.
+- The Strict, Other and Normal tabs now show only instruments with options, so every signal there is a CALL or PUT buy.
+
 **Focus list and the Other tab** — the Other tab now covers only NIFTY 50, BANK NIFTY, SENSEX, HDFC BANK, CRUDE OIL, RELIANCE, ICICI BANK, SBI and NATURAL GAS (instruments with busy option markets). It shows three kinds of signals for them:
 - opening range breakouts (new): the first 15 minutes set a range (NSE 09:15–09:30; MCX 09:00–09:15 and 18:00–18:15). A CALL needs a strong candle closing 0.1 ATR above the range high before 13:30 (MCX 13:00 / 22:00), a range 0.5–3 ATR tall, the 1-hour close above EMA 20, RSI 55–75, above VWAP where there is volume, and no level in the way closer than 1.2R. Stop at the middle of the range, targets 1R / 2R / 3R, one trade per range per day. PUT is the mirror;
 - grade A trendline trades and grade B structure signals, as before, now for the focus list only.

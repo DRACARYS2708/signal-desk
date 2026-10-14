@@ -300,7 +300,7 @@ async function loadMasters() {
         rows++;
         const exch = t.slice(0, 3), desc = (c[1] || "").trim(), lot = parseFloat(c[3]) || null, exp = parseFloat(c[8]) || 0;
         if (name.endsWith("_FO")) {                       // remember which underlyings have options, and their lot size
-          const m = /^(NSE|BSE):([A-Z&-]+?)\d{2}/.exec(t), und = (c[13] && /^[A-Z&-]+$/.test(c[13])) ? c[13] : m && m[2];
+          const m = /^(NSE|BSE):([A-Z0-9&-]+?)\d{2}(?:[A-Z]{3}|[1-9OND]\d{2})/.exec(t), und = (c[13] && /^[A-Z0-9&-]+$/.test(c[13])) ? c[13] : m && m[2];
           if (und) { const k = exch + ":" + und, o = fo.get(k) || { opt: false, lot: null };
             if (/(CE|PE)$/.test(t)) o.opt = true; if (lot && !o.lot) o.lot = lot; fo.set(k, o); }
           return;
@@ -559,16 +559,17 @@ app.get("/api/candles", guard(async (req, res) => {
   const u = bySym(req.query.tkr);
   if (!u) return res.status(404).json({ error: "unknown symbol" });
   const want = DAYS[+req.query.interval] ? +req.query.interval : 5;
-  // market shut: the candles can't change, so ask Fyers at most every 30 minutes
-  res.json(await cached(`c:${u.tkr}:${want}`, !openNow(u) ? 1800000 : want >= 60 ? 120000 : want >= 15 ? 45000 : 15000, async () => {
+  res.json(await candlesOf(u, want));
+}));
+// market shut: the candles can't change, so ask Fyers at most every 30 minutes
+const candlesOf = (u, want) => cached(`c:${u.tkr}:${want}`, !openNow(u) ? 1800000 : want >= 60 ? 120000 : want >= 15 ? 45000 : 15000, async () => {
     const j = await fy("/history", { symbol: u.fy, resolution: String(want), date_format: "1",
       range_from: istDay(Date.now() - DAYS[want] * 864e5), range_to: istDay(Date.now()), cont_flag: "1" });
     const candles = (j.candles || []).filter(c => c && c.length >= 5 && c[1] != null && c[4] != null)
       .map(c => [c[0] < 1e11 ? c[0] * 1000 : c[0], c[1], c[2], c[3], c[4], c[5] || 0])
       .sort((a, b) => a[0] - b[0]);
     return { tkr: u.tkr, interval: want + "m", candles };
-  }));
-}));
+  });
 
 /* --------------------------------------------------------------- quotes -- */
 app.get("/api/quotes", guard(async (req, res) => {
@@ -616,9 +617,12 @@ app.get("/api/chain", guard(async (req, res) => {
   const u = bySym(req.query.tkr);
   if (!u) return res.status(404).json({ error: "unknown symbol" });
   if (!u.fo) return res.status(404).json({ error: "no option chain for " + u.name });
+  res.json(await chainData(u, req.query.expiry));
+}));
+async function chainData(u, expiry) {
   const list = await expiriesOf(u);
   if (!list.length) throw new Error("Fyers returned no expiries for " + u.name);
-  const pick = list.find(e => e.iso === req.query.expiry) || list[0];
+  const pick = list.find(e => e.iso === expiry) || list[0];
   const j = await chainOf(u, pick === list[0] ? "" : pick.epoch);
 
   const iv = v => (v > 0 ? (v > 3 ? v / 100 : v) : null);   // percent or fraction, either way
@@ -643,8 +647,141 @@ app.get("/api/chain", guard(async (req, res) => {
   const step = gaps.length ? gaps[0] : u.step;
   const atm = Math.round(spot / step) * step;
   const daysOut = Math.max((pick.epoch * 1000 - Date.now()) / 864e5, 0.02);
-  res.json({ tkr: u.tkr, expiry: pick.iso, expiries: list.map(e => e.iso), spot, prevClose, atm, step,
-             lot: u.lot, daysOut, rows, ivFromFeed: true });
+  return { tkr: u.tkr, expiry: pick.iso, expiries: list.map(e => e.iso), spot, prevClose, atm, step,
+             lot: u.lot, daysOut, rows, ivFromFeed: true };
+}
+
+
+/* ------------------------------------------------------ all-F&O scanner -- */
+/* Every instrument with listed options (NSE F&O stocks, index options, MCX
+   commodities with options) is checked once after each 5-minute candle closes,
+   with the very same signal rules the page uses (read from index.html, so there
+   is one copy of them). One scan serves every visitor. Requests are paced to
+   leave room for the pages' own requests. Only CALL / PUT buy signals. */
+const fs = require("fs"), vm = require("vm");
+const SCAN = { at: 0, started: 0, running: false, total: 0, done: 0, failed: 0, cycleMs: 0, cpuMs: 0, day: "",
+  signals: [], pending: [], opts: new Map(), engineOk: false, engineErr: null, lastErr: null };
+let EN = null;
+function loadEngine() {
+  try {
+    const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+    const pick = (a, b) => { const i = html.indexOf(a), j = html.indexOf(b, i + 1);
+      if (i < 0 || j < 0) throw new Error("rule code not found in index.html (" + a.slice(0, 30) + ")"); return html.slice(i, j); };
+    let src = pick("function aggregate(bars, mins, open){", "/* Setup and trend timeframe candles.") +
+      pick("const toBars=", "let rafPending") +
+      pick("/* ------------------------------------------------------------ indicators -- */", "/* ---------------------------------------------------------------- chart -- */");
+    src = src.replace("const isFocus=t=>FOCUS.has(t);", "const isFocus=t=>true;");     // the scan covers every instrument
+    for (const name of ["MAX_LIFE", "RF"]) {                                   // settings defined elsewhere in the page
+      const m = new RegExp("const " + name + "\\s*=\\s*([0-9.]+)").exec(html); if (m && !new RegExp("const " + name + "\\s*=").test(src)) src = "const " + name + "=" + m[1] + ";\n" + src; }     // the scan covers every instrument
+    const box = { S: { tf: 5, universe: [], chainCache: {}, ctx: {}, sigs: {}, bars: {}, quotes: {}, otr: {}, page: "", tab: "" },
+      store: { get: (k, d) => d, set() {} }, localStorage: { getItem: () => null, setItem() {} }, document: {}, window: {}, C: {}, console };
+    vm.createContext(box);
+    EN = vm.runInContext(src + "\n;({analyseTF,engine,engineNormal,engineTrend,engineORB,aggregate,toBars,bs,impliedVol});", box, { timeout: 5000 });
+    SCAN.engineOk = true;
+  } catch (e) { SCAN.engineErr = e.message; console.log("  scanner: rules not loaded — " + e.message); }
+}
+function scanList() {
+  const out = new Map();
+  for (const u of UNIVERSE) if (u.fy && u.fo) out.set(u.fy, { tkr: u.tkr, fy: u.fy, sym: u.label || u.name, name: u.name, seg: u.seg, fo: true,
+    lot: (SYM.byTicker.get(u.fy) || {}).lot || u.lot, open: u.open, close: u.close, step: u.step });
+  for (const x of SYM.list) if (x.fo && !out.has(x.t) && ((x.type === "EQ" && x.exch === "NSE") || x.type === "IDX" || x.type === "MCX"))
+    out.set(x.t, { tkr: x.t, fy: x.t, sym: x.type === "MCX" ? x.name.replace(" futures", "") : x.short, name: x.name, seg: x.type, fo: true,
+      lot: x.lot, open: x.exch === "MCX" ? 540 : 555, close: x.exch === "MCX" ? 1410 : 930 });
+  return [...out.values()];
+}
+const tabOfSig = s => s.grade === "N" ? "normal" : s.strict ? "strict" : "other";
+const scanKey = s => s.tkr + "|" + s.ts + "|" + s.side + "|" + s.grade;
+async function scanOption(u, s) {               // the contract to buy, its premium now, and premium stop / targets
+  let d = await chainData(u);
+  if (d.daysOut < 0.6 && d.expiries[1]) d = await chainData(u, d.expiries[1]);   // skip an expiry that ends today
+  const row = d.rows.reduce((a, r) => Math.abs(r.strike - s.entry) < Math.abs(a.strike - s.entry) ? r : a, d.rows[0]);
+  const ty = s.side === "BUY" ? "CE" : "PE", leg = ty === "CE" ? row.ce : row.pe;
+  if (!leg || !(leg.ltp > 0)) throw new Error("no traded price for the " + row.strike + " " + ty);
+  const buy = leg.ltp, T = Math.max(d.daysOut / 365, 1 / (365 * 24)), spot = d.spot || s.entry;
+  const iv = EN.impliedVol(buy, spot, row.strike, T, ty) || leg.iv;
+  const at = (p, fb) => iv ? EN.bs(p, row.strike, Math.max(T - 30 / 525600, 1 / (365 * 24)), iv, ty).px : buy * fb;
+  const band = (v, lo, hi) => Math.max(buy * lo, Math.min(buy * hi, v)), t05 = v => Math.max(0.05, Math.round(v * 20) / 20);
+  // levels measured from the price when the signal fired, moved by today's difference between spot and that price
+  const shift = v => v + (spot - s.last);
+  const sl = band(at(shift(s.sl), 0.8), 0.55, 0.92), t1 = band(at(shift(s.t1), 1.2), 1.08, 1.6);
+  const t2 = Math.max(band(at(shift(s.t2), 1.45), 1.2, 2.4), t1 * 1.08), t3 = Math.max(band(at(shift(s.t3), 1.8), 1.35, 3.5), t2 * 1.08);
+  return { sym: leg.sym, strike: row.strike, ty, expiry: d.expiry, buy: t05(buy), sl: t05(sl), t1: t05(t1), t2: t05(t2), t3: t05(t3),
+    lot: d.lot || u.lot || null, bid: leg.bid, ask: leg.ask, oi: leg.oi, vol: leg.vol,
+    spread: leg.bid > 0 && leg.ask > 0 ? (leg.ask - leg.bid) / ((leg.ask + leg.bid) / 2) * 100 : null, at: Date.now(), now: buy, nowAt: Date.now() };
+}
+async function scanCycle() {
+  if (!EN || SCAN.running) return;
+  const sess = [...sessions.values()].filter(v => v.access && (!v.exp || Date.now() < v.exp - 60000)).sort((a, b) => b.seen - a.seen)[0];
+  if (!sess || Date.now() - sess.seen > 4 * 3600e3) return;              // nobody has used the site for hours: don't spend their Fyers allowance
+  SCAN.running = true; SCAN.started = Date.now(); let cpu = 0;
+  try {
+    await visitor.run(sess, async () => {
+      await ensureUniverse().catch(() => {});
+      const day = istDay(Date.now());
+      if (day !== SCAN.day) { SCAN.day = day; SCAN.signals = []; SCAN.pending = []; SCAN.opts.clear(); }
+      const all = scanList(), first = !SCAN.at;
+      const list = all.filter(u => first || openNow(u));
+      if (!list.length) return;
+      SCAN.total = list.length; SCAN.done = 0; SCAN.failed = 0;
+      const keep = new Map(SCAN.signals.map(s => [s.tkr, s]));           // instruments not scanned now keep their last result
+      const found = [], pend = [];
+      for (const u of list) {
+        // leave room for visitors' own requests: the scan uses at most about 100 a minute
+        while (RL.sent.filter(t => Date.now() - t < 60000).length >= 100 || RL.waiting > 2 || Date.now() < RL.pauseUntil) await sleep(400);
+        let d;
+        try { d = await candlesOf(u, 5); }
+        catch (e) { SCAN.failed++; SCAN.lastErr = u.sym + ": " + e.message; if (e.message === NEED_LOGIN) break; continue; }
+        const t0 = Date.now();
+        try {
+          const b = EN.toBars(d.candles);
+          if (b.length >= 80) {
+            const E = EN.analyseTF(b), St = EN.analyseTF(EN.aggregate(b, 15, u.open)), H = EN.analyseTF(EN.aggregate(b, 60, u.open));
+            const ctx = { u, E, St, H, tf: 5, stf: 15, htf: 60 };
+            const smc = EN.engine(ctx, { lite: true });
+            const sigs = smc.concat(EN.engineNormal(ctx, { lite: true }, smc), EN.engineTrend(ctx, { lite: true }, smc), EN.engineORB(ctx, { lite: true }, smc));
+            const last = b[b.length - 1];
+            for (const s of sigs) found.push({ tkr: u.tkr, fy: u.fy, sym: u.sym, seg: u.seg, lot: u.lot, side: s.side, tab: tabOfSig(s), grade: s.grade,
+              setup: s.setup || (s.grade === "N" ? "trend pull-back" : s.trig || "structure"), ts: s.ts, entry: s.entry, sl: s.sl, t1: s.t1, t2: s.t2, t3: s.t3,
+              rr: s.rr, reasons: s.reasons, state: s.res.state, status: s.res.status, hit: s.res.hit, px: s.res.px, R: s.res.R, stop: s.res.stop,
+              last: last.c, lastTs: last.ts });
+            if (smc.pending) pend.push({ tkr: u.tkr, fy: u.fy, sym: u.sym, seg: u.seg, side: smc.pending.side, grade: smc.pending.grade, ts: smc.pending.ts,
+              entry: smc.pending.entry, sl: smc.pending.sl, t1: smc.pending.t1, t2: smc.pending.t2, t3: smc.pending.t3, limit: smc.pending.limit });
+          }
+          keep.delete(u.tkr);
+        } catch (e) { SCAN.failed++; SCAN.lastErr = u.sym + ": " + e.message; }
+        cpu += Date.now() - t0; SCAN.done++;
+        await new Promise(r => setImmediate(r));                       // let page requests through between instruments
+      }
+      // results for instruments not scanned this time (market shut) stay as they were
+      const old = SCAN.signals.filter(s => keep.has(s.tkr) || !list.some(u => u.tkr === s.tkr));
+      SCAN.signals = old.concat(found.filter(s => s.ts >= Date.now() - 864e5 * 3 && istDay(s.ts) === day)).sort((a, b) => b.ts - a.ts);
+      SCAN.pending = pend;
+      // contracts for new live signals (a few per cycle), and current premiums for all live ones in one request
+      let built = 0;
+      for (const s of SCAN.signals.filter(x => x.state === "ACTIVE" && !SCAN.opts.has(scanKey(x)))) {
+        if (built++ >= 12) break;
+        const u = list.find(x => x.tkr === s.tkr) || all.find(x => x.tkr === s.tkr); if (!u) continue;
+        try { SCAN.opts.set(scanKey(s), await scanOption(u, s)); } catch (e) { SCAN.opts.set(scanKey(s), { err: e.message, at: Date.now() }); }
+      }
+      const live = SCAN.signals.filter(x => x.state === "ACTIVE").map(x => SCAN.opts.get(scanKey(x))).filter(o => o && o.sym).slice(0, 50);
+      if (live.length) try {
+        const j = await fy("/quotes", { symbols: [...new Set(live.map(o => o.sym))].join(",") });
+        for (const q of j.d || []) if (q && q.v && q.v.lp > 0) live.filter(o => o.sym === q.n).forEach(o => { o.now = q.v.lp; o.nowAt = Date.now(); });
+      } catch (e) {}
+    });
+    SCAN.at = Date.now(); SCAN.cycleMs = Date.now() - SCAN.started; SCAN.cpuMs = cpu;
+  } finally { SCAN.running = false; }
+}
+// run 25 s after every 5-minute candle closes (IST is a whole number of 5-minute steps from UTC)
+function scheduleScan() {
+  const step = 300000, wait = step - (Date.now() % step) + 25000;
+  setTimeout(() => { scanCycle().catch(e => { SCAN.lastErr = e.message; }).finally(scheduleScan); }, wait).unref();
+}
+app.get("/api/scan", guard(async (_req, res) => {
+  if (!SCAN.at && !SCAN.running) scanCycle().catch(() => {});               // first visitor of the day starts it
+  res.json({ at: SCAN.at, running: SCAN.running, total: SCAN.total, done: SCAN.done, failed: SCAN.failed, cycleMs: SCAN.cycleMs, cpuMs: SCAN.cpuMs,
+    instruments: scanList().length, engineOk: SCAN.engineOk, engineErr: SCAN.engineErr, lastErr: SCAN.lastErr,
+    signals: SCAN.signals.map(s => Object.assign({}, s, { opt: SCAN.opts.get(scanKey(s)) || null })), pending: SCAN.pending });
 }));
 
 app.get(/^\/(?!api\/|auth\/).*/, sendApp);   // e.g. /home or /chart after a reload
@@ -654,6 +791,7 @@ app.listen(PORT, () => {
   console.log("  Fyers app  : " + (APP_ID && SECRET ? "set" : "NOT SET — add FYERS_APP_ID and FYERS_SECRET_ID"));
   console.log("  redirect   : " + REDIRECT + "   (enter exactly this in the Fyers app)");
   console.log("  visitors   : each logs in with their own Fyers account");
-  setTimeout(mastersFresh, 2000);                                // symbol lists load in the background
+  setTimeout(mastersFresh, 2000);
+  loadEngine(); scheduleScan();                                // symbol lists load in the background
   console.log("  password   : " + (SITE_PASSWORD ? "on — asked before the page opens" : "off — the site opens normally") + "\n");
 });
