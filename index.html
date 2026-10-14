@@ -633,6 +633,28 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
 .xcard .xsize small{display:block;font-size:13.5px;color:var(--mid);line-height:1.5}
 
 #strictHome{display:flex;max-width:100%;overflow-x:auto;scrollbar-width:none}#strictHome::-webkit-scrollbar{display:none}#strictHome button{white-space:nowrap;flex:0 0 auto}
+
+.hero.clickable>button{text-align:left;font:inherit;color:inherit;background:none;border:none;border-right:1px solid var(--line);padding:16px 20px;cursor:pointer}
+.hero.clickable>button:hover,.hero.clickable>button.on{background:color-mix(in srgb,var(--key) 10%,transparent)}
+.hero.clickable>button.on span{color:var(--key)}
+.hero>button span{display:block;font-size:13.5px;font-weight:600;color:var(--mid)}
+.hero>button b{display:block;font:700 32px/1.15 var(--d);letter-spacing:-.02em}
+.hero>button small{display:block;font-size:13px;color:var(--mid);margin-top:2px}
+@media(max-width:560px){.hero.clickable>button:nth-child(2){border-right:none}.hero.clickable>button{border-bottom:1px solid var(--line)}}
+.waits{margin:4px 0 14px;border:1px dashed var(--warn);border-radius:14px;padding:12px 14px;background:color-mix(in srgb,var(--warn) 6%,transparent)}
+.waits h4{font:700 15px var(--s);color:var(--warn);margin-bottom:6px}
+.wait{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 0;border-top:1px solid var(--line);font-size:14.5px;line-height:1.5}
+.wait:first-of-type{border-top:none}
+.wait .chip{padding:2px 9px;border-radius:999px;font:800 12px var(--s);color:var(--onkey)}
+.wait>span:last-child{flex:1 1 300px;color:var(--mid)}.wait>span b{color:var(--fg)}
+
+.mtform{margin-top:14px;max-width:760px;border:2px solid var(--key);border-radius:16px;padding:18px 20px;background:var(--panel)}
+.mtform>b{display:block;font:700 21px var(--d)}
+.mtform>span{display:block;color:var(--mid);margin-top:4px;line-height:1.55}
+.mtrow{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.mtrow input{flex:1 1 260px;font:600 17px var(--s);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--fg);min-height:48px}
+.mtrow .btn{min-height:48px;padding:0 20px;font-size:16px}
+.xcard .mtadv{font:800 24px/1.2 var(--d);letter-spacing:-.01em;margin:4px 0 12px}
 </style>
 </head>
 <body>
@@ -698,6 +720,7 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
     Rules-based analysis, not advice; scalps lose often, and fast.</div>
   <div id="scalpBody"></div>
 </div>
+<div class="xsec" id="minePage" hidden><h3 class="xsh">My trades — advice on the option you took</h3><div id="mineBody"></div></div>
 <div class="xsec" id="btstPage" hidden>
   <h3 class="xsh">BTST — buy today, sell tomorrow</h3>
   <div class="sub">Strong stocks bought in the last half hour and sold the next morning. Decided on the hourly candle that closes at 15:15 IST: daily uptrend,
@@ -976,11 +999,15 @@ function showSetup(msg, login){
 }
 
 let pollTimer=null;
+// Back to the page after a while (phone unlocked, tab switched back): bring everything up to date at once.
+document.addEventListener("visibilitychange",()=>{ if(document.hidden||!S.ready) return;
+  if(Date.now()-(S.lastFull||0)>60000){ S.lastFull=Date.now(); refreshAll().catch(()=>{}); } });
 function startPolling(){
   if(pollTimer) clearInterval(pollTimer);
-  let busy=false, turn=0;
+  let busy=false, turn=0, hidTick=0, fturn=0;
   pollTimer = setInterval(async ()=>{
-    if(busy || document.hidden) return;         // never stack requests; rest when the tab is hidden
+    if(busy) return;                            // never stack requests
+    if(document.hidden&&(hidTick++%4)) return;  // in the background: every 20 s instead of every 5 s
     busy=true;
     try{
       const q = await api(quotesPath()); S.quotes = q.quotes;
@@ -990,8 +1017,12 @@ function startPolling(){
       // keep the option pages fresh too, every third tick
       if(["chain","oi","strat"].includes(S.page)&&S.chainTkr&&(turn%3===0)&&!S.chainBusy){
         S.chainBusy=true; loadChain(S.chainTkr,S.chainExp).catch(()=>{}).finally(()=>S.chainBusy=false); }
-      // one other symbol per tick, in rotation, so the whole watchlist's signals stay current
-      const rest=S.universe.filter(u=>u.tkr!==S.tkr);
+      // one focus-list symbol per tick (each about every 45 s) ...
+      const foc=S.universe.filter(u=>u.tkr!==S.tkr&&isFocus(u.tkr));
+      if(foc.length){ const o=foc[fturn++%foc.length];
+        try{ await loadCandles(o.tkr); await loadMTF(o.tkr); recompute(o.tkr); }catch(e){} }
+      // ... and one other symbol per tick, in rotation, so the whole watchlist's signals stay current
+      const rest=S.universe.filter(u=>u.tkr!==S.tkr&&!isFocus(u.tkr));
       if(rest.length){ const o=rest[turn++%rest.length];
         try{ await loadCandles(o.tkr); await loadMTF(o.tkr); recompute(o.tkr); }catch(e){} }
       renderLive();
@@ -1040,6 +1071,7 @@ const toBars=cs=>cs.map(c=>{ const dt=new Date(c[0]+19800000);
 let rafPending=false;
 function soon(){ if(rafPending) return; rafPending=true; requestAnimationFrame(()=>{ rafPending=false; if(S.ready) renderLive(); }); }
 async function refreshAll(){
+  S.lastFull=Date.now();
   const qp=api(quotesPath()).then(q=>{ S.quotes=q.quotes; S.quotesAt=Date.now(); saveCache(); soon(); }).catch(()=>{});
   const order=[S.tkr].concat(S.universe.filter(u=>u.tkr!==S.tkr&&u.seg!=="OPT").map(u=>u.tkr));
   let next=0, failed=0;
@@ -1896,7 +1928,8 @@ function renderBtst(){
 function xPoll(){
   if(XS.timer) clearInterval(XS.timer);
   XS.timer=setInterval(()=>{ if(document.hidden||!S.ready) return;
-    if(onHomeTab("scalp")) loadScalp(); else if(onHomeTab("btst")) loadBtst(); },20000);
+    if(onHomeTab("scalp")) loadScalp(); else if(onHomeTab("btst")) loadBtst();
+    if(onHomeTab("mine")) MT.list.forEach(tr=>mtEval(tr)); },20000);
 }
 
 /* ------------------------------------------ trendline (grade A) signals -- */
@@ -2004,6 +2037,212 @@ function engineTrend(ctx, opt, smc){
     }
   }
   return out;
+}
+
+/* ---------------------------------------- focus list and opening-range trades -- */
+/* The Other tab follows a short list of instruments with busy option markets. */
+const FOCUS_DEFAULT=["NIFTY","BANKNIFTY","SENSEX","HDFCBANK","CRUDEOIL","RELIANCE","ICICIBANK","SBIN","NATURALGAS"];
+const FOCUS=new Set(FOCUS_DEFAULT);
+const isFocus=t=>FOCUS.has(t);
+/** Opening-range breakout (grade O), a popular intraday options setup.
+ *  Opening range = the first 15 minutes (NSE/BSE 09:15-09:30; MCX 09:00-09:15 and
+ *  again 18:00-18:15 IST for the evening session, when crude and gas are busiest).
+ *  A CALL needs ALL of, on a closed candle before the cut-off (NSE 13:30, MCX 13:00 / 22:00):
+ *   1. close at least 0.1 ATR above the range high, a green body of 0.35 ATR or more,
+ *      closing in the top 40% of the candle;
+ *   2. the range itself 0.5 to 3 ATR tall (not noise, not already exhausted);
+ *   3. 1-hour close above its EMA 20, and EMA 20 not below EMA 50 by more than 0.2 ATR;
+ *   4. RSI 55-75; above VWAP where the feed has volume;
+ *   5. stop at the middle of the range (0.6 to 2 ATR away); targets 1R, 2R, 3R;
+ *   6. no previous-day high/low or swing level closer than 1.2R in the way;
+ *   7. never against a live structure signal.
+ *  One trade per range per day. PUT is the mirror image. Closed candles only. */
+function engineORB(ctx, opt, smc){
+  opt=Object.assign({all:false, lite:false}, opt);
+  const {u, E, H, tf, htf}=ctx, out=[];
+  if(!E||!H||!isFocus(u.tkr)) return out;
+  const b=E.b, n=b.length; if(n<40) return out;
+  const I=E.ind, A=I.atr, R=I.rsi, HI=H.ind, CL=u.close||930, OP=u.open||555, today=b[n-1].day;
+  const mcx=u.seg==="MCX";
+  const wins=mcx?[[OP,OP+15,780],[1080,1095,1320]]:[[OP,OP+15,810]];
+  let busy=-1, day=null, ranges=null;
+  for(let i=1;i<n-1;i++){
+    const x=b[i];
+    if(x.day!==day){ day=x.day; ranges=wins.map(w=>({w, hi:-Infinity, lo:Infinity, bars:0, done:false})); }
+    for(const r of ranges) if(x.t>=r.w[0]&&x.t<r.w[1]){ r.hi=Math.max(r.hi,x.h); r.lo=Math.min(r.lo,x.l); r.bars++; }
+    if(i<=busy||!A[i]) continue;
+    const a=A[i];
+    for(const r of ranges){
+      if(r.done||!r.bars||x.t<r.w[1]||x.t>=r.w[2]||x.t>=CL-CFG.skipClose) continue;
+      const height=r.hi-r.lo;
+      for(const d of [1,-1]){
+        const edge=d>0?r.hi:r.lo;
+        if(!(d*(x.c-edge)>=0.1*a)) continue;
+        if(!(d*(x.c-x.o)>=0.35*a)) continue;
+        const rng=x.h-x.l, pos=rng?(d>0?x.c-x.l:x.h-x.c)/rng:0; if(pos<0.6) continue;
+        if(d*(b[i-1].c-edge)>0.1*A[i-1]&&b[i-1].day===x.day&&b[i-1].t>=r.w[1]) continue;   // not the first break: already outside
+        if(height<0.5*a||height>3*a){ r.done=true; break; }
+        const h=closedAt(H.b,htf,x.ts+tf*60000); if(h<0||HI.e20[h]==null||HI.e50[h]==null) continue;
+        if(!(d*(H.b[h].c-HI.e20[h])>0&&d*(HI.e20[h]-HI.e50[h])>-0.2*(HI.atr[h]||a))) continue;
+        if(R[i]==null||(d>0?!(R[i]>=55&&R[i]<=75):!(R[i]<=45&&R[i]>=25))) continue;
+        if(I.hasVol&&I.vwap[i]!=null&&!(d*(x.c-I.vwap[i])>0)) continue;
+        if((smc||[]).some(s=>s.i<=i&&(s.res.exit==null||s.res.exit>=i)&&(s.side==="BUY"?1:-1)!==d)) continue;
+        const entry=x.c, mid=(r.hi+r.lo)/2; let sl=mid-d*0.05*a, risk=d*(entry-sl);
+        if(risk>2*a||risk<=0) continue;
+        if(risk<0.6*a){ risk=0.6*a; sl=entry-d*risk; }
+        const block=E.liq.filter(L=>L.side===(d>0?"BSL":"SSL")&&L.from<=i&&(L.taken==null||L.taken>i)&&d*(L.px-entry)>0)
+          .sort((p,q)=>d*(p.px-q.px))[0];
+        if(block&&d*(block.px-entry)<1.2*risk) continue;
+        const cost=CFG.costPct*entry;
+        const why=[`opening range ${hhmm(b.find(z=>z.day===x.day&&z.t>=r.w[0]).ts)}–${String(Math.floor(r.w[1]/60)).padStart(2,"0")}:${String(r.w[1]%60).padStart(2,"0")}: high ${r.hi.toFixed(2)}, low ${r.lo.toFixed(2)} (${(height/a).toFixed(1)} ATR)`,
+          `${hhmm(x.ts)} candle closed ${(d*(x.c-edge)/a).toFixed(1)} ATR ${d>0?"above the range high":"below the range low"} with a strong ${d>0?"green":"red"} body`,
+          `1-hour close ${d>0?"above":"below"} EMA 20; RSI ${R[i].toFixed(0)}${I.hasVol&&I.vwap[i]!=null?`; ${d>0?"above":"below"} VWAP`:""}`,
+          `stop at the middle of the range; targets 1R / 2R / 3R`+(block?`; first level in the way (${block.kind.toLowerCase()} ${block.px.toFixed(2)}) is ${(d*(block.px-entry)/risk).toFixed(1)}R away`:"; no level in the way")];
+        const sig={ id:"O"+u.tkr.slice(0,3)+"-"+String(1000+i).slice(-4), day:x.day, strict:false, grade:"O", orb:true, setup:"opening range",
+          tkr:u.tkr, sym:u.sym, seg:u.seg, closeT:CL, side:d>0?"BUY":"SELL", i, ts:x.ts, setAt:x.ts,
+          entry, sl, t1:entry+d*risk, t2:entry+d*2*risk, t3:entry+d*3*risk, risk, rr:(risk-cost)/(risk+cost), cost, reasons:why, atr:a, rsi:R[i],
+          vol:null, poi:"opening range", trig:"opening range breakout" };
+        sig.opt=opt.lite?null:optionLeg(u,sig);
+        sig.res=track(b,sig);
+        if(opt.all||x.day===today) out.push(sig);
+        busy=sig.res.exit!=null?sig.res.exit:n; r.done=true; break;
+      }
+    }
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------- MY TRADES -- */
+/* You tell the site which option you bought; it finds the contract in the live
+   option chain and gives a rule-based hold / book profit / exit view, with a stop
+   and a target, refreshed every 30 seconds while the tab is open. */
+const MT={ list:(()=>{ try{ return JSON.parse(localStorage.getItem("sd_mytrades")||"[]"); }catch(e){ return []; } })(), live:{}, busy:false, at:0 };
+const mtSave=()=>{ try{ localStorage.setItem("sd_mytrades",JSON.stringify(MT.list.slice(-40))); }catch(e){} };
+const MT_ALIAS=[["bank nifty","BANKNIFTY"],["nifty bank","BANKNIFTY"],["banknifty","BANKNIFTY"],["bnf","BANKNIFTY"],["fin nifty","FINNIFTY"],["finnifty","FINNIFTY"],
+  ["midcap nifty","MIDCPNIFTY"],["midcpnifty","MIDCPNIFTY"],["midcap","MIDCPNIFTY"],["nifty 50","NIFTY"],["nifty50","NIFTY"],["nifty","NIFTY"],["sensex","SENSEX"],
+  ["crude oil","CRUDEOIL"],["crudeoil","CRUDEOIL"],["crude","CRUDEOIL"],["natural gas","NATURALGAS"],["naturalgas","NATURALGAS"],["natgas","NATURALGAS"],["nat gas","NATURALGAS"],
+  ["gold","GOLD"],["silver","SILVER"],["copper","COPPER"],["hdfc bank","HDFCBANK"],["hdfcbank","HDFCBANK"],["icici bank","ICICIBANK"],["icicibank","ICICIBANK"],["icici","ICICIBANK"],
+  ["state bank","SBIN"],["sbin","SBIN"],["sbi","SBIN"],["reliance","RELIANCE"],["ril","RELIANCE"],["infosys","INFY"],["infy","INFY"],["axis bank","AXISBANK"],["axis","AXISBANK"],
+  ["kotak","KOTAKBANK"],["federal bank","FEDERALBNK"],["federal","FEDERALBNK"],["coal india","COALINDIA"],["tata motors","TATAMOTORS"],["tata steel","TATASTEEL"],
+  ["bajaj finance","BAJFINANCE"],["bharti airtel","BHARTIARTL"],["airtel","BHARTIARTL"],["itc","ITC"],["tcs","TCS"],["l&t","LT"],["larsen","LT"],["hdfc amc","HDFCAMC"]];
+function mtParse(raw){
+  let t=" "+String(raw||"").toLowerCase().replace(/[,;|]/g," ").replace(/\s+/g," ")+" ";
+  const out={raw:String(raw||"").trim()};
+  // instrument: the longest name that matches, from the alias list or the watchlist
+  const names=MT_ALIAS.concat(S.universe.filter(u=>u.seg!=="OPT").flatMap(u=>[[String(u.sym||"").toLowerCase(),u.tkr],[String(u.tkr).toLowerCase(),u.tkr]]))
+    .filter(([n])=>n&&n.length>=2).sort((a,b)=>b[0].length-a[0].length);
+  for(const [n,k] of names){ const re=new RegExp("(^|[^a-z0-9&])"+n.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"(?=[^a-z0-9&]|$)"); if(re.test(t)&&S.universe.some(u=>u.tkr===k)){ out.tkr=k; t=t.replace(re,"$1 "); break; } }
+  const st=/(\d{2,6}(?:\.\d+)?)\s*(ce|pe|call|put)s?\b/.exec(t);
+  if(st){ out.strike=+st[1]; out.ty=/^c/.test(st[2])?"CE":"PE"; t=t.replace(st[0]," "); }
+  else { const ty=/\b(ce|pe|call|put)s?\b/.exec(t); if(ty){ out.ty=/^c/.test(ty[1])?"CE":"PE"; t=t.replace(ty[0]," "); } }
+  const bp=/(?:buy(?:ing)?\s*(?:value|price|rate)?|bought(?:\s*at)?|avg|average|price|premium|entry|@|at)\s*[:=\-]?\s*(?:rs\.?|₹)?\s*(\d+(?:\.\d+)?)/.exec(t);
+  if(bp){ out.buy=+bp[1]; t=t.replace(bp[0]," "); }
+  const lt=/(?:lots?|lot\s*size)\s*[:=\-]?\s*(\d+)/.exec(t)||/(\d+)\s*lots?\b/.exec(t);
+  if(lt){ out.lots=+lt[1]; t=t.replace(lt[0]," "); }
+  const q=/(?:qty|quantity|units?)\s*[:=\-]?\s*(\d+)/.exec(t)||/(\d+)\s*(?:qty|quantity)\b/.exec(t);
+  if(q){ out.qty=+q[1]; t=t.replace(q[0]," "); }
+  if(out.strike==null){ const nums=(t.match(/\d+(?:\.\d+)?/g)||[]).map(Number).filter(v=>v>=100); if(nums.length) out.strike=nums[0]; }
+  return out;
+}
+const mtMissing=p=>[!p.tkr&&"instrument",p.strike==null&&"strike",!p.ty&&"CE or PE",!(p.buy>0)&&"buy price",!(p.lots>0||p.qty>0)&&"lots"].filter(Boolean);
+async function mtEval(tr, force){
+  const L=MT.live[tr.id]=MT.live[tr.id]||{};
+  if(!force&&L.at&&Date.now()-L.at<25000) return;
+  L.at=Date.now(); L.err=null;
+  try{
+    const base="/api/chain?tkr="+encodeURIComponent(tr.tkr);
+    let d=await api(base+(tr.expiry?"&expiry="+tr.expiry:""), 20000);
+    let row=d.rows.find(r=>Math.abs(r.strike-tr.strike)<1e-6);
+    if(!row&&!tr.expiry&&d.expiries&&d.expiries[1]){ const d2=await api(base+"&expiry="+d.expiries[1],20000); const r2=d2.rows.find(r=>Math.abs(r.strike-tr.strike)<1e-6); if(r2){ d=d2; row=r2; } }
+    if(!row){ const ks=d.rows.map(r=>r.strike); throw new Error(`strike ${tr.strike} is not in the ${uni(tr.tkr).sym} option chain near the current price (strikes listed: ${nf(Math.min(...ks),0)} to ${nf(Math.max(...ks),0)}). Check the strike.`); }
+    const leg=tr.ty==="CE"?row.ce:row.pe; if(!leg||!(leg.ltp>0)) throw new Error("no traded price for this option yet");
+    if(!tr.expiry){ tr.expiry=d.expiry; mtSave(); }
+    Object.assign(L,{d, leg, lot:d.lot||uni(tr.tkr).lot||null, chainAt:Date.now()});
+  }catch(e){ L.err=e.message; }
+  if(onHomeTab("mine")) renderMine();
+}
+/* The advice: plain rules, shown with their reasons. */
+function mtAdvice(tr, L){
+  const u=uni(tr.tkr), d=L.d, leg=L.leg, dir=tr.ty==="CE"?1:-1, ltp=leg.ltp;
+  const bb=S.bars[tr.tkr]||[], q=S.quotes[tr.tkr]||{}, chart=q.ltp!=null?q.ltp:bb.length?bb[bb.length-1].c:null;
+  const spot=chart||d.spot, mismatch=chart!=null&&d.spot>0&&Math.abs(d.spot-chart)/chart>0.01;   // chain and chart disagree: don't estimate premiums
+  const lot=L.lot, qty=tr.qty>0?tr.qty:(tr.lots||0)*(lot||0), pnl=(ltp-tr.buy)*qty, pct=(ltp-tr.buy)/tr.buy*100;
+  const T=Math.max(d.daysOut/365,1/(365*24)), iv=impliedVol(ltp,d.spot,tr.strike,T,tr.ty)||leg.iv, g=iv?bs(d.spot,tr.strike,T,iv,tr.ty):null, delta=g&&!mismatch?Math.abs(g.delta):null;
+  const ctx=S.ctx[tr.tkr], tr0=trendOf(tr.tkr), lv=levelsNear(tr.tkr), b=S.bars[tr.tkr]||[], A=ctx&&ctx.E.ind.atr[b.length-2];
+  const sigs=sessionOpen(u)?(S.sigs[tr.tkr]||[]).filter(x=>x.res.state==="ACTIVE"):[], withSig=sigs.find(x=>(x.side==="BUY"?1:-1)===dir), against=sigs.find(x=>(x.side==="BUY"?1:-1)===-dir);
+  const nowM=(()=>{ const x=new Date(Date.now()+19800000); return x.getUTCHours()*60+x.getUTCMinutes(); })(), open=sessionOpen(u), toClose=(u.close||930)-nowM;
+  const expToday=d.daysOut<1;
+  // a stop and a target on the underlying, turned into option premiums with delta
+  const sup=dir>0?lv.dn[0]:lv.up[0], res=dir>0?lv.up[0]:lv.dn[0], a=A||spot*0.002;
+  let uSL=sup?sup.px-dir*0.2*a:spot-dir*1.5*a; if(dir*(spot-uSL)>3*a) uSL=spot-dir*1.5*a;
+  let uT=res&&dir*(res.px-spot)>0.5*a?res.px:spot+dir*2*a;
+  if(withSig){ uSL=withSig.res.stop!=null?withSig.res.stop:withSig.sl; uT=[withSig.t1,withSig.t2,withSig.t3].find(v=>dir*(v-spot)>0.3*a)||uT; }
+  const prem=v=>delta?Math.max(0.05,ltp+delta*dir*(v-spot)):null;
+  let slP=prem(uSL), tgP=prem(uT);
+  if(slP==null||!(slP<ltp)||!(tgP>ltp)){ slP=ltp*0.75; tgP=ltp*1.4; }
+  if(pct>=25) slP=Math.max(slP,tr.buy);                         // in good profit: never let it turn into a loss
+  const tdir=tr0?tr0.k:0, why=[];
+  why.push(`${u.sym} at ${px(spot,u)}: trend ${tr0?tr0.txt.toLowerCase():"not known"}${tr0?" ("+tr0.why+")":""}.`);
+  if(withSig) why.push(`A live ${withSig.side==="BUY"?"CALL":"PUT"} signal on this site agrees with your ${tr.ty} (since ${hhmm(withSig.ts)}).`);
+  if(against) why.push(`A live ${against.side==="BUY"?"CALL":"PUT"} signal on this site points the other way (since ${hhmm(against.ts)}).`);
+  if(sup) why.push(`Nearest ${dir>0?"support":"resistance"} ${px(sup.px,u)} (${sup.kind.toLowerCase()}); next ${dir>0?"resistance":"support"} ${res?px(res.px,u)+" ("+res.kind.toLowerCase()+")":"not close"}.`);
+  if(g) why.push(d.daysOut<1?`Option expires today: time decay is very fast, especially after 13:30.`:`Option: ${delta?`delta ${delta.toFixed(2)}, `:""}time decay about ₹${Math.abs(g.theta).toFixed(2)} a day per unit, ${d.daysOut.toFixed(1)} days to expiry.`);
+  if(mismatch) why.push(`The option chain's ${u.sym} price (${px(d.spot,u)}) differs from the chart price by over 1%, so premium stop and target use simple −25% / +40% steps.`);
+  let act, col;
+  const fav=tdir===dir||!!withSig, bad=tdir===-dir||!!against;
+  if(!open){ act="MARKET CLOSED"; col=C.mid; why.unshift("The market is closed; prices are the last traded. Re-check at the open; options can open far from these prices."); }
+  else if(toClose>=0&&toClose<=20){ act="EXIT BEFORE CLOSE"; col=C.warn; why.unshift(`${toClose} minutes to the close. Intraday option positions are best closed now; holding overnight adds gap and time-decay risk.`); }
+  else if(expToday&&nowM>=13*60+30&&!(fav&&pct>0)){ act=pct>0?"BOOK PROFIT":"EXIT"; col=pct>0?C.up:C.dn; why.unshift("Expiry day afternoon: time decay is fastest now and the premium can fall quickly even if the price holds."); }
+  else if(bad&&pct<0){ act="EXIT / CUT LOSS"; col=C.dn; why.unshift(`The market is moving against a ${tr.ty} (${against?"opposite signal":"trend against you"}). Waiting usually makes the loss bigger.`); }
+  else if(bad&&pct>=0){ act="BOOK PROFIT"; col=C.up; why.unshift("You are in profit but the market has turned against your option. Lock it in."); }
+  else if(fav&&pct>=30){ act="BOOK HALF, TRAIL THE REST"; col=C.up; why.unshift(`Up ${pct.toFixed(0)}% with the trend still on your side: take half off, move the stop for the rest to your buy price or better.`); }
+  else if(fav){ act="HOLD WITH STOP LOSS"; col=C.up; why.unshift("The trend is on your side. Hold, but exit at once if the stop loss trades."); }
+  else if(pct>=15){ act="BOOK PROFIT"; col=C.up; why.unshift("Sideways market: options lose value while price waits. A 15%+ gain is worth taking."); }
+  else if(pct<=-20){ act="EXIT / CUT LOSS"; col=C.dn; why.unshift("Down more than 20% with no trend to help. Cut it before it grows."); }
+  else { act="HOLD, TIGHT STOP"; col=C.warn; why.unshift("No clear direction. Hold only with a tight stop, and exit if nothing moves in the next 15–20 minutes."); }
+  return {act, col, why, ltp, pnl, pct, qty, lot, slP, tgP, uSL, uT, delta, spot, bid:leg.bid, ask:leg.ask, expiry:d.expiry};
+}
+function renderMine(){
+  if(!onHomeTab("mine")) return;
+  const el=document.getElementById("mineBody");
+  const today=istDay(Date.now()), list=MT.list.slice().reverse();
+  const card=tr=>{
+    const u=uni(tr.tkr), L=MT.live[tr.id]||{}, f=v=>"₹"+nf(v,2);
+    const head=`<div class="xh"><b class="xn">${esc(u.sym||tr.tkr)} ${tr.strike} ${tr.ty}</b><span class="xst" style="color:${C.mid}">${tr.day===today?"today":new Date(tr.day+"T00:00:00Z").toLocaleDateString("en-IN",{timeZone:"UTC",day:"2-digit",month:"short"})}</span></div>`+
+      `<div class="xsub">Bought at ₹${nf(tr.buy,2)} · ${tr.qty>0?tr.qty+" qty":tr.lots+" lot"+(tr.lots>1?"s":"")}${L.lot&&!(tr.qty>0)?" ("+tr.lots*L.lot+" qty)":""}${tr.expiry?" · expiry "+new Date(tr.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"}):""} · you typed “${esc(tr.raw||"")}”</div>`;
+    const btns=`<div class="xact"><button class="btn mtref" data-id="${tr.id}">Refresh now</button><button class="btn mtdel" data-id="${tr.id}">Remove</button></div>`;
+    if(L.err) return `<div class="xcard" style="--xc:${C.warn}">${head}<div class="xres" style="color:${C.warn}">Can't check this trade: ${esc(L.err)}</div>${btns}</div>`;
+    if(!L.leg) return `<div class="xcard" style="--xc:${C.mid}">${head}<div class="xres" style="color:${C.mid}">Finding the contract in the option chain…</div>${btns}</div>`;
+    const a=mtAdvice(tr,L), up=a.pnl>=0;
+    alerts.fire("mt|"+tr.id+"|"+a.act,`Your ${u.sym} ${tr.strike} ${tr.ty}: ${a.act} (now ₹${nf(a.ltp,2)}, ${up?"+":"−"}₹${nf(Math.abs(a.pnl),0)})`);
+    return `<div class="xcard" style="--xc:${a.col}">${head}`+
+      `<div class="mtadv" style="color:${a.col}">${a.act}</div>`+
+      `<div class="xlv"><div><span>Premium now</span><b>${f(a.ltp)}</b></div><div><span>Profit / loss</span><b style="color:${up?C.up:C.dn}">${up?"+":"−"}₹${nf(Math.abs(a.pnl),0)} (${a.pct>=0?"+":""}${a.pct.toFixed(1)}%)</b></div>`+
+        `<div><span>Stop loss (premium)</span><b style="color:${C.dn}">${f(a.slP)}</b></div><div><span>Target (premium)</span><b style="color:${C.up}">${f(a.tgP)}</b></div></div>`+
+      `<div class="xopt">Stop and target come from ${esc(u.sym)} at ${px(a.uSL,u)} and ${px(a.uT,u)}${a.delta?` (premium estimated with delta ${a.delta.toFixed(2)}; actual premiums will differ)`:" (premium levels are simple −25% / +40% steps)"}.`+
+        `${a.bid&&a.ask?` Bid ₹${nf(a.bid,2)} / ask ₹${nf(a.ask,2)}.`:""} Updated ${hms(L.chainAt)} IST.</div>`+
+      `<details class="xwhy" open><summary>Why</summary>${a.why.map(w=>"• "+esc(w)).join("<br>")}</details>${btns}</div>`;
+  };
+  if(!el.querySelector(".mtform")){
+    el.innerHTML=`<div class="mtform"><b>Which option did you take today?</b>
+      <span>Type it the way you would say it, for example: <i>sensex 82000 pe buy 230 lot 10</i> or <i>nifty 25200 ce @ 118 2 lots</i>.</span>
+      <div class="mtrow"><input id="mtIn" type="text" autocomplete="off" placeholder="e.g. banknifty 56000 ce buy 310 lot 2"><button class="btn pri" id="mtGo">Check my trade</button></div>
+      <div class="bmsg" id="mtMsg"></div></div><div id="mtList"></div>
+      <div class="sub" style="margin-top:12px">Rule-based guidance from the trend, live signals, nearby support and resistance, time to the close and to expiry. It is not advice and cannot see news or your broker position: always keep your own stop loss in your broker app. Trades are kept on this device only.</div>`;
+    const inp=document.getElementById("mtIn");
+    const go=()=>{ const p=mtParse(inp.value), miss=mtMissing(p), msg=document.getElementById("mtMsg");
+      if(miss.length){ msg.innerHTML=`I couldn't find the ${miss.join(", ")}. `+(p.tkr||p.strike||p.ty||p.buy?`I understood: ${[p.tkr&&esc(uni(p.tkr).sym),p.strike,p.ty,p.buy&&"buy ₹"+p.buy,p.lots&&p.lots+" lots",p.qty&&p.qty+" qty"].filter(Boolean).join(" · ")}. `:"")+
+        `Try like: <i>sensex 82000 pe buy 230 lot 10</i>.`; return; }
+      msg.textContent="";
+      const tr={id:Date.now().toString(36), raw:p.raw, tkr:p.tkr, strike:p.strike, ty:p.ty, buy:p.buy, lots:p.lots||0, qty:p.qty||0, day:istDay(Date.now()), at:Date.now()};
+      MT.list.push(tr); mtSave(); inp.value=""; renderMine(); mtEval(tr,true); };
+    document.getElementById("mtGo").onclick=go; inp.onkeydown=e=>{ if(e.key==="Enter") go(); };
+  }
+  const box=document.getElementById("mtList");
+  box.innerHTML=list.length?`<div class="xgrid" style="margin-top:14px">${list.map(card).join("")}</div>`:`<div class="empty" style="padding:22px 4px">No trades added yet.</div>`;
+  box.querySelectorAll(".mtdel").forEach(b=>b.onclick=()=>{ MT.list=MT.list.filter(x=>x.id!==b.dataset.id); delete MT.live[b.dataset.id]; mtSave(); renderMine(); });
+  box.querySelectorAll(".mtref").forEach(b=>b.onclick=()=>{ const tr=MT.list.find(x=>x.id===b.dataset.id); if(tr) mtEval(tr,true); });
+  MT.list.forEach(tr=>{ if(!MT.live[tr.id]) mtEval(tr); });
 }
 
 const tfName=m=>m>=60?(m/60)+"h":m+"m";
@@ -2128,8 +2367,8 @@ function recompute(tkr){
   const H=hb&&hb.length>=30?(hb===b?E:hb===sb?St:analyseTF(hb)):null;
   const ctx={u, E, St, H, tf:S.tf, stf, htf};
   S.ctx[tkr]=ctx; S.ind[tkr]=E.ind; S.struct[tkr]=chartStructure(E);
-  const smc=engine(ctx), nor=engineNormal(ctx,{},smc), tre=engineTrend(ctx,{},smc);
-  S.sigs[tkr]=smc.concat(nor,tre).sort((a,b)=>a.ts-b.ts); S.sigs[tkr].pending=smc.pending;
+  const smc=engine(ctx), nor=engineNormal(ctx,{},smc), tre=engineTrend(ctx,{},smc), orb=engineORB(ctx,{},smc);
+  S.sigs[tkr]=smc.concat(nor,tre,orb).sort((a,b)=>a.ts-b.ts); S.sigs[tkr].pending=smc.pending;
   S.status[tkr]=instrumentState(ctx,smc);
   S.marks=S.marks||{}; S.marks[tkr]=[];
 }
@@ -2577,9 +2816,9 @@ function statusOf(tkr){
     why:"This instrument has no exchange-listed options, so only the underlying levels are shown. "+st.why, fr, sig:st.sig};
   if(st.state==="CALL BUY SETUP") return {kind:"ce", label:"VALID CE SIGNAL", col:C.up, why:st.why, fr, sig:st.sig};
   if(st.state==="PUT BUY SETUP") return {kind:"pe", label:"VALID PE SIGNAL", col:C.dn, why:st.why, fr, sig:st.sig};
-  const lv2=(S.sigs[tkr]||[]).filter(x=>(x.grade==="N"||x.grade==="T")&&x.res.state==="ACTIVE");
-  const nl=lv2.filter(x=>x.grade==="T").pop()||lv2.pop();
-  if(nl){ const w=`${nl.grade==="T"?"Grade A trendline "+nl.setup:"Normal trend"} signal from ${hhmm(nl.ts)} (structure rules: ${st.why.charAt(0).toLowerCase()+st.why.slice(1)})`;
+  const lv2=(S.sigs[tkr]||[]).filter(x=>(x.grade==="N"||x.grade==="T"||x.grade==="O")&&x.res.state==="ACTIVE");
+  const nl=lv2.filter(x=>x.grade==="T").pop()||lv2.filter(x=>x.grade==="O").pop()||lv2.pop();
+  if(nl){ const w=`${nl.grade==="T"?"Grade A trendline "+nl.setup:nl.grade==="O"?"Opening range breakout":"Normal trend"} signal from ${hhmm(nl.ts)} (structure rules: ${st.why.charAt(0).toLowerCase()+st.why.slice(1)})`;
     if(!u.fo) return {kind:"ul", label:nl.side==="BUY"?"BUY SETUP · NO OPTIONS":"SELL SETUP · NO OPTIONS", col:nl.side==="BUY"?C.up:C.dn, why:w, fr, sig:nl};
     return {kind:nl.side==="BUY"?"ce":"pe", label:nl.side==="BUY"?"VALID CE SIGNAL":"VALID PE SIGNAL", col:nl.side==="BUY"?C.up:C.dn, why:w, fr, sig:nl, normal:true}; }
   return {kind:st.state==="WAIT"?"wait":"none", label:"NO VALID SIGNAL", col:st.state==="WAIT"?C.warn:C.mid, why:(st.state==="WAIT"?"Setup forming. ":"")+st.why, fr, pending:st.pending};
@@ -2721,7 +2960,7 @@ function renderAnalysis(){
       </div>`;
     } else if(u.fo) html+=`<div class="why">Finding the option contract and its live premium…</div>`;
     else html+=kv([["Entry",f(s.entry)],["Stop loss",f(s.sl)],["Targets",`${f(s.t1)} / ${f(s.t2)} / ${f(s.t3)}`],["Reward : risk (T1)",s.rr.toFixed(1)+" : 1"]]);
-    html+=`<div class="rs"><b>Why this signal</b> (${s.grade==="N"?"normal trend signal":s.grade==="T"?"grade A trendline "+s.setup:"grade "+s.grade}, signal source: ${src.label})<br>${(s.reasons||[]).map(r=>"✓ "+esc(r)).join("<br>")}</div>`;
+    html+=`<div class="rs"><b>Why this signal</b> (${s.grade==="N"?"normal trend signal":s.grade==="T"?"grade A trendline "+s.setup:s.grade==="O"?"opening range breakout":"grade "+s.grade}, signal source: ${src.label})<br>${(s.reasons||[]).map(r=>"✓ "+esc(r)).join("<br>")}</div>`;
     if(src.items.length) html+=`<div class="newsrisk"><b>${src.label}:</b> ${src.items.slice(0,2).map(n=>`“${esc(n.title)}” (${esc(n.source)}, ${n.published?hhmm(n.published):"time not given"})`).join("; ")}. ${esc(src.note)}</div>`;
   } else if(st.pending){
     html+=kv([["Waiting to enter at",f(st.pending.entry)],["Stop loss",f(st.pending.sl)],["Targets",`${f(st.pending.t1)} / ${f(st.pending.t2)} / ${f(st.pending.t3)}`]]);
@@ -2862,18 +3101,28 @@ function renderHome(){
     w.appendChild(t);
   });
   renderStrictSegs();
-  { const xs=S.tab==="scalp"||S.tab==="btst";
+  { const xs=S.tab==="scalp"||S.tab==="btst"||S.tab==="mine";
+    document.getElementById("minePage").hidden=S.tab!=="mine";
+    if(S.tab==="mine"&&!document.getElementById("mineBody").innerHTML) renderMine();
     ["homeTabNote","homeSigs","homeSigNote"].forEach(id=>document.getElementById(id).hidden=xs);
     document.getElementById("homeSigTitle").parentElement.hidden=xs;
     document.getElementById("scalpPage").hidden=S.tab!=="scalp"; document.getElementById("btstPage").hidden=S.tab!=="btst";
     if(S.tab==="scalp"){ if(XS.scalp.shownAt!==XS.scalp.at||!document.getElementById("scalpBody").innerHTML) renderScalp(); loadScalp(); }
     if(S.tab==="btst"){ if(XS.btst.shownAt!==XS.btst.at||!document.getElementById("btstBody").innerHTML) renderBtst(); loadBtst(); } }
   const past=tally(pastSignals(true)), nAct=all.filter(x=>x.res.state==="ACTIVE").length;
-  document.getElementById("hero").innerHTML=
-    `<div><span>Active now</span><b style="color:${nAct?C.up:C.fg}">${nAct}</b><small>signals being followed</small></div>`+
-    `<div><span>Signals today</span><b>${all.length}</b><small>${all.filter(x=>tabOf(x)==="strict").length} strict, ${all.filter(x=>tabOf(x)==="other").length} other, ${all.filter(x=>tabOf(x)==="normal").length} normal</small></div>`+
+  const vis=all.filter(x=>x.day===istDay(Date.now())&&(tabOf(x)!=="other"||isFocus(x.tkr))), vAct=vis.filter(x=>{ const t=S.otr[sigKey(x)]; return (t&&t.entry!=null?t.state:x.res.state)==="ACTIVE"&&sessionOpen(uni(x.tkr)); }).length;
+  const hero=document.getElementById("hero"); hero.classList.add("clickable");
+  hero.innerHTML=
+    `<button data-t="active" class="${S.tab==="active"?"on":""}"><span>Active now</span><b style="color:${vAct?C.up:C.fg}">${vAct}</b><small>tap to see them</small></button>`+
+    `<button data-t="today" class="${S.tab==="today"?"on":""}"><span>Signals today</span><b>${vis.length}</b><small>${vis.filter(x=>tabOf(x)==="strict").length} strict, ${vis.filter(x=>tabOf(x)==="other").length} other, ${vis.filter(x=>tabOf(x)==="normal").length} normal · tap to see</small></button>`+
     `<div><span>Strict win rate</span><b>${past.rate==null?"—":past.rate.toFixed(0)+"%"}</b><small>${past.won} won, ${past.lost} lost · see Results</small></div>`+
     `<div><span>Instruments</span><b>${S.universe.filter(u=>u.seg!=="OPT").length}</b><small>indices, stocks, MCX</small></div>`;
+  hero.querySelectorAll("button[data-t]").forEach(b=>b.onclick=()=>{ setTab(b.dataset.t); document.getElementById("homeSigTitle").scrollIntoView({behavior:"smooth",block:"start"}); });
+  // sound / notification for every new strict or focus-list signal, whichever tab is open
+  vis.filter(x=>x.res.state==="ACTIVE"&&(tabOf(x)==="strict"||tabOf(x)==="other")).forEach(x=>
+    alerts.fire(takeKey(x)+"|new",`New ${tabOf(x)} signal: ${x.sym} ${x.side==="BUY"?"BUY CALL (CE)":"BUY PUT (PE)"} · entry ${px(x.entry,uni(x.tkr))} · SL ${px(x.sl,uni(x.tkr))}`));
+  S.universe.forEach(u=>{ const pd=(S.sigs[u.tkr]||{}).pending; if(pd&&(pd.grade==="A"||isFocus(u.tkr)))
+    alerts.fire(u.tkr+"|"+pd.ts+"|wait",`${u.sym}: ${pd.d>0?"CALL":"PUT"} setup confirmed, waiting for entry at ${px(pd.entry,u)}`); });
   renderTrades();
 }
 
@@ -2891,12 +3140,12 @@ function setStrict(v){
   if(S.page==="results") renderResults();
 }
 function renderStrictSegs(){
-  const today=S.universe.filter(u=>u.seg!=="OPT").reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]), cnt=t=>today.filter(x=>tabOf(x)===t).length;
+  const today=S.universe.filter(u=>u.seg!=="OPT").reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]), cnt=t=>today.filter(x=>tabOf(x)===t&&(t!=="other"||isFocus(x.tkr))).length;
   const pick=it=>{ if(S.tab!==it.v) setTab(it.v); };
   const sc=XS.scalp.cache?Object.values(XS.scalp.cache).reduce((t,r)=>t+r.sigs.filter(x=>x.day===istDay(Date.now())).length,0):null;
   seg(document.getElementById("strictHome"),[{l:`Strict signals · ${cnt("strict")}`,v:"strict"},{l:`Other signals · ${cnt("other")}`,v:"other"},{l:`Normal signals · ${cnt("normal")}`,v:"normal"},
-    {l:sc==null?"Scalp":`Scalp · ${sc}`,v:"scalp"},{l:XS.btst.picks==null?"BTST":`BTST · ${XS.btst.picks}`,v:"btst"}],it=>S.tab===it.v,pick);
-  seg(document.getElementById("strictRes"),[{l:"Strict signals",v:"strict"},{l:"All structure signals",v:"other"},{l:"Trendline signals",v:"trend"},{l:"Normal signals",v:"normal"}],
+    {l:sc==null?"Scalp":`Scalp · ${sc}`,v:"scalp"},{l:XS.btst.picks==null?"BTST":`BTST · ${XS.btst.picks}`,v:"btst"},{l:MT.list.length?`My trades · ${MT.list.filter(x=>x.day===istDay(Date.now())).length}`:"My trades",v:"mine"}],it=>S.tab===it.v,pick);
+  seg(document.getElementById("strictRes"),[{l:"Strict signals",v:"strict"},{l:"All structure signals",v:"other"},{l:"Trendline signals",v:"trend"},{l:"Opening range",v:"orb"},{l:"Normal signals",v:"normal"}],
     it=>resTab()===it.v,it=>{ S.resTab=it.v; renderResults(); });
 }
 /* Every signal the rules would have given over the loaded history, with how it ended.
@@ -2905,7 +3154,8 @@ function pastSignals(strict){
   const out=[];
   S.universe.filter(u=>u.seg!=="OPT").forEach(u=>{
     const ctx=S.ctx[u.tkr]; if(!ctx) return;
-    const list=strict==="normal"?engineNormal(ctx,{all:true,lite:true},engine(ctx,{all:true,lite:true}))
+    const list=strict==="orb"?engineORB(ctx,{all:true,lite:true},engine(ctx,{all:true,lite:true}))
+      :strict==="normal"?engineNormal(ctx,{all:true,lite:true},engine(ctx,{all:true,lite:true}))
       :strict==="trend"?engineTrend(ctx,{all:true,lite:true},engine(ctx,{all:true,lite:true})):engine(ctx,{all:true,strict,lite:true});
     list.forEach(x=>{ if(x.res.state==="EXPIRED") out.push(x); });
   });
@@ -2920,10 +3170,10 @@ function tally(list){
 function renderResults(){
   if(S.page!=="results") return;
   renderStrictSegs();
-  const RT=resTab(), strictL=pastSignals(true), allL=pastSignals(false), normL=pastSignals("normal"), trL=pastSignals("trend");
-  const cur=RT==="normal"?normL:RT==="strict"?strictL:RT==="trend"?trL:allL, t=tally(cur);
-  const days=[...new Set(allL.concat(strictL,normL,trL).map(x=>x.day))].sort();
-  const curName=RT==="normal"?"Normal signals":RT==="strict"?"Strict signals":RT==="trend"?"Trendline signals (grade A)":"All structure signals";
+  const RT=resTab(), strictL=pastSignals(true), allL=pastSignals(false), normL=pastSignals("normal"), trL=pastSignals("trend"), orL=pastSignals("orb");
+  const cur=RT==="normal"?normL:RT==="strict"?strictL:RT==="trend"?trL:RT==="orb"?orL:allL, t=tally(cur);
+  const days=[...new Set(allL.concat(strictL,normL,trL,orL).map(x=>x.day))].sort();
+  const curName=RT==="normal"?"Normal signals":RT==="strict"?"Strict signals":RT==="trend"?"Trendline signals (grade A)":RT==="orb"?"Opening range signals":"All structure signals";
   const rR=v=>`<span style="color:${v>0.005?C.up:v<-0.005?C.dn:C.fg}">${v>=0?"+":"−"}${Math.abs(v).toFixed(2)}R</span>`;
   const pc=v=>v==null?"—":v.toFixed(0)+"%";
   const dfmt=d=>new Date(d+"T00:00:00Z").toLocaleDateString("en-IN",{timeZone:"UTC",day:"2-digit",month:"short"});
@@ -2944,7 +3194,7 @@ function renderResults(){
     `<div><span>Signals</span><b>${x.n}</b></div><div><span>Won / lost</span><b><span style="color:${C.up}">${x.won}</span> / <span style="color:${C.dn}">${x.lost}</span></b></div>`+
     `<div><span>Win rate</span><b>${pc(x.rate)}</b></div><div><span>Per signal</span><b>${rR(x.avg)}</b></div>`+
     `<div><span>Total</span><b>${rR(x.net)}</b></div><div><span>Per day</span><b>${days.length?(x.n/days.length).toFixed(1):"—"}</b></div></div></div>`;
-  document.getElementById("resCompare").innerHTML=`<div class="cmp">${block("Strict signals",tally(strictL),RT==="strict")}${block("All structure signals",tally(allL),RT==="other")}${block("Trendline signals (grade A)",tally(trL),RT==="trend")}${block("Normal signals",tally(normL),RT==="normal")}</div>`;
+  document.getElementById("resCompare").innerHTML=`<div class="cmp">${block("Strict signals",tally(strictL),RT==="strict")}${block("All structure signals",tally(allL),RT==="other")}${block("Trendline signals (grade A)",tally(trL),RT==="trend")}${block("Opening range signals",tally(orL),RT==="orb")}${block("Normal signals",tally(normL),RT==="normal")}</div>`;
   // running total
   const svg=document.getElementById("resCurve");
   if(cur.length<2) svg.innerHTML=`<text x="400" y="130" text-anchor="middle" font-size="15" fill="${C.low}">Not enough finished signals to draw yet</text>`;
@@ -2984,12 +3234,14 @@ function renderResults(){
    option premium, and the trade is then followed on that option's own candles. */
 S.otr={}; S.lite={};
 const tick05=v=>Math.max(0.05,Math.round(v*20)/20);
-const sigKey=s=>S.tf+"|"+s.tkr+"|"+s.ts+"|"+s.side+(s.grade==="N"?"|N":s.grade==="T"?"|T":"");
+const sigKey=s=>S.tf+"|"+s.tkr+"|"+s.ts+"|"+s.side+(s.grade==="N"?"|N":s.grade==="T"?"|T":s.grade==="O"?"|O":"");
 const pm=v=>v>=100?nf(v,1):nf(v,2);
 function homeSignals(){
   const all=S.universe.filter(u=>u.seg!=="OPT").reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);
   const live=s=>{ const t=S.otr[sigKey(s)]; return (t&&t.entry!=null?t.state:s.res.state)==="ACTIVE"; };
-  return all.filter(x=>tabOf(x)===S.tab).sort((a,b)=>(live(a)?0:1)-(live(b)?0:1)||b.ts-a.ts);
+  const want=S.tab==="active"?(x=>live(x)&&sessionOpen(uni(x.tkr))&&(tabOf(x)!=="other"||isFocus(x.tkr))):S.tab==="today"?(x=>tabOf(x)!=="other"||isFocus(x.tkr))
+    :S.tab==="other"?(x=>tabOf(x)==="other"&&isFocus(x.tkr)):(x=>tabOf(x)===S.tab);
+  return all.filter(want).sort((a,b)=>(live(a)?0:1)-(live(b)?0:1)||b.ts-a.ts);
 }
 async function liteChain(tkr){
   const c=S.lite[tkr];
@@ -3196,23 +3448,33 @@ function renderTrades(){
   if(S.page!=="home") return;
   const el=document.getElementById("homeSigs"), list=homeShown();
   const models=list.map(s=>({s,m:tradeModel(s)})), nLive=models.filter(x=>x.m.active).length;
-  document.getElementById("homeSigTitle").textContent=({strict:"Strict signals",other:"Other signals",normal:"Normal signals"}[S.tab])+" ("+nLive+" active)";
-  document.getElementById("homeTabNote").textContent=S.tab==="normal"
+  document.getElementById("homeSigTitle").textContent=({strict:"Strict signals",other:"Other signals",normal:"Normal signals",active:"All active signals",today:"All signals today"}[S.tab]||"Signals")+" ("+nLive+" active)";
+  document.getElementById("homeTabNote").textContent=S.tab==="active"?"Every signal still running now, from the Strict, Other (focus list) and Normal tabs. Tap a tab above to go back."
+    :S.tab==="today"?"Every signal given today, from the Strict, Other (focus list) and Normal tabs, running ones first. Tap a tab above to go back."
+    :S.tab==="normal"
     ?"Trend signals from standard market analysis: the 1-hour trend (EMA 20 over EMA 50), a pull-back to EMA 20 on the chart timeframe, then a candle that resumes the trend with RSI, MACD and ADX agreeing. They come more often than structure signals and are checked less strictly, so expect more losers; see their own record on the Results page."
     :S.strict
     ?"Grade A: every rule passed, the setup zone was an order block or fair value gap, the break was a structure shift or came on high volume, and there is room for 2R or more. They still lose sometimes."
-    :"Two kinds: grade A trendline trades (a breakout of a falling or rising trendline, or a bounce off it on its third touch, with the 1-hour trend, RSI, MACD, ADX and volume agreeing and room of 2R or more), and grade B structure signals (core rules passed, not the extra grade A conditions). Check each one's record on the Results page.";
+    :"For your focus list only (NIFTY 50, BANK NIFTY, SENSEX, HDFC BANK, CRUDE OIL, RELIANCE, ICICI BANK, SBI, NATURAL GAS). Three kinds: opening range breakouts (the first 15-minute range broken with the 1-hour trend and momentum; usually about one a day per instrument), grade A trendline trades (a breakout of a falling or rising trendline, or a bounce off it on its third touch, with the 1-hour trend, RSI, MACD, ADX and volume agreeing and room of 2R or more), and grade B structure signals (core rules passed, not the extra grade A conditions). Check each one's record on the Results page.";
   document.getElementById("homeSigNote").textContent=list.length
     ?"Buy price is the option's actual price when the signal fired. Stop loss and targets come from the chart's stop and targets. \"I took this entry\" is remembered on this device only."
     :"";
 
   el.innerHTML="";
+  const waits=S.tab==="normal"?[]:S.universe.filter(u=>u.seg!=="OPT").map(u=>{ const pd=(S.sigs[u.tkr]||{}).pending; return pd?{u,pd}:null; }).filter(Boolean)
+    .filter(({u,pd})=>S.tab==="strict"?pd.grade==="A":S.tab==="other"?pd.grade!=="A"&&isFocus(u.tkr):pd.grade==="A"||isFocus(u.tkr));
+  if(waits.length){ const w=document.createElement("div"); w.className="waits";
+    w.innerHTML=`<h4>Confirmed, waiting for entry (${waits.length})</h4>`+waits.map(({u,pd})=>{ const f=v=>px(v,u), until=pd.ts+18*S.tf*60000;
+      return `<div class="wait" style="--xc:${pd.d>0?C.up:C.dn}"><b>${esc(u.sym)}</b><span class="chip" style="background:${pd.d>0?C.up:C.dn}">${pd.d>0?"CALL":"PUT"}</span>`+
+        `<span>Grade ${pd.grade} setup at ${hhmm(pd.ts)}. Enter only if price comes back to <b>${f(pd.entry)}</b> (${esc(pd.limit||"limit")}) before ${hhmm(until)}. `+
+        `Stop ${f(pd.sl)}, targets ${f(pd.t1)} / ${f(pd.t2)} / ${f(pd.t3)}. Cancelled if Target 1 trades first.</span></div>`; }).join("");
+    el.appendChild(w); }
   const total=homeSignals(), boxes={};
   GROUPS.forEach(g=>{
     const mine=total.filter(s=>uni(s.tkr).seg===g[0]), act=models.filter(x=>uni(x.s.tkr).seg===g[0]&&x.m.active).length;
     const w=grpBox(g[0], mine.length?`${mine.length} signal${mine.length===1?"":"s"} · ${act} active`:"no signals");
     const grid=document.createElement("div"); grid.className="trades"; w.appendChild(grid);
-    if(!mine.length) grid.outerHTML=`<div class="none">No ${S.tab} signals in ${g[1].toLowerCase()} today.</div>`;
+    if(!mine.length) grid.outerHTML=`<div class="none">No ${({active:"active",today:""}[S.tab]??S.tab)} signals in ${g[1].toLowerCase()} today.</div>`;
     else if(mine.length>6){ const n=document.createElement("div"); n.className="none"; n.textContent=`Showing the latest 6 of ${mine.length}. The rest are on the Charts & signals page.`; w.appendChild(n); }
     boxes[g[0]]=w.querySelector(".trades"); el.appendChild(w);
   });
@@ -3268,7 +3530,7 @@ function renderTrades(){
 
     const b=document.createElement("div"); b.className="trade "+cls;
     b.innerHTML=`<div class="tr1"><span class="nm">${esc(m.name)}</span><span class="chip" style="background:${m.chipCol}">${esc(m.chip)}</span>`+
-        `${s.strict?'<span class="chip ghost">STRICT</span>':s.grade==="N"?'<span class="chip ghost">NORMAL</span>':s.grade==="T"?'<span class="chip ghost">TRENDLINE · A</span>':""}<span class="st" style="color:${bcol};border-color:${bcol}">${badge}</span></div>`+
+        `${s.strict?'<span class="chip ghost">STRICT</span>':s.grade==="N"?'<span class="chip ghost">NORMAL</span>':s.grade==="T"?'<span class="chip ghost">TRENDLINE · A</span>':s.grade==="O"?'<span class="chip ghost">OPENING RANGE</span>':""}<span class="st" style="color:${bcol};border-color:${bcol}">${badge}</span></div>`+
       `<div class="tr2">${m.sub}</div>`+
       `<div class="nowrow"><div><span class="lbl">${m.active?"Current price":"Closed at"}</span>`+
         `<b class="big" style="color:${up?C.up:C.dn}">${f(m.now)}</b><span class="pc" style="color:${up?C.up:C.dn}">${pc}</span></div>`+
@@ -3779,8 +4041,8 @@ function renderSide(){
     ${lv("Risk / share",px(s.risk,u))}${lv("Reward : risk to T1",s.rr.toFixed(1)+" : 1",s.rr>=2?C.up:C.fg)}
     ${lv("Open P&L",(s.res.R>=0?"+":"")+s.res.R.toFixed(2)+"R", s.res.R>=0?C.up:C.dn)}
     <div style="margin-top:12px" class="m">
-      <span style="font-size:10.5px;color:${C.low}">GRADE</span> <b style="color:${s.grade==="A"||s.grade==="T"?C.up:s.grade==="N"?C.key:C.warn}">${s.grade==="N"?"Normal":s.grade==="T"?"A (trendline)":s.grade}</b>
-      <span style="font-size:11px;color:${C.mid}">${s.grade==="A"?"zone + shift/volume + 2R room":s.grade==="T"?"trendline "+s.setup+" with 1h trend, momentum and 2R room":s.grade==="N"?"trend pull-back, EMA / RSI / MACD / ADX":"core rules only"}</span></div>
+      <span style="font-size:10.5px;color:${C.low}">GRADE</span> <b style="color:${s.grade==="A"||s.grade==="T"?C.up:s.grade==="N"||s.grade==="O"?C.key:C.warn}">${s.grade==="N"?"Normal":s.grade==="T"?"A (trendline)":s.grade==="O"?"Opening range":s.grade}</b>
+      <span style="font-size:11px;color:${C.mid}">${s.grade==="A"?"zone + shift/volume + 2R room":s.grade==="T"?"trendline "+s.setup+" with 1h trend, momentum and 2R room":s.grade==="O"?"first 15-min range broken with 1h trend and momentum":s.grade==="N"?"trend pull-back, EMA / RSI / MACD / ADX":"core rules only"}</span></div>
     </div>
     ${o?`<div style="margin-top:14px">
       <div class="hd" style="padding:0 0 6px">Option leg${o.live?"":" (estimated IV)"}</div>

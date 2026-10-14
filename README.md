@@ -133,7 +133,20 @@ T1/T2/T3 - 290/350/390
 - one at a time per instrument, never against a live structure signal, and none in the first 15 or last 45 minutes.
 They use closed candles only, so they never change after they appear. Being looser, they lose more often; the Results page shows their own record separately.
 
-**Home sub-tabs** — Strict signals, Other signals, Normal signals, Scalp and BTST. (Scalp and BTST used to be separate menu pages; old links to them now open the right Home tab.)
+**Focus list and the Other tab** — the Other tab now covers only NIFTY 50, BANK NIFTY, SENSEX, HDFC BANK, CRUDE OIL, RELIANCE, ICICI BANK, SBI and NATURAL GAS (instruments with busy option markets). It shows three kinds of signals for them:
+- opening range breakouts (new): the first 15 minutes set a range (NSE 09:15–09:30; MCX 09:00–09:15 and 18:00–18:15). A CALL needs a strong candle closing 0.1 ATR above the range high before 13:30 (MCX 13:00 / 22:00), a range 0.5–3 ATR tall, the 1-hour close above EMA 20, RSI 55–75, above VWAP where there is volume, and no level in the way closer than 1.2R. Stop at the middle of the range, targets 1R / 2R / 3R, one trade per range per day. PUT is the mirror;
+- grade A trendline trades and grade B structure signals, as before, now for the focus list only.
+Results has an "Opening range" record.
+
+**Active now / Signals today** — tap either box on Home to list those signals (all types).
+
+**Waiting for entry** — Strict and Other show setups that are confirmed but waiting for price to come back to the entry, so you see them before they fill.
+
+**Updates** — the open chart and one focus instrument refresh every 5 seconds (each focus instrument about every 45 s), the rest in rotation; every 20 s while the page is in the background; everything at once when you come back to the page. With alerts on, every new strict or focus-list signal (and every confirmed setup) beeps and notifies, whichever tab is open.
+
+**My trades (on Home)** — type the option you bought, e.g. "sensex 82000 pe buy 230 lot 10". The site finds the contract in the live option chain (nearest expiry, or the next one if the strike is only there), shows the live premium and your profit or loss, and gives a rule-based view: EXIT / CUT LOSS, BOOK PROFIT, BOOK HALF AND TRAIL, HOLD WITH STOP LOSS, HOLD WITH A TIGHT STOP, EXIT BEFORE CLOSE or MARKET CLOSED, with the reasons (trend, live signals for or against, support and resistance, time to close, expiry) and a premium stop and target worked out from the underlying's levels with the option's delta. It refreshes every 30 s while open, alerts you when the advice changes, and keeps your trades on that device only. It cannot see news or your broker account.
+
+**Home sub-tabs** — Strict signals, Other signals, Normal signals, Scalp, BTST and My trades. (Scalp and BTST used to be separate menu pages; old links to them now open the right Home tab.)
 
 **Other signals: grade A trendline trades** — besides the grade B structure signals, the Other tab shows trendline signals for intraday options:
 - lines join the two most recent confirmed major swing points (5 candles each side), so a line never moves once drawn;
