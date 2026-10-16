@@ -658,6 +658,8 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
 
 .fnof{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:12px 0 4px}
 .fnof input{flex:1 1 200px;font:600 15px var(--s);padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--fg);min-height:42px}
+
+.bbar input{font:600 14px var(--s);padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--fg)}
 </style>
 </head>
 <body>
@@ -724,6 +726,7 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
   <div id="scalpBody"></div>
 </div>
 <div class="xsec" id="fnoPage" hidden><h3 class="xsh">All F&amp;O — call / put buy signals on every instrument with options</h3><div id="fnoBody"></div></div>
+<div class="xsec" id="tgPage" hidden><h3 class="xsh">Telegram signals — calls from your sources, checked against the market</h3><div id="tgBody"></div></div>
 <div class="xsec" id="minePage" hidden><h3 class="xsh">My trades — advice on the option you took</h3><div id="mineBody"></div></div>
 <div class="xsec" id="btstPage" hidden>
   <h3 class="xsh">BTST — buy today, sell tomorrow</h3>
@@ -753,6 +756,8 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
   <h3>By day</h3>
   <div class="tblw"><table class="rt" id="resByDay"></table></div>
   <div class="read" id="resNote" style="color:var(--mid);font-size:14.5px"></div>
+  <h3>Services this site uses, and what they cost</h3>
+  <div id="svcBox"><div class="none">Loading…</div></div>
 </section>
 
 <section class="page" id="stratPage" hidden>
@@ -967,7 +972,8 @@ async function boot(){
     S.fromCache=null;
     loadNews(true);                       // in the background: headlines for warnings on signals
     setConn(S.failedLoads?"err":"ok", S.failedLoads?liveLabel()+" · "+S.failedLoads+" symbols failed to load":liveLabel());
-    startPolling(); xPoll(); setTimeout(()=>loadFno(true),3000); setTimeout(()=>{ if(Date.now()>(S.pauseUntil||0)&&S.universe.some(u=>sessionOpen(u))){ loadScalp(true); setTimeout(()=>loadBtst(true),30000); } },60000);   // counts for the Scalp and BTST tabs
+    startPolling(); xPoll(); setTimeout(()=>loadFno(true),3000);
+    if(tguBlob()) setTimeout(()=>{ tguStatus().then(()=>loadTg(true)); },5000); setTimeout(()=>{ if(Date.now()>(S.pauseUntil||0)&&S.universe.some(u=>sessionOpen(u))){ loadScalp(true); setTimeout(()=>loadBtst(true),30000); } },60000);   // counts for the Scalp and BTST tabs
   }catch(e){
     if(e.status===401){ S.ready=false; S.cacheShown=false; return boot(); }
     const busy=/rate limit|not answering|did not answer|slowing down/i.test(e.message);
@@ -1020,7 +1026,7 @@ function startPolling(){
     if(document.hidden&&(hidTick++%4)) return;  // in the background: every 20 s instead of every 5 s
     busy=true;
     try{
-      const q = await api(quotesPath()); S.quotes = q.quotes;
+      const q = await api(quotesPath()); S.quotes = q.quotes; S.quotesAt = q.ts||Date.now();
       await loadCandles(S.tkr);                 // active symbol on every tick
       try{ await loadMTF(S.tkr); }catch(e){}
       recompute(S.tkr);
@@ -1038,11 +1044,16 @@ function startPolling(){
         try{ await loadCandles(o.tkr); await loadMTF(o.tkr); recompute(o.tkr); }catch(e){} }
       renderLive();
       pumpTrades();                             // option contracts behind the home-page signals
-      setConn("ok", liveLabel()); S.lastErr=null;
+      S.pollFails=0; S.lastErr=null;
+      const age=Date.now()-(S.quotesAt||Date.now());
+      setConn("ok", age>60000?"Prices from "+hhmm(S.quotesAt)+" · updating":liveLabel());
     }catch(e){
       if(e.status===401){ clearInterval(pollTimer); pollTimer=null; S.ready=false; boot(); return; }   // login ran out
-      if(/rate limit|slowing down/i.test(e.message)){ S.pauseUntil=Date.now()+30000; setConn("err","Fyers is busy · prices may be up to a minute old · resuming shortly"); }
-      else setConn("err","Feed error"); S.lastErr=e.message; }
+      S.pollFails=(S.pollFails||0)+1; S.lastErr=e.message;
+      if(/rate limit|slowing down/i.test(e.message)){ S.pauseUntil=Date.now()+30000; setConn("err","Fyers is busy · showing prices from "+hhmm(S.quotesAt||Date.now())+" · resuming shortly"); }
+      // one missed update is normal on a busy connection; only say something if it keeps happening
+      else if(S.pollFails>=3) setConn("err","Prices from "+hhmm(S.quotesAt||Date.now())+" · "+(e.status===0?e.message:"server: "+e.message)+" · retrying");
+    }
     finally{ busy=false; }
   }, (S.feed&&S.feed.pollMs)||5000);
 }
@@ -1084,7 +1095,7 @@ let rafPending=false;
 function soon(){ if(rafPending) return; rafPending=true; requestAnimationFrame(()=>{ rafPending=false; if(S.ready) renderLive(); }); }
 async function refreshAll(){
   S.lastFull=Date.now();
-  const qp=api(quotesPath()).then(q=>{ S.quotes=q.quotes; S.quotesAt=Date.now(); saveCache(); soon(); }).catch(()=>{});
+  const qp=api(quotesPath()).then(q=>{ S.quotes=q.quotes; S.quotesAt=q.ts||Date.now(); saveCache(); soon(); }).catch(()=>{});
   const order=[S.tkr].concat(S.universe.filter(u=>u.tkr!==S.tkr&&u.seg!=="OPT").map(u=>u.tkr));
   let next=0, failed=0;
   const worker=async()=>{ while(next<order.length){ const t=order[next++];
@@ -1943,7 +1954,8 @@ function xPoll(){
     if(!S.universe.some(u=>sessionOpen(u))&&(XS.closedTick=(XS.closedTick||0)+1)%15) return;   // markets shut: every 5 minutes
     if(onHomeTab("scalp")) loadScalp(); else if(onHomeTab("btst")) loadBtst();
     if(onHomeTab("mine")) MT.list.forEach(tr=>mtEval(tr));
-    if(onHomeTab("fno")) loadFno(); else if(Date.now()-FN.at>120000) loadFno(true); },20000);
+    if(onHomeTab("fno")) loadFno(); else if(Date.now()-FN.at>120000) loadFno(true);
+    if(onHomeTab("tg")||TGR.src.some(s=>s.kind==="acct"&&s.enabled)) loadTg(); },15000);
 }
 
 /* ------------------------------------------ trendline (grade A) signals -- */
@@ -2341,6 +2353,423 @@ function renderFno(){
   el.querySelectorAll(".fnochart").forEach(b=>b.onclick=()=>{ const t=b.dataset.tkr, s=d.signals.find(x=>x.tkr===t);
     if(S.universe.some(u=>u.tkr===t)) return goChart(t);
     pickInstrument({sym:s.fy||t, short:s.sym, name:s.sym, exch:(s.fy||t).slice(0,3), type:s.seg, lot:s.lot, fo:true}); });
+}
+
+/* ------------------------------------------------------- TELEGRAM SIGNALS -- */
+/* Reads trade calls from Telegram sources you add, checks each one against live
+   market data with the same data rules as the rest of the site, and keeps a
+   track record per source from the moment each call was published. It never
+   copies a call into the site's own signals and never turns a failed call into
+   the opposite trade. Everything is kept on this device. */
+const TGR={ src:(()=>{ try{ return JSON.parse(localStorage.getItem("sd_tg_src")||"[]"); }catch(e){ return []; } })(),
+  msgs:{}, ev:(()=>{ try{ return JSON.parse(localStorage.getItem("sd_tg_ev")||"{}"); }catch(e){ return {}; } })(),
+  busy:false, at:0, err:{}, bot:null, claims:{}, promo:{}, view:store.get("sd_tg_view","valid"), minRR:+store.get("sd_tg_rr","1.2")||1.2, names:{} };
+const tgKey=s=>s.kind+":"+(s.kind==="bot"||s.kind==="acct"?s.chat:s.name.toLowerCase());
+// sources you asked for (added once on each device; you can turn them off or remove them)
+["BankNifty_Option_Groww_trading_8","Gxtradermadhav_trading_mcx_stock"].forEach(n=>{ const seen=store.get("sd_tg_def_"+n,"");
+  if(!seen&&!TGR.src.some(s=>s.kind==="public"&&s.name.toLowerCase()===n.toLowerCase())){ TGR.src.push({kind:"public", name:n, link:"https://t.me/"+n, enabled:true, added:Date.now()}); }
+  store.set("sd_tg_def_"+n,"1"); });
+try{ localStorage.setItem("sd_tg_src",JSON.stringify(TGR.src)); }catch(e){}
+const tgSaveSrc=()=>{ try{ localStorage.setItem("sd_tg_src",JSON.stringify(TGR.src)); }catch(e){} };
+const tgSaveEv=()=>{ try{ const k=Object.keys(TGR.ev); if(k.length>600) k.sort((a,b)=>TGR.ev[a].at-TGR.ev[b].at).slice(0,k.length-600).forEach(x=>delete TGR.ev[x]);
+  localStorage.setItem("sd_tg_ev",JSON.stringify(TGR.ev)); }catch(e){} };
+function tgMsgs(k){ if(!TGR.msgs[k]){ try{ TGR.msgs[k]=JSON.parse(localStorage.getItem("sd_tg_m_"+k)||"[]"); }catch(e){ TGR.msgs[k]=[]; } } return TGR.msgs[k]; }
+function tgStore(k, fresh, range){            // keep the first text seen for each post; mark edits and deletions
+  const list=tgMsgs(k), by=new Map(list.map(m=>[m.id,m]));
+  for(const m of fresh){ const o=by.get(m.id);
+    if(!o){ by.set(m.id,Object.assign({first:Date.now()},m)); continue; }
+    if(m.text!==o.text&&!o.editedText){ o.editedText=m.text; o.edited=true; } else if(m.edited) o.edited=true; o.deleted=false; }
+  if(range) for(const o of by.values()) if(o.id>=range[0]&&o.id<=range[1]&&!fresh.some(m=>m.id===o.id)) o.deleted=true;
+  const out=[...by.values()].sort((a,b)=>a.id-b.id).filter(m=>m.ts>Date.now()-30*864e5).slice(-500);
+  TGR.msgs[k]=out; try{ localStorage.setItem("sd_tg_m_"+k,JSON.stringify(out)); }catch(e){}
+}
+async function tgFetch(src, deep){
+  const k=tgKey(src);
+  try{
+    if(src.kind==="acct"){ const L0=tgMsgs(k), since=L0.length?L0[L0.length-1].id:0;
+      const j=await api("/api/tgu/messages?chat="+encodeURIComponent(src.chat)+"&since="+since,20000);
+      tgStore(k,j.messages.map(m=>Object.assign(m,{link:src.username?`https://t.me/${src.username}/${m.id}`:null})),null); }
+    else if(src.kind==="bot"){ const j=await api("/api/tg/bot?chat="+encodeURIComponent(src.chat),15000); TGR.bot=j; tgStore(k,j.messages,null); }
+    else {
+      let j=await api("/api/tg/channel?name="+encodeURIComponent(src.name),15000); src.title=j.title||src.title;
+      tgStore(k,j.messages,j.messages.length?[j.messages[0].id,j.messages[j.messages.length-1].id]:null);
+      // first time (or after a gap): go back up to 6 pages / 7 days for the track record
+      let pages=0, before=j.before;
+      while(deep&&before&&pages<6){ const old=tgMsgs(k)[0]; if(old&&old.ts<Date.now()-7*864e5) break;
+        const p=await api("/api/tg/channel?name="+encodeURIComponent(src.name)+"&before="+before,15000); tgStore(k,p.messages,null); before=p.before; pages++; }
+    }
+    const L=tgMsgs(k); src.lastId=L.length?L[L.length-1].id:null; src.lastAt=L.length?L[L.length-1].ts:null; src.ok=Date.now(); delete TGR.err[k];
+  }catch(e){ TGR.err[k]=e.message; }
+  tgSaveSrc();
+}
+/* ---- Telegram account login (optional) and the site's own plan for each call ---- */
+const TGU={ st:null, step:null, chats:null, msg:"" };
+const tguBlob=()=>store.get("sd_tgu","");
+async function tguPost(path, body){
+  const r=await fetch(S.api+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+  const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error||("HTTP "+r.status)); return j;
+}
+async function tguStatus(){
+  try{ TGU.st=await api("/api/tgu/status",10000); }catch(e){ TGU.st={error:e.message}; return TGU.st; }
+  // the server restarted (free hosting sleeps): hand back the sealed login kept on this device
+  if(TGU.st.configured&&TGU.st.library&&TGU.st.state==="off"&&tguBlob()&&!TGU.restoring){
+    TGU.restoring=true;
+    try{ const j=await tguPost("/api/tgu/restore",{blob:tguBlob(), watch:TGR.src.filter(s=>s.kind==="acct"&&s.enabled).map(s=>s.chat)});
+      if(!j.ok){ store.set("sd_tgu",""); TGU.msg=j.error||"Telegram login ended; log in again."; }
+      TGU.st=await api("/api/tgu/status",10000); }catch(e){ TGU.msg="Could not restore the Telegram login: "+e.message; }
+    TGU.restoring=false;
+  }
+  return TGU.st;
+}
+function tguSection(){
+  const st=TGU.st;
+  if(!st) return `<div class="none">Checking Telegram login…</div>`;
+  if(st.error) return `<div class="none">${esc(st.error)}</div>`;
+  if(!st.library||!st.configured) return `<div class="sub">Not set up yet. One-time steps (free):
+    1) On a computer open <b>my.telegram.org</b>, log in with your phone number, choose <b>API development tools</b>, create an app (any name, e.g. "Signal Desk", platform "Web") and copy the <b>api_id</b> and <b>api_hash</b>.
+    2) On Render → your service → <b>Environment</b>, add <b>TELEGRAM_API_ID</b> and <b>TELEGRAM_API_HASH</b> with those values and save.
+    3) Make sure the new <b>package.json</b> is uploaded to GitHub (it adds the free Telegram library).
+    Then come back here and log in. ${!st.library?"<br><b style='color:"+C.warn+"'>The Telegram library is not on the server yet: upload the new package.json.</b>":""}${!st.configured?"<br><b style='color:"+C.warn+"'>TELEGRAM_API_ID / TELEGRAM_API_HASH are not set on Render yet.</b>":""}</div>`;
+  if(st.state==="ready") return `<div class="bbar">Logged in to Telegram as <b>${esc((st.me&&st.me.name)||"you")}</b>${st.me&&st.me.username?" (@"+esc(st.me.username)+")":""} · the site reads only the chats you follow below and never posts
+      <button class="btn" id="tguOut">Log out of Telegram</button></div>
+    <div id="tguChats">${TGU.chats?(TGU.chats.length?TGU.chats.map(ch=>{ const on=TGR.src.some(s=>s.kind==="acct"&&s.chat===ch.id);
+      return `<button class="btn tguFollow ${on?"on":""}" data-id="${esc(ch.id)}" data-t="${esc(ch.title)}" data-u="${esc(ch.username||"")}">${on?"✓ ":"+ "}${esc(ch.title)} <small style="opacity:.7">${ch.type}</small></button>`; }).join(" "):"<div class='none'>No channels or groups in this Telegram account.</div>"):"<div class='none'>Loading your channels and groups…</div>"}</div>`;
+  const step=st.state==="code"?"code":st.state==="password"?"password":"phone";
+  return `<div class="mtform" style="margin-top:6px"><b>Log in with your Telegram account</b>
+    <span>Lets the site read channels and groups you are a member of (also ones without a public preview). One time: you stay logged in until you press "Log out of Telegram". Your login is kept encrypted; the site never posts or messages anyone.</span>
+    <div class="mtrow">${step==="phone"?`<input id="tguIn" type="tel" placeholder="Phone with country code, e.g. +971501234567" autocomplete="tel"><button class="btn pri" id="tguGo">Send code</button>`
+      :step==="code"?`<input id="tguIn" type="text" inputmode="numeric" placeholder="Code Telegram sent to your Telegram app" autocomplete="one-time-code"><button class="btn pri" id="tguGo">Log in</button>`
+      :`<input id="tguIn" type="password" placeholder="Your Telegram two-step verification password" autocomplete="current-password"><button class="btn pri" id="tguGo">Log in</button>`}</div>
+    <div class="bmsg" id="tguMsg">${esc(TGU.msg||"")}</div></div>`;
+}
+function tguWire(el){
+  const go=document.getElementById("tguGo");
+  if(go){ const inp=document.getElementById("tguIn"), st=TGU.st.state;
+    const run=async()=>{ go.disabled=true; TGU.msg="";
+      try{ const v=inp.value.trim();
+        const j=st==="code"?await tguPost("/api/tgu/code",{code:v}):st==="password"?await tguPost("/api/tgu/password",{password:v}):await tguPost("/api/tgu/start",{phone:v});
+        if(j.blob) store.set("sd_tgu",j.blob);
+        if(st==="phone"||st==="off") TGU.msg="Code sent: open your Telegram app and type the code here.";
+        TGU.st=await api("/api/tgu/status",10000); TGU.chats=null; }
+      catch(e){ TGU.msg=e.message; }
+      go.disabled=false; renderTg(); };
+    go.onclick=run; inp.onkeydown=e=>{ if(e.key==="Enter") run(); }; }
+  const out=document.getElementById("tguOut");
+  if(out) out.onclick=async()=>{ if(!confirm("Log out of Telegram on this site?")) return;
+    try{ await tguPost("/api/tgu/logout"); }catch(e){} store.set("sd_tgu",""); TGR.src=TGR.src.filter(s=>s.kind!=="acct"); tgSaveSrc(); TGU.chats=null; await tguStatus(); renderTg(); };
+  el.querySelectorAll(".tguFollow").forEach(b=>b.onclick=()=>{ const i=TGR.src.findIndex(s=>s.kind==="acct"&&s.chat===b.dataset.id);
+    if(i>=0) TGR.src.splice(i,1); else TGR.src.push({kind:"acct", chat:b.dataset.id, chatTitle:b.dataset.t, username:b.dataset.u||null, enabled:true, added:Date.now(),
+      link:b.dataset.u?"https://t.me/"+b.dataset.u:null});
+    tgSaveSrc(); renderTg(); loadTg(true); });
+  if(TGU.st&&TGU.st.state==="ready"&&!TGU.chats&&!TGU.loadingChats){ TGU.loadingChats=true;
+    api("/api/tgu/dialogs",20000).then(j=>{ TGU.chats=j.chats; }).catch(e=>{ TGU.chats=[]; TGU.msg=e.message; }).finally(()=>{ TGU.loadingChats=false; if(TGR.view==="src") renderTg(); }); }
+}
+/* The site's own plan for a Telegram call: worked out from the underlying's levels and the
+   option's live premium, so it exists even when the source keeps its stop loss back. */
+function tgPlan(c, d, leg, ub, trend){
+  const why=[], skip=w=>({verdict:"SKIP", why:[w].concat(why)});
+  if(!ub||ub.length<80) return skip("not enough price history for the underlying");
+  const prem=leg.ltp; if(!(prem>0)) return skip("no live premium");
+  const E=analyseTF(ub), n=ub.length-1, A=E.ind.atr[n-1]||E.ind.atr[n], spot=ub[n].c, dir=c.ty==="CE"?1:-1;
+  if(!A) return skip("volatility not known yet");
+  const T=Math.max(d.daysOut/365,1/(365*24)), iv=impliedVol(prem,d.spot||spot,c.strike,T,c.ty)||leg.iv;
+  const g=iv?bs(spot,c.strike,T,iv,c.ty):null, delta=g?Math.abs(g.delta):null;
+  if(!delta||delta<0.15) return skip(delta?"the option is too far from the price (delta "+delta.toFixed(2)+")":"the option's price can't be modelled");
+  const open=E.liq.filter(L=>L.taken==null);
+  const guard=open.filter(L=>L.side===(dir>0?"SSL":"BSL")&&dir*(spot-L.px)>0.3*A).sort((a,b)=>dir*(b.px-a.px))[0];
+  let risk=guard?dir*(spot-guard.px)+0.15*A:1.2*A; risk=Math.min(2*A,Math.max(0.6*A,risk));
+  const uSL=spot-dir*risk;
+  const lv=open.filter(L=>L.side===(dir>0?"BSL":"SSL")&&dir*(L.px-spot)>=risk).map(L=>L.px).sort((a,b)=>dir*(a-b));
+  const u1=lv[0]!=null?lv[0]:spot+dir*1.5*risk, u2=lv[1]!=null?lv[1]:u1+dir*risk, u3=lv[2]!=null?lv[2]:u2+dir*risk;
+  const P=v=>Math.max(0.05,prem+delta*dir*(v-spot)), t05=v=>Math.max(0.05,Math.round(v*20)/20);
+  const sl=t05(Math.min(P(uSL),prem*0.92)), t1=t05(P(u1)), t2=t05(Math.max(P(u2),t1*1.05)), t3=t05(Math.max(P(u3),t2*1.05));
+  const rr=(t1-prem)/(prem-sl);
+  why.push(`stop beyond ${guard?guard.kind.toLowerCase()+" "+nf(guard.px,2):"1.2 ATR"} on ${uni(c.tkr).sym||c.tkr} (${nf(uSL,2)}); targets at ${nf(u1,2)} / ${nf(u2,2)} / ${nf(u3,2)}; premium levels from delta ${delta.toFixed(2)}`);
+  const want=dir, against=trend&&trend.t5===-want&&trend.t60===-want, with_=trend&&(trend.t5===want||trend.t60===want);
+  const plan={entryMax:t05(Math.min(prem*1.02,c.entryHi||Infinity)), sl, t1, t2, t3, rr, uSL, u1, u2, u3, delta, prem};
+  if(against) return Object.assign(plan,skip("the underlying trend points the other way"));
+  if(!with_) return Object.assign(plan,skip("the underlying has no trend in this direction yet"));
+  if(rr<1.5) return Object.assign(plan,skip(`reward : risk only ${rr.toFixed(2)} to Target 1 (need 1.5)`));
+  if(c.entryHi!=null&&prem>c.entryHi*1.03) return Object.assign(plan,skip("the premium is already above the source's entry; buying now would be chasing"));
+  return Object.assign(plan,{verdict:"TAKE", why:[`trend agrees, reward : risk ${rr.toFixed(2)} to Target 1`].concat(why)});
+}
+/* ---- reading a call out of a message ---- */
+const TG_MON={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+function tgParse(text){
+  const raw=String(text||""), t=" "+raw.toLowerCase().replace(/₹|rs\.?(?=\s*\d)|inr/g," ").replace(/(\d),(\d{3})/g,"$1$2").replace(/[–—]/g,"-").replace(/\s+/g," ")+" ";
+  const p=mtParse(raw.replace(/(\d),(\d{3})/g,"$1$2")), out={tkr:p.tkr||null, strike:p.strike!=null&&p.strike>=10?p.strike:null, ty:p.ty||null};
+  const num="(\\d+(?:\\.\\d+)?)";
+  const rng=new RegExp("(?:buy|entry|@|at|around|between|range|above|near)\\s*(?:price|zone|range)?\\s*[:=\\-\\s]*(?:above\\s*[:=\\-\\s]*)?"+num+"\\s*(?:-|to|/)\\s*"+num).exec(t);
+  const one=new RegExp("(?:buy\\s*(?:above|at|@|near|around)?|entry\\s*(?:above|at|@)?|@|above|cmp)\\s*[:=\\-\\s]*"+num).exec(t);
+  if(rng){ out.entryLo=Math.min(+rng[1],+rng[2]); out.entryHi=Math.max(+rng[1],+rng[2]); }
+  else if(one&&+one[1]!==out.strike){ out.entry=+one[1]; const above=/above\s*[:=\-\s]*\d/.test(t); out.entryLo=out.entry; out.entryHi=+(out.entry*(above?1.03:1.02)).toFixed(2); out.above=above; }
+  if(out.entryLo==null&&p.buy&&p.buy!==out.strike){ out.entry=p.buy; out.entryLo=p.buy; out.entryHi=+(p.buy*1.02).toFixed(2); }
+  if(out.entryLo!=null&&out.entry==null) out.entry=out.entryHi;
+  const sl=new RegExp("(?:sl|stop\\s*-?\\s*loss|stoploss|stop)\\s*[:=\\-\\s]*"+num).exec(t); if(sl) out.sl=+sl[1];
+  else if(/\b(sl|stop\s*-?\s*loss|stoploss)\s*[:=\-\s]*(vip|paid|premium|dm|inbox|join)\b/.test(t)) out.slWithheld=true;    // stop loss kept for paying members
+  const tg=[]; const tre=new RegExp("(?:tgt|target|targets|tp|t[1-3])\\s*(?:[1-3](?!\\d))?\\s*[:=\\-\\s]*"+num+"((?:\\s*(?:/|,|&|-|and|\\s)\\s*\\d+(?:\\.\\d+)?\\b(?!\\s*(?:lots?|qty|%)))*)","g"); let m;
+  while((m=tre.exec(t))){ tg.push(+m[1]); (m[2]||"").split(/[^\d.]+/).filter(Boolean).forEach(v=>tg.push(+v)); }
+  out.targets=[...new Set(tg)].filter(v=>v>0&&v!==out.strike&&(out.entryHi==null||v>out.entryHi)).sort((a,b)=>a-b).slice(0,3);
+  const lots=/(\d+)\s*lots?\b|lots?\s*[:=\-]?\s*(\d+)/.exec(t); if(lots) out.lots=+(lots[1]||lots[2]);
+  const ex=/(\d{1,2})\s*(?:st|nd|rd|th)?\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/.exec(t);
+  if(ex){ const y=new Date().getUTCFullYear(); out.expiryText=ex[0].trim(); out.expiry=`${y}-${String(TG_MON[ex[2]]+1).padStart(2,"0")}-${String(+ex[1]).padStart(2,"0")}`; }
+  out.rationale=(/(?:reason|why|view|chart)\s*[:\-]\s*([^\n]{5,160})/i.exec(raw)||[])[1]||null;
+  // what kind of message is it
+  // an option call names a strike next to CE / PE / CALL / PUT (e.g. "25000 CE", "CE 25000")
+  const optWord=/\d{2,6}\s*(ce|pe|call|put)\b/.test(t)||/\b(ce|pe)\s*\d{2,6}\b/.test(t);
+  const upd=/\b(target|tgt|t[1-3])\s*(?:[1-3]\s*)?(done|hit|achieved|reached|completed)|\b(sl|stop\s*loss)\s*(hit|triggered)|\bbooked?\b|\bexit\b|\bsquare\s*off\b|\bcancel(led)?\b|\bavoid\b|\bignore\b/.test(t);
+  if(optWord&&(out.strike||out.entryLo!=null)&&!(upd&&out.entryLo==null&&!out.sl)) out.type="call";
+  else if(upd) out.type=/\bcancel|\bavoid|\bignore/.test(t)?"cancel":/\b(sl|stop\s*loss)\s*(hit|triggered)/.test(t)?"slhit":/\bexit|\bsquare\s*off/.test(t)?"exit":"targethit";
+  else if(/\b(buy|sell)\b/.test(t)&&(out.tkr||out.entryLo!=null)&&/\b(sl|target|tgt)\b/.test(t)) out.type="nonoption";
+  else if(out.tkr&&raw.length<60&&(raw.match(/\d+(?:\.\d+)?/g)||[]).length===1&&!optWord){ out.type="tick"; out.tick=+(raw.match(/\d+(?:\.\d+)?/)[0]); }
+  else out.type=null;
+  if(!out.type&&/\b(tgt|target)s?\s*(done|hit|achieved)|jackpot|\bprofit\b|\d+\s*to\s*\d+/.test(t)) out.claim=true;      // a result claimed without naming a call
+  out.promo=/\bvip\b|premium (group|channel)|paid (group|channel)|\bsubscri|join fast|seats? left|\bfees?\b|charges? increase|\d+\s*\/-|lifetime/.test(t);
+  out.side=out.ty==="CE"?"CALL BUY":out.ty==="PE"?"PUT BUY":null;
+  return out;
+}
+async function tgResolveName(raw){              // a stock not on the watchlist: look it up in Fyers' symbol list
+  const w=(/\b([A-Z][A-Z&-]{2,15})\b/.exec(String(raw).replace(/\b(BUY|SELL|CE|PE|CALL|PUT|SL|TGT|TARGET|ENTRY|ABOVE|NSE|BSE|MCX|NIFTY|EXPIRY|LOT|LOTS|STOP|LOSS)\b/g," "))||[])[1];
+  if(!w) return null; if(TGR.names[w]!==undefined) return TGR.names[w];
+  try{ const j=await api("/api/search?q="+encodeURIComponent(w),10000); const r=(j.results||[]).find(x=>x.fo&&(x.short===w||x.short.startsWith(w)));
+    TGR.names[w]=r?{tkr:r.sym, sym:r.short, seg:r.type, lot:r.lot}:null; }catch(e){ return null; }
+  return TGR.names[w];
+}
+/* ---- turning messages into calls with their follow-ups, duplicates marked ---- */
+function tgCalls(){
+  const calls=[];
+  for(const src of TGR.src.filter(s=>s.enabled)){
+    const k=tgKey(src), L=tgMsgs(k);
+    src.title=src.title||src.chatTitle;
+    for(const m of L){
+      const text=m.text||"", p=tgParse(text);
+      if(p.type==="call"||p.type==="nonoption") calls.push(Object.assign({src:k, srcName:src.title||src.name||src.chatTitle, msg:m, key:k+"#"+m.id, ups:[]},p));
+      else if(p.type){ const c=calls.filter(x=>x.src===k&&x.msg.ts<=m.ts&&m.ts-x.msg.ts<6*3600e3&&(m.reply?x.msg.id===m.reply:true)&&(p.type!=="tick"||x.tkr===p.tkr)).pop();
+        if(c) c.ups.push({ts:m.ts, kind:p.type, text});
+        else if(p.type==="targethit") p.claim=true; }                 // "target done" with no call it belongs to
+      if(p.claim) (TGR.claims[k]=TGR.claims[k]||new Set()).add(m.id);
+      if(p.promo) (TGR.promo[k]=TGR.promo[k]||new Set()).add(m.id);
+    }
+  }
+  calls.sort((a,b)=>a.msg.ts-b.msg.ts);
+  for(const c of calls){ const d=calls.find(x=>x!==c&&x.msg.ts<=c.msg.ts&&c.msg.ts-x.msg.ts<3600e3&&x.tkr&&x.tkr===c.tkr&&x.strike===c.strike&&x.ty===c.ty&&!x.dupOf);
+    if(d) c.dupOf=d.key; }
+  return calls;
+}
+/* ---- checking one call against the market ---- */
+async function tgEval(c){
+  const prev=TGR.ev[c.key];
+  if(prev&&prev.final) return prev;
+  if(prev&&Date.now()-prev.at<170000) return prev;
+  const r={at:Date.now(), checks:[], status:null, why:[], final:false}, add=(n,ok,w)=>r.checks.push({n,ok,w});
+  const pubDay=istDay(c.msg.ts), today=istDay(Date.now());
+  const done=(st,w,final)=>{ r.status=st; if(w) r.why.unshift(w); r.final=!!final;
+    // the site's own plan never says TAKE on a call the market has already ruled out
+    if(r.plan&&r.plan.verdict==="TAKE"&&/ENTRY MISSED|CONTRADICTED|INVALIDATED|EXPIRED|AWAITING/.test(st)) Object.assign(r.plan,{verdict:"SKIP",why:[st.toLowerCase()+": "+(w||"")].concat(r.plan.why)});
+    TGR.ev[c.key]=r; tgSaveEv(); return r; };
+  if(c.dupOf) return done("NO TRADE","Same call as an earlier message (posted again or forwarded); counted once.",true);
+  if(c.type==="nonoption") return done("NO TRADE","Not a CALL / PUT option call; this tab follows option buys only.",true);
+  let tkr=c.tkr, u=tkr?uni(tkr):null;
+  if(!tkr){ const f=await tgResolveName(c.msg.text); if(f){ tkr=f.tkr; u=f; c.tkr=tkr; } }
+  if(!tkr) return done("AWAITING DATA","The instrument name could not be recognised.",pubDay<today);
+  const miss=[!c.strike&&"strike",!c.ty&&"CE / PE",c.entryLo==null&&"entry",c.sl==null&&(c.slWithheld?"stop loss (withheld for paying members)":"stop loss"),!c.targets.length&&"target"].filter(Boolean);
+  r.missing=miss;
+  // 1-2. contract and expiry
+  let d;
+  try{ d=await api("/api/chain?tkr="+encodeURIComponent(tkr),15000);
+    if(c.expiry&&d.expiry!==c.expiry&&(d.expiries||[]).includes(c.expiry)) d=await api("/api/chain?tkr="+encodeURIComponent(tkr)+"&expiry="+c.expiry,15000); }
+  catch(e){ return done("AWAITING DATA","Option chain not available: "+e.message, false); }
+  if(c.expiry&&!(d.expiries||[]).includes(c.expiry)){ add("Expiry",false,`${c.expiryText} is not a listed expiry (listed: ${(d.expiries||[]).slice(0,4).join(", ")})`);
+    return done("NO TRADE",`The expiry in the call (${c.expiryText}) is not a listed expiry for ${uni(tkr).sym||tkr}, so the contract can't be checked.`,pubDay<today); }
+  else add("Expiry",true,c.expiry?`${c.expiryText} is listed`:`not stated, nearest (${d.expiry}) assumed`);
+  r.expiry=d.expiry; r.lot=d.lot||null;
+  if(!c.strike||!c.ty){ add("Contract",false,"strike or CE/PE missing"); return done("PARTIALLY VALIDATED","Missing "+miss.join(", ")+"; the call can't be checked fully.",pubDay<today); }
+  const row=d.rows.find(x=>Math.abs(x.strike-c.strike)<1e-6), leg=row&&(c.ty==="CE"?row.ce:row.pe);
+  if(!row||!leg||!leg.sym){ const ks=d.rows.map(x=>x.strike); add("Contract",false,`${c.strike} ${c.ty} not found near the price (listed ${nf(Math.min(...ks),0)}–${nf(Math.max(...ks),0)})`);
+    return done("NO TRADE",`${c.strike} ${c.ty} is not a listed contract near the current price, or the strike is wrong.`,pubDay<today); }
+  add("Contract",true,`${uni(tkr).sym||c.tkr} ${c.strike} ${c.ty}, expiry ${d.expiry}`); r.sym=leg.sym;
+  // option candles from the moment of publication
+  let bars;
+  try{ bars=toBars((await api("/api/candles?tkr="+encodeURIComponent(leg.sym)+"&interval=5",15000)).candles); }
+  catch(e){ return done("AWAITING DATA","Option prices not available: "+e.message,false); }
+  if(!bars.length) return done("AWAITING DATA","No traded prices for this option.",false);
+  const pubBar=bars.filter(b=>b.ts<=c.msg.ts).pop(); r.pubPx=pubBar?pubBar.c:null;
+  const now=bars[bars.length-1], fresh=!sessionOpen(uni(tkr).tkr?uni(tkr):{open:555,close:930})||Date.now()-now.ts<15*60000;
+  r.now=now.c; r.nowAt=now.ts; r.bid=leg.bid; r.ask=leg.ask; r.spread=leg.bid>0&&leg.ask>0?(leg.ask-leg.bid)/((leg.ask+leg.bid)/2)*100:null;
+  // outcome walk, from the candle after publication, same session only
+  const after=bars.filter(b=>b.ts>=c.msg.ts&&b.day===pubDay);
+  const T=c.targets, lo=c.entryLo, hi=c.entryHi;
+  let fill=null, hit=0, stop=false, amb=false, missed=false, exitPx=null;
+  if(lo!=null&&c.sl!=null&&T.length){
+    for(const b of after){
+      if(fill==null){
+        if(b.l<=hi&&b.h>=lo){ fill=Math.min(hi,Math.max(lo,b.o)); if(b.l<=c.sl&&b.h>=T[0]) amb=true; }
+        else if(b.h>=T[0]||b.l>hi*1.0&&b.l>=(T[0]+hi)/2){ missed=true; break; }
+        if(fill==null) continue;
+      }
+      if(b.l<=c.sl){ stop=true; exitPx=c.sl; if(b.h>=T[hit]||0) amb=amb||b.h>=(T[hit]||Infinity); break; }
+      while(hit<T.length&&b.h>=T[hit]) hit++;
+      if(hit>=T.length){ exitPx=T[T.length-1]; break; }
+    }
+    if(fill!=null&&!stop&&hit<T.length) exitPx=hit?T[hit-1]:(after.length?after[after.length-1].c:null);
+  }
+  const ended=pubDay<today||!sessionOpen(uni(tkr).tkr?uni(tkr):{open:555,close:930});
+  r.outcome={fill, hit, stop, amb, missed, exitPx, ended,
+    pct:fill!=null&&exitPx!=null?((exitPx-fill)/fill*100-1):null};            // 1% for charges and slippage (estimate)
+  if(fill==null&&!missed&&ended&&lo!=null) r.outcome.noFill=true;
+  const cancelled=c.ups.find(x=>x.kind==="cancel"&&(fill==null||x.ts<=c.msg.ts+5*60000));
+  // 3-10. the market now
+  if(!fresh) return done("AWAITING DATA",`Last option price is from ${hhmm(now.ts)}; prices are not fresh enough to judge.`,false);
+  const coherent=c.sl!=null&&lo!=null&&T.length&&c.sl<lo&&T[0]>hi;
+  add("Levels",coherent,coherent?"stop below entry, targets above":"stop / entry / targets out of order or missing");
+  const rr=coherent?(T[0]-hi)/(hi-c.sl):null; r.rr=rr;
+  add("Reward : risk",rr!=null&&rr>=TGR.minRR,rr==null?"can't be worked out":`${rr.toFixed(2)} to Target 1 from the top of the entry (need ${TGR.minRR})`);
+  add("Liquidity",(leg.vol||0)>0&&(r.spread==null||r.spread<=5),`${leg.vol?kf(leg.vol)+" traded today":"no trades today"}${r.spread!=null?`, bid-ask spread ${r.spread.toFixed(1)}%`:""}`);
+  // direction of the underlying
+  let ubars=null;
+  try{
+    let ub=S.bars[tkr]; if(!ub||!ub.length) ub=toBars((await api("/api/candles?tkr="+encodeURIComponent(tkr)+"&interval=5",15000)).candles); ubars=ub;
+    if(ub.length>80){ const E=analyseTF(ub), n=ub.length-2, h=aggregate(ub,60,(uni(tkr).open||555)), hc=h.map(x=>x.c), e20=ema(hc,20), e50=ema(hc,50), k=h.length-2;
+      const want=c.ty==="CE"?1:-1, t5=E.ext.trend[n], t60=e20[k]!=null&&e50[k]!=null?Math.sign(e20[k]-e50[k]):0;
+      r.trend={t5,t60};
+      add("Underlying trend",!(t5===-want&&t60===-want),`5-min structure ${t5>0?"up":t5<0?"down":"unclear"}, 1-hour EMA 20 ${t60>0?"above":t60<0?"below":"at"} EMA 50`);
+    } else add("Underlying trend",null,"not enough history to judge");
+  }catch(e){ add("Underlying trend",null,"underlying prices not available"); }
+  const fails=r.checks.filter(x=>x.ok===false);
+  if(!ended&&!stop&&!cancelled){ try{ r.plan=tgPlan(c,d,Object.assign({},leg,{ltp:r.now>0?r.now:leg.ltp}),ubars,r.trend); if(r.plan.verdict==="TAKE"&&fails.some(x=>x.n==="Liquidity")) Object.assign(r.plan,{verdict:"SKIP",why:["the option is not liquid enough"].concat(r.plan.why)}); }catch(e){} }
+  if(cancelled) return done("INVALIDATED","The source cancelled this call.",ended);
+  if(stop) return done("INVALIDATED",`Stop loss ₹${c.sl} was hit${amb?" (in the same 5 minutes as a target, counted as the stop)":""}.`,ended);
+  if(ended) return done("EXPIRED",fill!=null?`Session ended: ${hit?"Target "+hit+" reached":"no target reached"}.`:missed?"Price ran past the entry before it could be bought.":"The entry price was never reached in the session.",true);
+  if(missed||(fill==null&&now.c>hi*1.03)) return done("ENTRY MISSED",`Premium is ₹${nf(now.c,2)}, above the entry range ₹${lo}–${hi}${missed?" (it ran towards the target before filling)":""}.`,false);
+  const contra=r.checks.find(x=>x.n==="Underlying trend"&&x.ok===false);
+  if(contra) return done("CONTRADICTED BY MARKET",`The ${uni(tkr).sym||tkr} trend points the other way.`,false);
+  if(fails.length) return done("NO TRADE",fails.map(x=>x.n+": "+x.w).join("; ")+".",false);
+  if(miss.length) return done("PARTIALLY VALIDATED","Missing "+miss.join(", ")+".",false);
+  if(fill!=null) return done("VALIDATED — SETUP CONFIRMED",`Entry was reached at about ₹${nf(fill,2)}${hit?`; Target ${hit} reached since`:""}. Being followed.`,false);
+  if(now.c<lo) return done("PARTIALLY VALIDATED",`Checks pass, but the premium ₹${nf(now.c,2)} is below the entry range ₹${lo}–${hi}; wait for it.`,false);
+  return done("VALIDATED — SETUP CONFIRMED",`Checks pass and the premium ₹${nf(now.c,2)} is inside the entry range ₹${lo}–${hi}.`,false);
+}
+async function loadTg(force){
+  const fast=TGR.src.some(s=>s.kind==="acct"&&s.enabled);       // your own Telegram login: check every 15 s
+  if(TGR.busy||(!force&&Date.now()-TGR.at<(fast?15000:120000))) return;
+  if(fast||tguBlob()) await tguStatus();
+  if(!TGR.src.some(s=>s.enabled)){ if(onHomeTab("tg")) renderTg(); return; }
+  TGR.busy=true;
+  try{
+    for(const s of TGR.src.filter(s=>s.enabled)) await tgFetch(s, !s.ok||Date.now()-s.ok>6*3600e3);
+    const calls=tgCalls().filter(c=>c.msg.ts>Date.now()-8*864e5);
+    let n=0; for(const c of calls.slice().reverse()){ if(n>=25) break; const p=TGR.ev[c.key]; if(p&&(p.final||Date.now()-p.at<170000)) continue; n++;
+      try{ await tgEval(c); }catch(e){} }
+    TGR.at=Date.now();
+    // Target 1 alerts, confirmed by the option's own prices
+    for(const c of calls){ const e=TGR.ev[c.key]; if(e&&e.plan&&e.plan.verdict==="TAKE"&&c.msg.ts>Date.now()-3600e3)
+      alerts.fire("tgplan|"+c.key,`Telegram ${c.srcName}: ${uni(c.tkr).sym||c.tkr} ${c.strike} ${c.ty} → Signal Desk plan BUY up to ₹${e.plan.entryMax}, SL ₹${e.plan.sl}, T1 ₹${e.plan.t1}`); }
+    for(const c of calls){ const e=TGR.ev[c.key]; if(e&&e.outcome&&e.outcome.hit>=1&&!e.outcome.ended)
+      alerts.fire("tg|"+c.key+"|t1",`Telegram call ${uni(c.tkr).sym||c.tkr} ${c.strike} ${c.ty} (${c.srcName}): Target 1 ₹${c.targets[0]} reached`); }
+  }finally{ TGR.busy=false; if(onHomeTab("tg")) renderTg(); if(S.page==="home") renderStrictSegs(); }
+}
+function tgAddSource(input){
+  const v=String(input||"").trim();
+  let m=/^(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/(?:s\/)?([A-Za-z][A-Za-z0-9_]{3,31})\/?(?:\d+)?$/.exec(v)||/^@?([A-Za-z][A-Za-z0-9_]{3,31})$/.exec(v);
+  if(/t\.me\/(\+|joinchat)/i.test(v)) return "This is a private invite link. Private groups and channels can't be read from their link. Add your own Telegram bot to the group (see the steps below), then pick it from the list.";
+  if(!m) return "Enter a public channel link like https://t.me/channelname, or @channelname.";
+  const name=m[1]; if(TGR.src.some(s=>s.kind==="public"&&s.name.toLowerCase()===name.toLowerCase())) return "This channel is already in your list.";
+  TGR.src.push({kind:"public", name, link:"https://t.me/"+name, enabled:true, added:Date.now()}); tgSaveSrc(); loadTg(true); return null;
+}
+const uaeT=ts=>new Date(ts).toLocaleString("en-IN",{timeZone:"Asia/Dubai",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false});
+const istT=ts=>new Date(ts).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false});
+function tgPerf(calls){
+  const by={};
+  for(const s of TGR.src){ by[tgKey(s)]={name:s.title||s.name||s.chatTitle, n:0, complete:0, elig:0, t1:0, t2:0, sl:0, exp:0, canc:0, missed:0, amb:0, unver:0, wins:[], losses:[], first:null, last:null}; }
+  for(const c of calls){ const P=by[c.src]; if(!P||c.type!=="call"||c.dupOf) continue; const e=TGR.ev[c.key];
+    P.n++; P.first=P.first==null?c.msg.ts:Math.min(P.first,c.msg.ts); P.last=Math.max(P.last||0,c.msg.ts);
+    const complete=c.strike&&c.ty&&c.entryLo!=null&&c.sl!=null&&c.targets.length; if(complete) P.complete++;
+    if(!e||!e.outcome){ if(complete) P.unver++; continue; }
+    const o=e.outcome; if(!o.ended&&!o.stop&&!(o.hit>=1)) continue;   // still running: not counted yet
+    P.elig++;
+    if(e.status==="INVALIDATED"&&!o.stop) { P.canc++; continue; }
+    if(o.amb) P.amb++;
+    if(o.fill==null){ o.missed?P.missed++:P.exp++; continue; }
+    if(o.stop) P.sl++; else if(o.hit>=1) P.t1++; else P.exp++;
+    if(o.hit>=2&&!o.stop) P.t2++;
+    if(o.pct!=null) (o.pct>0?P.wins:P.losses).push(o.pct);
+  }
+  return Object.entries(by).map(([k,P])=>Object.assign(P,{k, claims:(TGR.claims[k]||new Set()).size, promo:(TGR.promo[k]||new Set()).size, rate:P.t1+P.sl?P.t1/(P.t1+P.sl)*100:null,
+    avgW:P.wins.length?P.wins.reduce((a,b)=>a+b,0)/P.wins.length:null, avgL:P.losses.length?P.losses.reduce((a,b)=>a+b,0)/P.losses.length:null,
+    net:P.wins.concat(P.losses).reduce((a,b)=>a+b,0)}));
+}
+function renderTg(){
+  if(!onHomeTab("tg")) return;
+  const el=document.getElementById("tgBody"), calls=tgCalls().filter(c=>c.msg.ts>Date.now()-8*864e5);
+  const st=c=>(TGR.ev[c.key]||{}).status||(c.dupOf?"NO TRADE":"checking…");
+  const VAL=c=>st(c)==="VALIDATED — SETUP CONFIRMED", ACT=c=>{ const e=TGR.ev[c.key]; return e&&e.outcome&&e.outcome.fill!=null&&!e.outcome.stop&&!e.outcome.ended&&e.status!=="INVALIDATED"; };
+  const REJ=c=>/NO TRADE|ENTRY MISSED|CONTRADICTED|INVALIDATED|EXPIRED/.test(st(c));
+  const today=istDay(Date.now());
+  const col=s=>/^VALIDATED/.test(s)?C.up:/PARTIAL|AWAITING|checking/.test(s)?C.warn:/EXPIRED/.test(s)?C.mid:C.dn;
+  const card=c=>{ const e=TGR.ev[c.key]||{}, s=st(c), u=uni(c.tkr), o=e.outcome, f=v=>v==null?"<i style='color:"+C.warn+"'>missing</i>":"₹"+nf(+v,2);
+    return `<div class="xcard" style="--xc:${col(s)}"><div class="xh"><b class="xn">${esc(u.sym||c.tkr||"Unknown instrument")}${c.strike?" "+c.strike:""} ${c.ty||""}</b>`+
+      `<span class="chip ghost" style="color:${C.violet};border:1px solid ${C.violet};background:none">TELEGRAM</span><span class="xst" style="color:${col(s)}">${esc(s)}</span></div>`+
+      `<div class="xsub">${esc(c.srcName||"")} · posted ${istT(c.msg.ts)} IST (${uaeT(c.msg.ts)} UAE)${c.msg.fwd?" · forwarded from "+esc(c.msg.fwd):""}${c.msg.edited?" · edited by the source (original kept)":""}${c.msg.deleted?" · deleted by the source (kept here)":""}${c.msg.link?` · <a href="${esc(c.msg.link)}" target="_blank" rel="noopener">open post</a>`:""}</div>`+
+      `<div class="xlv"><div><span>Entry</span><b style="color:${C.key}">${c.entryLo==null?f(null):c.entryLo===c.entryHi||c.entry&&!c.above&&c.entryHi===+(c.entry*1.02).toFixed(2)?f(c.entry):"₹"+nf(c.entryLo,2)+"–"+nf(c.entryHi,2)}</b></div>`+
+        `<div><span>Stop loss</span><b style="color:${C.dn}">${c.slWithheld?`<i style='color:${C.warn}'>withheld (VIP)</i>`:f(c.sl)}</b></div><div><span>Targets</span><b>${c.targets.length?c.targets.map(v=>"₹"+nf(v,2)).join(" / "):f(null)}</b></div>`+
+        `<div><span>Premium now</span><b>${e.now!=null?"₹"+nf(e.now,2)+" · "+hhmm(e.nowAt):"—"}</b></div></div>`+
+      (o?`<div class="xopt">At publication the option traded near ${e.pubPx!=null?"₹"+nf(e.pubPx,2):"—"}. ${o.fill!=null?`Entry reached at about ₹${nf(o.fill,2)}`+(o.stop?", then the stop was hit":o.hit?`, Target ${o.hit} reached since`:""):o.missed?"It ran past the entry without filling":o.noFill?"The entry was never reached":"Entry not reached yet"}.${o.pct!=null&&o.ended?` Result ${o.pct>=0?"+":""}${o.pct.toFixed(1)}% after an estimated 1% for charges.`:""}${e.expiry?" Expiry "+e.expiry+(e.lot?", lot "+e.lot:""):""}</div>`:"")+
+      `<div class="xres" style="color:${col(s)}">${esc((e.why||[])[0]||(c.dupOf?"Same call as an earlier message.":"Checking against the market…"))}</div>`+
+      (e.plan&&e.plan.sl?`<div class="xsize ${e.plan.verdict==="TAKE"?"":"no"}"><span>Signal Desk plan (the site's own analysis, ${hhmm(e.at)} IST)</span>`+
+        `<b>${e.plan.verdict==="TAKE"?`BUY ${esc(String(c.strike))} ${c.ty} up to ₹${nf(e.plan.entryMax,2)} · SL ₹${nf(e.plan.sl,2)} · T1/T2/T3 ₹${nf(e.plan.t1,2)} / ${nf(e.plan.t2,2)} / ${nf(e.plan.t3,2)}`:"SKIP"}</b>`+
+        `<small>${esc(e.plan.why.join("; "))}. Premium levels are estimates; actual premiums will differ.</small>`+
+        (e.plan.verdict==="TAKE"?`<div style="margin-top:8px">${xCopyBtn(`${uni(c.tkr).sym||c.tkr} - ${(e.expiry?new Date(e.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"}).toUpperCase()+" EXPIRY":"")}\nBUY ${c.strike} ${c.ty} @ ${sn2(e.plan.entryMax)}\nSL - ${sn2(e.plan.sl)}\nT1/T2/T3 - ${sn2(e.plan.t1)}/${sn2(e.plan.t2)}/${sn2(e.plan.t3)}`,"Copy plan for WhatsApp")}</div>`:"")+`</div>`
+      :e.plan?`<div class="xsize no"><span>Signal Desk plan</span><small>SKIP: ${esc(e.plan.why.join("; "))}</small></div>`:"")+
+      `<details class="xwhy"><summary>Checks and original message</summary>${(e.checks||[]).map(x=>`${x.ok===true?"✓":x.ok===false?"✗":"–"} ${esc(x.n)}: ${esc(x.w)}`).join("<br>")}`+
+        `${c.ups.length?`<br><b>Follow-ups from the source</b><br>${c.ups.map(x=>esc(istT(x.ts)+" IST: "+x.text)).join("<br>")}`:""}`+
+        `<br><b>Original message</b><br><span style="white-space:pre-wrap">${esc(c.msg.text)}</span>${c.msg.editedText?`<br><b>Edited to</b><br><span style="white-space:pre-wrap">${esc(c.msg.editedText)}</span>`:""}</details></div>`; };
+  const sec=(title,list,empty)=>`<h3>${title} (${list.length})</h3>`+(list.length?`<div class="xgrid">${list.slice().reverse().slice(0,40).map(card).join("")}</div>`:`<div class="none">${empty}</div>`);
+  const todays=calls.filter(c=>istDay(c.msg.ts)===today&&c.type);
+  const perf=tgPerf(calls);
+  let html=`<div class="bbar">${TGR.src.length?`${TGR.src.filter(s=>s.enabled).length} source${TGR.src.filter(s=>s.enabled).length===1?"":"s"} on`:"No sources yet"} · ${TGR.at?"checked "+hhmm(TGR.at)+" IST":TGR.busy?"reading…":"not read yet"} · minimum reward : risk <input id="tgRR" type="number" step="0.1" min="0.5" max="5" value="${TGR.minRR}" style="width:64px"> <button class="btn" id="tgRef">Check now</button></div>`;
+  html+=`<div class="seg tabs" id="tgView" style="margin-top:12px"></div>`;
+  if(TGR.view==="valid") html+=sec("Validated Telegram setups",calls.filter(c=>VAL(c)&&!ACT(c)),"No Telegram call passes the checks and is inside its entry range right now.")+
+      sec("Being followed (entry reached)",calls.filter(ACT),"None of the validated calls has been entered by the market yet.");
+  if(TGR.view==="latest") html+=sec("Latest Telegram recommendations (today)",todays.filter(c=>c.type==="call"||c.type==="nonoption"),TGR.src.length?"No calls found in today's posts.":"Add a source first (Sources).");
+  if(TGR.view==="rejected") html+=sec("Rejected and missed",calls.filter(REJ),"Nothing rejected yet.");
+  if(TGR.view==="perf"){
+    html+=`<h3>Source performance</h3><div class="tblw"><table class="rt"><tr><th>Source</th><th>Calls</th><th>Complete</th><th>Judged</th><th>T1 before SL</th><th>T2 before SL</th><th>SL hit</th><th>Missed / not filled</th><th>Cancelled</th><th>Ambiguous</th><th>Win rate</th><th>Avg win / loss</th><th>Net (sum of %)</th><th>Unverifiable "target done" claims</th></tr>`+
+      perf.map(P=>`<tr><td>${esc(P.name||P.k)}</td><td>${P.n}</td><td>${P.complete}</td><td>${P.elig}</td><td>${P.t1}</td><td>${P.t2}</td><td>${P.sl}</td><td>${P.missed+P.exp}</td><td>${P.canc}</td><td>${P.amb}</td>`+
+        `<td>${P.elig<20?`<b style="color:${C.warn}">INSUFFICIENT HISTORY</b>`:P.rate==null?"—":P.rate.toFixed(0)+"%"}</td><td>${P.avgW==null?"—":"+"+P.avgW.toFixed(1)+"%"} / ${P.avgL==null?"—":P.avgL.toFixed(1)+"%"}</td><td>${P.elig?(P.net>=0?"+":"")+P.net.toFixed(1)+"%":"—"}</td><td>${P.claims}</td></tr>`+
+        (P.promo?`<tr><td colspan="14" style="text-align:left;white-space:normal;color:${C.warn}">${esc(P.name||P.k)}: PAID SOURCE — ${P.promo} post${P.promo===1?"":"s"} advertise a paid / VIP group. Nothing has been subscribed. Calls whose stop loss is kept for paying members are not counted as complete.</td></tr>`:"")).join("")+`</table></div>`+
+      `<div class="sub" style="margin-top:8px">Measured from each post's publication time on the option's own 5-minute prices, same session only; when a 5-minute candle touches both the stop and a target the stop is counted (marked ambiguous). Win rate = Target 1 before stop ÷ (Target 1 before stop + stop hit). Results use an estimated 1% for charges and slippage. A source needs at least 20 judged calls before a win rate is shown. `+
+      `Only contracts that are still listed can be checked (Fyers has no prices for expired contracts), so the history covers about the last week for weekly options. Duplicates and forwards count once. Calls still running are not counted yet. This is the record of the posts as published, not of any trade you took.</div>`;
+  }
+  if(TGR.view==="src"){
+    html+=`<h3>Sources</h3><div class="mtform" style="margin-top:6px"><b>Add a Telegram source</b><span>Public channel link (https://t.me/name) or @name. Private groups need your own bot (below).</span>`+
+      `<div class="mtrow"><input id="tgIn" type="text" placeholder="https://t.me/channelname" autocomplete="off"><button class="btn pri" id="tgAdd">Add</button></div><div class="bmsg" id="tgMsg"></div></div>`;
+    html+=TGR.src.length?`<div class="tblw" style="margin-top:12px"><table class="rt"><tr><th>Source</th><th>Type</th><th>Added</th><th>Latest post read</th><th>Calls</th><th>Status</th><th></th></tr>`+
+      TGR.src.map((s,i)=>{ const k=tgKey(s), n=calls.filter(c=>c.src===k&&c.type==="call").length;
+        return `<tr><td>${s.link?`<a href="${esc(s.link)}" target="_blank" rel="noopener">${esc(s.title||s.name||s.chatTitle)}</a>`:esc(s.chatTitle||s.chat)}</td><td>${s.kind==="bot"?"via your bot":s.kind==="acct"?"your Telegram login":"public channel"}</td><td>${istT(s.added)}</td>`+
+          `<td>${s.lastAt?istT(s.lastAt)+" IST":"—"}</td><td>${n}</td><td style="color:${TGR.err[k]?C.dn:C.up}">${TGR.err[k]?esc(TGR.err[k]):s.enabled?"on":"off"}${(TGR.promo[k]||new Set()).size?` <b style="color:${C.warn}">· PAID SOURCE (not subscribed)</b>`:""}</td>`+
+          `<td><button class="btn tgTog" data-i="${i}">${s.enabled?"Turn off":"Turn on"}</button> <button class="btn tgDel" data-i="${i}">Remove</button></td></tr>`; }).join("")+`</table></div>`:"";
+    html+=`<h3>Your Telegram account (reads channels and groups you are in)</h3>`+tguSection();
+    const b=TGR.bot;
+    html+=`<h3>Or: your own bot (optional, free)</h3><div class="sub">${b&&b.enabled?(b.error?`Bot connected but Telegram reports: ${esc(b.error)}`:`Bot connected. Groups it can see: ${(b.chats||[]).length?b.chats.map(ch=>`<button class="btn tgBot" data-id="${esc(ch.id)}" data-t="${esc(ch.title)}">${esc(ch.title)}${TGR.src.some(s=>s.kind==="bot"&&s.chat===ch.id)?" ✓":""}</button>`).join(" "):"none yet: add the bot to a group and send one message there."}`)
+      :`Not set up. Steps: 1) In Telegram open @BotFather, send /newbot and copy the token. 2) Send /setprivacy to @BotFather, pick your bot, choose Disable (so it can read group messages). 3) Add the bot to the group you are in (or as an admin of a channel you run). 4) On Render → your service → Environment, add TELEGRAM_BOT_TOKEN with the token and save. The bot only sees messages posted after it joined. It is free; nothing is billed.`}</div>`;
+  }
+  html+=`<div class="sub" style="margin-top:14px">Telegram calls are other people's opinions. They are checked here against live prices but are not the site's own signals, and they are never counted in the site's own results. Do not assume a call was a trade anyone took. Sources, posts and checks are kept on this device only.</div>`;
+  el.innerHTML=html;
+  seg(document.getElementById("tgView"),[{l:`Validated · ${calls.filter(c=>VAL(c)||ACT(c)).length}`,v:"valid"},{l:`Latest · ${todays.filter(c=>c.type==="call").length}`,v:"latest"},{l:`Rejected / missed · ${calls.filter(REJ).length}`,v:"rejected"},{l:"Source performance",v:"perf"},{l:`Sources · ${TGR.src.length}`,v:"src"}],
+    it=>TGR.view===it.v, it=>{ TGR.view=it.v; store.set("sd_tg_view",it.v); renderTg(); });
+  const rr=document.getElementById("tgRR"); rr.onchange=()=>{ TGR.minRR=Math.max(0.5,Math.min(5,+rr.value||1.2)); store.set("sd_tg_rr",String(TGR.minRR));
+    Object.keys(TGR.ev).forEach(k=>{ if(!TGR.ev[k].final) delete TGR.ev[k]; }); loadTg(true); };
+  document.getElementById("tgRef").onclick=()=>{ Object.keys(TGR.ev).forEach(k=>{ if(!TGR.ev[k].final) TGR.ev[k].at=0; }); loadTg(true); };
+  const add=document.getElementById("tgAdd"); if(add){ const inp=document.getElementById("tgIn");
+    const go=()=>{ const err=tgAddSource(inp.value); document.getElementById("tgMsg").textContent=err||""; if(!err){ inp.value=""; renderTg(); } };
+    add.onclick=go; inp.onkeydown=e=>{ if(e.key==="Enter") go(); }; }
+  el.querySelectorAll(".tgTog").forEach(b=>b.onclick=()=>{ const s=TGR.src[+b.dataset.i]; s.enabled=!s.enabled; tgSaveSrc(); renderTg(); if(s.enabled) loadTg(true); });
+  el.querySelectorAll(".tgDel").forEach(b=>b.onclick=()=>{ const s=TGR.src.splice(+b.dataset.i,1)[0]; try{ localStorage.removeItem("sd_tg_m_"+tgKey(s)); }catch(e){} tgSaveSrc(); renderTg(); });
+  el.querySelectorAll(".tgBot").forEach(b=>b.onclick=()=>{ if(TGR.src.some(s=>s.kind==="bot"&&s.chat===b.dataset.id)) return;
+    TGR.src.push({kind:"bot", chat:b.dataset.id, chatTitle:b.dataset.t, enabled:true, added:Date.now()}); tgSaveSrc(); loadTg(true); renderTg(); });
+  xWire(el);
+  if(TGR.view==="src"){ if(!TGU.st) tguStatus().then(()=>{ if(TGR.view==="src") renderTg(); }); else tguWire(el); }
+  if(TGR.view==="src"&&TGR.bot==null) api("/api/tg/bot",10000).then(j=>{ TGR.bot=j; if(TGR.view==="src") renderTg(); }).catch(()=>{ TGR.bot={enabled:false}; });
 }
 
 const tfName=m=>m>=60?(m/60)+"h":m+"m";
@@ -3199,7 +3628,9 @@ function renderHome(){
     w.appendChild(t);
   });
   renderStrictSegs();
-  { const xs=S.tab==="scalp"||S.tab==="btst"||S.tab==="mine"||S.tab==="fno";
+  { const xs=S.tab==="scalp"||S.tab==="btst"||S.tab==="mine"||S.tab==="fno"||S.tab==="tg";
+    document.getElementById("tgPage").hidden=S.tab!=="tg";
+    if(S.tab==="tg"){ if(!document.getElementById("tgBody").innerHTML||TGR.shownAt!==TGR.at){ TGR.shownAt=TGR.at; renderTg(); } loadTg(); }
     document.getElementById("fnoPage").hidden=S.tab!=="fno";
     if(S.tab==="fno"){ if(!document.getElementById("fnoBody").innerHTML||FN.shownAt!==FN.at){ FN.shownAt=FN.at; renderFno(); } loadFno(); }
     document.getElementById("minePage").hidden=S.tab!=="mine";
@@ -3245,7 +3676,8 @@ function renderStrictSegs(){
   const sc=XS.scalp.cache?Object.values(XS.scalp.cache).reduce((t,r)=>t+r.sigs.filter(x=>x.day===istDay(Date.now())).length,0):null;
   const fl=FN.d?FN.d.signals.filter(x=>x.state==="ACTIVE").length:null;
   seg(document.getElementById("strictHome"),[{l:fl==null?"All F&O":`All F&O · ${fl} live`,v:"fno"},{l:`Strict signals · ${cnt("strict")}`,v:"strict"},{l:`Other signals · ${cnt("other")}`,v:"other"},{l:`Normal signals · ${cnt("normal")}`,v:"normal"},
-    {l:sc==null?"Scalp":`Scalp · ${sc}`,v:"scalp"},{l:XS.btst.picks==null?"BTST":`BTST · ${XS.btst.picks}`,v:"btst"},{l:MT.list.length?`My trades · ${MT.list.filter(x=>x.day===istDay(Date.now())).length}`:"My trades",v:"mine"}],it=>S.tab===it.v,pick);
+    {l:sc==null?"Scalp":`Scalp · ${sc}`,v:"scalp"},{l:XS.btst.picks==null?"BTST":`BTST · ${XS.btst.picks}`,v:"btst"},{l:MT.list.length?`My trades · ${MT.list.filter(x=>x.day===istDay(Date.now())).length}`:"My trades",v:"mine"},
+    {l:(()=>{ const n=Object.values(TGR.ev).filter(e=>/^VALIDATED/.test(e.status||"")).length; return TGR.src.length?`Telegram · ${n}`:"Telegram"; })(),v:"tg"}],it=>S.tab===it.v,pick);
   seg(document.getElementById("strictRes"),[{l:"Strict signals",v:"strict"},{l:"All structure signals",v:"other"},{l:"Trendline signals",v:"trend"},{l:"Opening range",v:"orb"},{l:"Normal signals",v:"normal"}],
     it=>resTab()===it.v,it=>{ S.resTab=it.v; renderResults(); });
 }
@@ -3268,8 +3700,17 @@ function tally(list){
     rate:w.length+l.length?w.length/(w.length+l.length)*100:null, net:sum(list), avg:list.length?sum(list)/list.length:0,
     avgWin:w.length?sum(w)/w.length:0, avgLoss:l.length?sum(l)/l.length:0 };
 }
+async function renderServices(){
+  const el=document.getElementById("svcBox"); if(!el) return;
+  try{ const j=await api("/api/services",10000);
+    el.innerHTML=`<div class="read"><b>Paid services: ${esc(j.paid)}</b> Nothing paid is switched on without your say-so; if a free service stops working, the page says so instead of moving to a paid one.</div>`+
+      `<div class="tblw"><table class="rt"><tr><th>Service</th><th>Cost</th><th>Account needed</th><th>Free limits</th><th>Status</th></tr>`+
+      j.services.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.cost)}</td><td>${esc(x.account)}</td><td style="white-space:normal;text-align:left;min-width:280px">${esc(x.limits)}</td><td>${esc(x.status)}</td></tr>`).join("")+`</table></div>`;
+  }catch(e){ el.innerHTML=`<div class="none">Could not load the list: ${esc(e.message)}</div>`; }
+}
 function renderResults(){
   if(S.page!=="results") return;
+  if(!renderResults.svc){ renderResults.svc=true; renderServices(); }
   renderStrictSegs();
   const RT=resTab(), strictL=pastSignals(true), allL=pastSignals(false), normL=pastSignals("normal"), trL=pastSignals("trend"), orL=pastSignals("orb");
   const cur=RT==="normal"?normL:RT==="strict"?strictL:RT==="trend"?trL:RT==="orb"?orL:allL, t=tally(cur);

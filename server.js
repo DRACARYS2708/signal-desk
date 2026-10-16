@@ -156,25 +156,30 @@ let tail = Promise.resolve(), lastCall = 0;
    If too many requests are already waiting, refuse new ones at once so callers
    fall back to the last good data instead of waiting minutes. */
 const RL = { perMin: 150, gapMs: 170, sent: [], waiting: 0, maxWaiting: 40, pauseUntil: 0, strikes: 0, day: "", dayCount: 0, limited: 0 };
+const lane = new AsyncLocalStorage();          // "low" = the background scan; pages' own requests always go first
+const Q = { hi: [], lo: [], pumping: false };
 function queued(fn) {
-  if (RL.waiting >= RL.maxWaiting) return Promise.reject(new Error("Fyers rate limit reached; slowing down."));
-  RL.waiting++;
-  const run = tail.then(async () => {
-    for (;;) {
+  const low = lane.getStore() === "low";
+  if (!low && Q.hi.length >= RL.maxWaiting) return Promise.reject(new Error("Fyers rate limit reached; slowing down."));
+  return new Promise((resolve, reject) => { (low ? Q.lo : Q.hi).push({ fn, resolve, reject }); RL.waiting = Q.hi.length + Q.lo.length; pump(); });
+}
+// Starts requests no closer than RL.gapMs apart and within the per-minute budget. Requests run side by side,
+// so one slow Fyers answer no longer holds up the ones behind it.
+async function pump() {
+  if (Q.pumping) return; Q.pumping = true;
+  try {
+    while (Q.hi.length || Q.lo.length) {
       const now = Date.now();
       RL.sent = RL.sent.filter(t => now - t < 60000);
       let wait = Math.max(lastCall + RL.gapMs - now, RL.pauseUntil - now, 0);
       if (RL.sent.length >= RL.perMin) wait = Math.max(wait, RL.sent[0] + 60000 - now + 50);
-      if (wait <= 0) break;
-      await sleep(Math.min(wait, 5000));
+      if (wait > 0) { await sleep(Math.min(wait, 1000)); continue; }
+      const job = Q.hi.length ? Q.hi.shift() : Q.lo.shift(); RL.waiting = Q.hi.length + Q.lo.length;
+      const d = istDay(Date.now()); if (d !== RL.day) { RL.day = d; RL.dayCount = 0; }
+      RL.sent.push(Date.now()); RL.dayCount++; lastCall = Date.now();
+      Promise.resolve().then(job.fn).then(job.resolve, job.reject);
     }
-    const d = istDay(Date.now()); if (d !== RL.day) { RL.day = d; RL.dayCount = 0; }
-    RL.sent.push(Date.now()); RL.dayCount++;
-    try { return await fn(); } finally { lastCall = Date.now(); }
-  });
-  run.finally(() => { RL.waiting--; }).catch(() => {});
-  tail = run.catch(() => {});
-  return run;
+  } finally { Q.pumping = false; }
 }
 function rateLimited() {
   RL.limited++; RL.strikes = Math.min(RL.strikes + 1, 4);
@@ -209,7 +214,9 @@ async function fy(pathname, params) {
 const cache = new Map();
 function cached(key, ttlMs, fn) {
   const hit = cache.get(key);
-  if (hit && (hit.pending || Date.now() - hit.at < ttlMs)) return hit.pending || Promise.resolve(hit.val);
+  // a refresh is already running: give the last good answer if it is slow (the refresh carries on)
+  if (hit && hit.pending) return hit.val !== undefined ? Promise.race([hit.pending, sleep(5000).then(() => hit.val)]) : hit.pending;
+  if (hit && Date.now() - hit.at < ttlMs) return Promise.resolve(hit.val);
   const pending = fn().then(
     val => { cache.set(key, { at: Date.now(), val }); return val; },
     err => {
@@ -219,7 +226,8 @@ function cached(key, ttlMs, fn) {
       }
       cache.delete(key); throw err; });
   cache.set(key, { at: hit ? hit.at : 0, val: hit ? hit.val : undefined, pending });
-  return pending;
+  pending.catch(() => {});
+  return hit && hit.val !== undefined ? Promise.race([pending, sleep(5000).then(() => hit.val)]) : pending;
 }
 
 /* --------------------------------------------------- instrument look-up -- */
@@ -577,7 +585,7 @@ app.get("/api/quotes", guard(async (req, res) => {
   const extra = [...new Set(String(req.query.x || "").split(",").filter(s => OPT_RE.test(s) || SYM.byTicker.has(s)))].slice(0, 20);
   const out = await cached("quotes:" + extra.join(","), anyOpen() ? 4000 : 600000, async () => {
     const j = await fy("/quotes", { symbols: live().map(u => u.fy).concat(extra).join(",") });
-    const q = {};
+    const q = { __at: Date.now() };
     for (const d of j.d || []) {
       const u = UNIVERSE.find(x => x.fy === d.n) || (extra.includes(d.n) ? { tkr: d.n } : null), v = d.v;
       if (!u || !v || v.lp == null) continue;
@@ -587,7 +595,8 @@ app.get("/api/quotes", guard(async (req, res) => {
     }
     return q;
   });
-  res.json({ ts: Date.now(), quotes: out, delayed: false });
+  const { __at, ...quotes } = out;
+  res.json({ ts: __at || Date.now(), quotes, delayed: false });
 }));
 
 /* ---------------------------------------------------------- option chain -- */
@@ -715,7 +724,7 @@ async function scanCycle() {
   if (!sess || Date.now() - sess.seen > 4 * 3600e3) return;              // nobody has used the site for hours: don't spend their Fyers allowance
   SCAN.running = true; SCAN.started = Date.now(); let cpu = 0;
   try {
-    await visitor.run(sess, async () => {
+    await visitor.run(sess, () => lane.run("low", async () => {
       await ensureUniverse().catch(() => {});
       const day = istDay(Date.now());
       if (day !== SCAN.day) { SCAN.day = day; SCAN.signals = []; SCAN.pending = []; SCAN.opts.clear(); }
@@ -727,7 +736,7 @@ async function scanCycle() {
       const found = [], pend = [];
       for (const u of list) {
         // leave room for visitors' own requests: the scan uses at most about 100 a minute
-        while (RL.sent.filter(t => Date.now() - t < 60000).length >= 100 || RL.waiting > 2 || Date.now() < RL.pauseUntil) await sleep(400);
+        while (RL.sent.filter(t => Date.now() - t < 60000).length >= 90 || Q.hi.length > 0 || Q.lo.length > 1 || Date.now() < RL.pauseUntil) await sleep(400);
         let d;
         try { d = await candlesOf(u, 5); }
         catch (e) { SCAN.failed++; SCAN.lastErr = u.sym + ": " + e.message; if (e.message === NEED_LOGIN) break; continue; }
@@ -768,7 +777,7 @@ async function scanCycle() {
         const j = await fy("/quotes", { symbols: [...new Set(live.map(o => o.sym))].join(",") });
         for (const q of j.d || []) if (q && q.v && q.v.lp > 0) live.filter(o => o.sym === q.n).forEach(o => { o.now = q.v.lp; o.nowAt = Date.now(); });
       } catch (e) {}
-    });
+    }));
     SCAN.at = Date.now(); SCAN.cycleMs = Date.now() - SCAN.started; SCAN.cpuMs = cpu;
   } finally { SCAN.running = false; }
 }
@@ -784,6 +793,229 @@ app.get("/api/scan", guard(async (_req, res) => {
     signals: SCAN.signals.map(s => Object.assign({}, s, { opt: SCAN.opts.get(scanKey(s)) || null })), pending: SCAN.pending });
 }));
 
+
+/* ------------------------------------------------------------- Telegram -- */
+/* Two free, permitted ways to read trade calls posted on Telegram:
+   1. Public channels, from Telegram's own public web preview (t.me/s/<name>),
+      the same page anyone can open in a browser without logging in.
+   2. Groups or channels where you have added your own bot (free Bot API,
+      token in the TELEGRAM_BOT_TOKEN setting on Render, never in the code).
+   Nothing private is read without that access, and nothing here is paid. */
+const TG = { cache: new Map(), fetches: [], bot: { enabled: false, error: null, offset: 0, chats: new Map(), msgs: new Map(), lastPoll: 0 } };
+const TG_NAME = /^[A-Za-z][A-Za-z0-9_]{3,31}$/;
+const tgText = h => ent(String(h || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div)>/gi, "\n")).replace(/[ \t]+\n/g, "\n");
+// ent() collapses whitespace; keep line breaks by converting them to a marker first
+const tgClean = h => tgText(String(h || "").replace(/<br\s*\/?>/gi, " ⏎ ")).replace(/\s*⏎\s*/g, "\n").trim();
+function tgParsePage(html, name) {
+  const out = [];
+  const title = (/<div class="tgme_channel_info_header_title"[^>]*>\s*<span[^>]*>([\s\S]*?)<\/span>/.exec(html) || [])[1];
+  const parts = html.split(/<div class="tgme_widget_message_wrap/).slice(1);
+  for (const p of parts) {
+    const post = (/data-post="([^"]+)"/.exec(p) || [])[1]; if (!post) continue;
+    const id = +post.split("/")[1]; if (!id) continue;
+    const dt = (/<time[^>]*datetime="([^"]+)"/.exec(p) || [])[1];
+    // the post's own text (a reply also shows a quoted copy of the earlier post, marked js-message_reply_text)
+    const tm = /<div class="tgme_widget_message_text[^"]*\bjs-message_text\b[^"]*"[^>]*>([\s\S]*?)<\/div>/.exec(p)
+      || [...p.matchAll(/<div class="(tgme_widget_message_text[^"]*)"[^>]*>([\s\S]*?)<\/div>/g)].filter(x => !/reply_text/.test(x[1])).map(x => [x[0], x[2]])[0];
+    const meta = (/<span class="tgme_widget_message_meta">([\s\S]*?)<\/span>\s*<\/span>|<span class="tgme_widget_message_meta">([\s\S]*?)<\/a>/.exec(p) || [])[0] || "";
+    const fwd = (/class="tgme_widget_message_forwarded_from_name"[^>]*>([\s\S]*?)<\/(a|span)>/.exec(p) || [])[1];
+    const reply = (/class="tgme_widget_message_reply"[^>]*href="https:\/\/t\.me\/[^/]+\/(\d+)"/.exec(p) || [])[1];
+    const views = (/class="tgme_widget_message_views">([^<]*)</.exec(p) || [])[1];
+    out.push({ id, ts: dt ? Date.parse(dt) : null, text: tm ? tgClean(tm[1]) : "", edited: /\bedited\b/i.test(meta),
+      fwd: fwd ? ent(fwd) : null, reply: reply ? +reply : null, views: views || null, link: "https://t.me/" + post });
+  }
+  const more = (/class="tme_messages_more[^"]*"[^>]*data-before="(\d+)"/.exec(html) || [])[1];
+  return { name, title: title ? ent(title) : null, messages: out.sort((a, b) => a.id - b.id), before: more ? +more : null };
+}
+async function tgChannel(name, before) {
+  const key = name.toLowerCase() + "|" + (before || "");
+  const hit = TG.cache.get(key);
+  if (hit && Date.now() - hit.at < (before ? 600000 : 60000)) return hit.val;   // newest page: 1 min, older pages: 10 min
+  TG.fetches = TG.fetches.filter(t => Date.now() - t < 60000);
+  if (TG.fetches.length >= 20) { if (hit) return hit.val; throw new Error("reading Telegram slowly on purpose (20 pages a minute); try again shortly"); }
+  TG.fetches.push(Date.now());
+  const r = await fetch((env("TELEGRAM_WEB_BASE") || "https://t.me") + "/s/" + encodeURIComponent(name) + (before ? "?before=" + before : ""),
+    { headers: { "User-Agent": "Mozilla/5.0 SignalDesk/1.0", Accept: "text/html" }, redirect: "follow", signal: AbortSignal.timeout(10000) });
+  const noPreview = "Telegram shows no public preview for this channel (the owner has switched it off, or it can only be viewed in the Telegram app), so the site can't read it. A bot can only read a channel where you are an admin.";
+  if (r.redirected && !/\/s\//.test(r.url)) throw new Error(noPreview);
+  if (!r.ok) throw new Error("Telegram answered HTTP " + r.status);
+  const html = await r.text();
+  if (!/tgme_widget_message_wrap|tgme_channel_info/.test(html) || !/\/s\//.test(r.url))
+    throw new Error("Telegram shows no public preview for this channel (the owner has switched it off, or it can only be viewed in the Telegram app), so the site can't read it. A bot can only read a channel where you are an admin.");
+  const val = tgParsePage(html, name); val.at = Date.now();
+  TG.cache.set(key, { at: Date.now(), val });
+  if (TG.cache.size > 300) TG.cache.delete(TG.cache.keys().next().value);
+  return val;
+}
+app.get("/api/tg/channel", async (req, res) => {
+  try { await access(); } catch (e) { return res.status(401).json({ error: e.message }); }
+  const name = String(req.query.name || "").replace(/^@/, "");
+  if (!TG_NAME.test(name)) return res.status(400).json({ error: "not a valid public channel name" });
+  const before = /^\d+$/.test(req.query.before || "") ? +req.query.before : null;
+  try { res.json(await tgChannel(name, before)); } catch (e) { res.status(502).json({ error: e.message }); }
+});
+/* Optional bot: long-polls getUpdates (free). Messages are kept in memory only, so the page keeps its own copy. */
+async function tgBotLoop() {
+  const tok = env("TELEGRAM_BOT_TOKEN"); if (!tok) return;
+  TG.bot.enabled = true;
+  for (;;) {
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${tok}/getUpdates?timeout=25&offset=${TG.bot.offset}&allowed_updates=${encodeURIComponent('["message","edited_message","channel_post","edited_channel_post"]')}`,
+        { signal: AbortSignal.timeout(35000) });
+      const j = await r.json();
+      if (!j.ok) { TG.bot.error = j.description || ("HTTP " + r.status); await sleep(60000); continue; }
+      TG.bot.error = null; TG.bot.lastPoll = Date.now();
+      for (const u of j.result || []) {
+        TG.bot.offset = u.update_id + 1;
+        const m = u.message || u.edited_message || u.channel_post || u.edited_channel_post; if (!m || !m.chat) continue;
+        const c = m.chat, id = String(c.id);
+        TG.bot.chats.set(id, { id, title: c.title || c.username || id, type: c.type, username: c.username || null });
+        const list = TG.bot.msgs.get(id) || [];
+        const text = m.text || m.caption || "";
+        const ex = list.find(x => x.id === m.message_id);
+        if (ex) { if (ex.text !== text) { ex.editedText = text; ex.edited = true; } }
+        else list.push({ id: m.message_id, ts: (m.date || 0) * 1000, text, edited: !!(u.edited_message || u.edited_channel_post),
+          fwd: m.forward_origin ? (m.forward_origin.chat && m.forward_origin.chat.title) || (m.forward_origin.sender_user && m.forward_origin.sender_user.first_name) || "forwarded" : null,
+          reply: m.reply_to_message ? m.reply_to_message.message_id : null, link: c.username ? `https://t.me/${c.username}/${m.message_id}` : null });
+        TG.bot.msgs.set(id, list.slice(-400));
+      }
+    } catch (e) { TG.bot.error = e.message; await sleep(15000); }
+  }
+}
+app.get("/api/tg/bot", async (req, res) => {
+  try { await access(); } catch (e) { return res.status(401).json({ error: e.message }); }
+  const chat = String(req.query.chat || "");
+  res.json({ enabled: TG.bot.enabled, error: TG.bot.error, lastPoll: TG.bot.lastPoll, chats: [...TG.bot.chats.values()],
+    messages: chat ? (TG.bot.msgs.get(chat) || []) : [] });
+});
+
+
+/* ------------------------------------------------- Telegram account login -- */
+/* Optional. You log in once with your own Telegram account (phone, code, and your
+   two-step password if you have one) through Telegram's official API, using the
+   free api_id / api_hash from my.telegram.org (TELEGRAM_API_ID and
+   TELEGRAM_API_HASH on Render). The site then reads the channels and groups you
+   choose, exactly as your Telegram app would, and nothing else. The login lives
+   in the server's memory; your browser keeps an encrypted copy (useless without
+   this server's key) so it comes back after the free server restarts, until you
+   press "Log out of Telegram". Nothing is ever posted from your account. */
+let GJ = null; try { GJ = { ...require("telegram"), sessions: require("telegram/sessions"), password: require("telegram/Password"), events: require("telegram/events"), Edited: require("telegram/events/EditedMessage") }; } catch (e) {}
+const TGU_ID = +env("TELEGRAM_API_ID") || 0, TGU_HASH = env("TELEGRAM_API_HASH") || "";
+const tguKey = crypto.createHash("sha256").update("signal-desk-telegram|" + (env("TELEGRAM_SESSION_SECRET") || SECRET || "local")).digest();
+const seal = txt => { const iv = crypto.randomBytes(12), c = crypto.createCipheriv("aes-256-gcm", tguKey, iv);
+  const ct = Buffer.concat([c.update(txt, "utf8"), c.final()]); return Buffer.concat([iv, c.getAuthTag(), ct]).toString("base64url"); };
+const unseal = b => { const raw = Buffer.from(String(b), "base64url"), d = crypto.createDecipheriv("aes-256-gcm", tguKey, raw.subarray(0, 12));
+  d.setAuthTag(raw.subarray(12, 28)); return Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString("utf8"); };
+const tguOf = () => { const s = visitor.getStore(); if (!s) return null; s.tg = s.tg || { state: "off", msgs: new Map(), watch: new Set() }; return s.tg; };
+const tguMsg = m => ({ id: m.id, ts: (m.date || 0) * 1000, text: m.message || "", edited: !!m.editDate,
+  fwd: m.fwdFrom ? (m.fwdFrom.fromName || "forwarded") : null, reply: m.replyTo ? m.replyTo.replyToMsgId || null : null, link: null, at: Date.now() });
+function tguStore(T, chat, m) {
+  const list = T.msgs.get(chat) || [], i = list.findIndex(x => x.id === m.id);
+  if (i < 0) list.push(m); else if (list[i].text !== m.text) { list[i].editedText = m.text; list[i].edited = true; }
+  list.sort((a, b) => a.id - b.id); T.msgs.set(chat, list.slice(-400)); T.lastNew = Date.now();
+}
+async function tguClient(session) {
+  const c = new GJ.TelegramClient(new GJ.sessions.StringSession(session || ""), TGU_ID, TGU_HASH, { connectionRetries: 3, deviceModel: "Signal Desk (web)", appVersion: "1.0" });
+  try { c.setLogLevel("error"); } catch (e) {}
+  await c.connect(); return c;
+}
+function tguListen(T) {                          // new and edited messages arrive within a second or two
+  const on = async ev => { try { const m = ev.message; const chat = String(m.chatId); if (!T.watch.has(chat)) return; tguStore(T, chat, tguMsg(m)); } catch (e) {} };
+  T.client.addEventHandler(on, new GJ.events.NewMessage({}));
+  try { T.client.addEventHandler(on, new GJ.Edited.EditedMessage({})); } catch (e) {}
+}
+async function tguReady(T) {
+  T.state = "ready"; T.error = null;
+  try { const me = await T.client.getMe(); T.me = { name: [me.firstName, me.lastName].filter(Boolean).join(" "), username: me.username || null }; } catch (e) {}
+  tguListen(T);
+  return { ok: true, state: "ready", me: T.me, blob: seal(T.client.session.save()) };
+}
+const tguGuard = fn => async (req, res) => {
+  try { await access(); } catch (e) { return res.status(401).json({ error: e.message }); }
+  if (!GJ) return res.status(501).json({ error: "the Telegram library is not installed on the server (upload the new package.json)" });
+  if (!TGU_ID || !TGU_HASH) return res.status(501).json({ error: "TELEGRAM_API_ID and TELEGRAM_API_HASH are not set on Render yet" });
+  try { res.json(await fn(req, tguOf())); }
+  catch (e) { const m = e.errorMessage || e.message || String(e);
+    const nice = { PHONE_CODE_INVALID: "That code is not right. Check the latest code in your Telegram app.", PHONE_CODE_EXPIRED: "That code has expired. Ask for a new one.",
+      PHONE_NUMBER_INVALID: "Telegram says this phone number is not valid. Include the country code, e.g. +971…", PASSWORD_HASH_INVALID: "That two-step password is not right.",
+      FLOOD: "Telegram asks to wait before trying again." }[Object.keys({ PHONE_CODE_INVALID: 1, PHONE_CODE_EXPIRED: 1, PHONE_NUMBER_INVALID: 1, PASSWORD_HASH_INVALID: 1, FLOOD: 1 }).find(k => m.includes(k)) || ""];
+    res.status(400).json({ error: nice || m }); }
+};
+app.get("/api/tgu/status", async (req, res) => {
+  try { await access(); } catch (e) { return res.status(401).json({ error: e.message }); }
+  const T = tguOf();
+  res.json({ library: !!GJ, configured: !!(TGU_ID && TGU_HASH), state: T ? T.state : "off", me: T && T.me || null, error: T && T.error || null, watching: T ? [...T.watch] : [], lastNew: T && T.lastNew || 0 });
+});
+app.post("/api/tgu/start", tguGuard(async (req, T) => {
+  const phone = String(req.body && req.body.phone || "").replace(/[^\d+]/g, "");
+  if (!/^\+?\d{8,15}$/.test(phone)) throw new Error("Enter your phone number with the country code, e.g. +971501234567");
+  if (T.client) { try { await T.client.disconnect(); } catch (e) {} }
+  T.client = await tguClient("");
+  const r = await T.client.invoke(new GJ.Api.auth.SendCode({ phoneNumber: phone, apiId: TGU_ID, apiHash: TGU_HASH, settings: new GJ.Api.CodeSettings({}) }));
+  T.phone = phone; T.hash = r.phoneCodeHash; T.state = "code";
+  return { ok: true, state: "code" };
+}));
+app.post("/api/tgu/code", tguGuard(async (req, T) => {
+  if (T.state !== "code" || !T.client) throw new Error("Start again with your phone number.");
+  const code = String(req.body && req.body.code || "").replace(/\D/g, "");
+  try { await T.client.invoke(new GJ.Api.auth.SignIn({ phoneNumber: T.phone, phoneCodeHash: T.hash, phoneCode: code })); }
+  catch (e) { if ((e.errorMessage || "").includes("SESSION_PASSWORD_NEEDED")) { T.state = "password"; return { ok: true, state: "password" }; } throw e; }
+  return tguReady(T);
+}));
+app.post("/api/tgu/password", tguGuard(async (req, T) => {
+  if (T.state !== "password" || !T.client) throw new Error("Start again with your phone number.");
+  const pw = await T.client.invoke(new GJ.Api.account.GetPassword());
+  const check = await GJ.password.computeCheck(pw, String(req.body && req.body.password || ""));
+  await T.client.invoke(new GJ.Api.auth.CheckPassword({ password: check }));
+  return tguReady(T);
+}));
+app.post("/api/tgu/restore", tguGuard(async (req, T) => {           // after a server restart: the browser hands back its sealed copy
+  if (T.state === "ready") return { ok: true, state: "ready", me: T.me };
+  let session; try { session = unseal(req.body && req.body.blob); } catch (e) { return { ok: false, state: "off", error: "saved Telegram login could not be opened; log in again" }; }
+  T.client = await tguClient(session);
+  if (!(await T.client.checkAuthorization())) { T.state = "off"; return { ok: false, state: "off", error: "Telegram ended this login (logged out from another device?). Log in again." }; }
+  for (const c of (req.body.watch || []).map(String)) T.watch.add(c);
+  const r = await tguReady(T); delete r.blob; return r;
+}));
+app.post("/api/tgu/logout", tguGuard(async (_req, T) => {
+  try { if (T.client) { await T.client.invoke(new GJ.Api.auth.LogOut()); await T.client.disconnect(); } } catch (e) {}
+  T.client = null; T.state = "off"; T.me = null; T.msgs.clear(); T.watch.clear();
+  return { ok: true, state: "off" };
+}));
+app.get("/api/tgu/dialogs", tguGuard(async (_req, T) => {
+  if (T.state !== "ready") throw new Error("Log in to Telegram first.");
+  const ds = await T.client.getDialogs({ limit: 300 });
+  return { chats: ds.filter(d => d.isChannel || d.isGroup).map(d => ({ id: String(d.id), title: d.title || d.name || String(d.id),
+    type: d.isChannel && !d.isGroup ? "channel" : "group", username: d.entity && d.entity.username || null })) };
+}));
+app.get("/api/tgu/messages", tguGuard(async (req, T) => {
+  if (T.state !== "ready") throw new Error("Log in to Telegram first.");
+  const chat = String(req.query.chat || ""); if (!chat) throw new Error("no chat");
+  T.watch.add(chat);
+  const have = T.msgs.get(chat);
+  if (!have || !T.filled || !T.filled.has(chat)) {           // first time (or after a restart): the last 150 messages
+    const ms = await T.client.getMessages(chat, { limit: 150 });
+    for (const m of ms) if (m && m.id) tguStore(T, chat, tguMsg(m));
+    (T.filled = T.filled || new Set()).add(chat);
+  }
+  const since = +req.query.since || 0;
+  return { chat, messages: (T.msgs.get(chat) || []).filter(m => m.id > since || m.editedText), lastNew: T.lastNew || 0 };
+}));
+
+/* ---------------------------------------------------- services and costs -- */
+/* What this site uses outside itself, what is free, and the limits. Shown on the Results page. */
+app.get("/api/services", (_req, res) => res.json({ services: [
+  { name: "Render (hosting)", cost: "Free plan", account: "Your Render account", limits: "750 free hours a month (enough for one site all month); sleeps after 15 minutes without visitors and takes about a minute to wake; included outbound data per month. If the free data allowance is exceeded and a payment card is saved, Render bills the extra; with no card it suspends the site until the next month instead.", status: "in use" },
+  { name: "Fyers API (prices, candles, option chains)", cost: "Free", account: "Your Fyers app (FYERS_APP_ID / FYERS_SECRET_ID on Render)", limits: "About 10 requests a second, 200 a minute and a daily cap. The site keeps itself under 150 a minute.", status: APP_ID && SECRET ? "in use" : "not set up" },
+  { name: "Fyers symbol lists", cost: "Free public download", account: "None", limits: "Read once a day.", status: SYM.at ? "in use" : "not loaded yet" },
+  { name: "News feeds (Business Standard, Economic Times, Mint, Moneycontrol, CNBC, Google News)", cost: "Free public RSS", account: "None", limits: "Read at most every 5 minutes. A feed that stops working is named on the news page; nothing paid replaces it.", status: "in use" },
+  { name: "Telegram public channel pages (t.me/s)", cost: "Free, public", account: "None", limits: "Only public channels; about the last 20 posts per page; the site reads at most 20 pages a minute.", status: "in use when you add a public channel" },
+  { name: "Telegram Bot API", cost: "Free", account: "Your own bot (TELEGRAM_BOT_TOKEN on Render)", limits: "Reads only groups/channels where you added the bot (with privacy mode off for groups). Messages are kept in the server's memory until it restarts.", status: TG.bot.enabled ? (TG.bot.error ? "error: " + TG.bot.error : "in use") : "not set up (optional)" },
+  { name: "Telegram account login (official Telegram API)", cost: "Free", account: "Your Telegram account; api_id / api_hash from my.telegram.org (TELEGRAM_API_ID / TELEGRAM_API_HASH on Render)", limits: "Reads only the channels and groups you pick, as your Telegram app would; never posts. Telegram may limit accounts that make too many requests, so the site reads each chat once and then listens for new messages.", status: GJ && TGU_ID && TGU_HASH ? "available" : "not set up (optional)" },
+  { name: "Google Fonts", cost: "Free", account: "None", limits: "Fonts for the page; the site works with system fonts if blocked.", status: "in use" },
+  { name: "UptimeRobot (optional, keeps the free server awake)", cost: "Free plan", account: "Your UptimeRobot account, if you create one", limits: "Pings /healthz every 5 minutes. Uses about 744 of Render's 750 free hours a month for this one site.", status: "optional, set up by you" },
+], paid: "None. The site uses no paid API, paid data feed, paid Telegram feature, paid database or paid add-on." }));
+
 app.get(/^\/(?!api\/|auth\/).*/, sendApp);   // e.g. /home or /chart after a reload
 
 app.listen(PORT, () => {
@@ -792,6 +1024,6 @@ app.listen(PORT, () => {
   console.log("  redirect   : " + REDIRECT + "   (enter exactly this in the Fyers app)");
   console.log("  visitors   : each logs in with their own Fyers account");
   setTimeout(mastersFresh, 2000);
-  loadEngine(); scheduleScan();                                // symbol lists load in the background
+  loadEngine(); scheduleScan(); tgBotLoop();                                // symbol lists load in the background
   console.log("  password   : " + (SITE_PASSWORD ? "on — asked before the page opens" : "off — the site opens normally") + "\n");
 });
