@@ -579,6 +579,25 @@ const candlesOf = (u, want) => cached(`c:${u.tkr}:${want}`, !openNow(u) ? 180000
     return { tkr: u.tkr, interval: want + "m", candles };
   });
 
+/* Daily candles for the daily EMAs (5 to 250 days and the 30-week average). About two years,
+   fetched in two requests (Fyers allows one year of daily candles per request), kept for 12 hours:
+   only completed days are used, and those change once a day. */
+const dailyOf = u => cached(`d:${u.tkr}:${istDay(Date.now())}`, 12 * 3600e3, async () => {
+  const part = async (fromDays, toDays) => {
+    const j = await fy("/history", { symbol: u.fy, resolution: "D", date_format: "1",
+      range_from: istDay(Date.now() - fromDays * 864e5), range_to: istDay(Date.now() - toDays * 864e5), cont_flag: "1" });
+    return (j.candles || []).filter(c => c && c.length >= 5 && c[4] != null).map(c => [c[0] < 1e11 ? c[0] * 1000 : c[0], c[1], c[2], c[3], c[4], c[5] || 0]);
+  };
+  const older = await part(730, 366).catch(() => []), recent = await part(365, 0);
+  const seen = new Set(), candles = older.concat(recent).sort((a, b) => a[0] - b[0]).filter(c => { const d = istDay(c[0]); if (seen.has(d)) return false; seen.add(d); return true; });
+  return { tkr: u.tkr, interval: "1d", candles };
+});
+app.get("/api/daily", guard(async (req, res) => {
+  const u = bySym(req.query.tkr);
+  if (!u) return res.status(404).json({ error: "unknown symbol" });
+  res.json(await dailyOf(u));
+}));
+
 /* --------------------------------------------------------------- quotes -- */
 app.get("/api/quotes", guard(async (req, res) => {
   // `x` = option contracts the viewer has opened, quoted alongside the watchlist
@@ -685,7 +704,7 @@ function loadEngine() {
     const box = { S: { tf: 5, universe: [], chainCache: {}, ctx: {}, sigs: {}, bars: {}, quotes: {}, otr: {}, page: "", tab: "" },
       store: { get: (k, d) => d, set() {} }, localStorage: { getItem: () => null, setItem() {} }, document: {}, window: {}, C: {}, console };
     vm.createContext(box);
-    EN = vm.runInContext(src + "\n;({analyseTF,engine,engineNormal,engineTrend,engineORB,aggregate,toBars,bs,impliedVol});", box, { timeout: 5000 });
+    EN = vm.runInContext(src + "\n;({analyseTF,engine,engineNormal,engineTrend,engineORB,aggregate,toBars,bs,impliedVol,demaOf,demaJudge});", box, { timeout: 5000 });
     SCAN.engineOk = true;
   } catch (e) { SCAN.engineErr = e.message; console.log("  scanner: rules not loaded — " + e.message); }
 }
@@ -731,7 +750,7 @@ async function scanCycle() {
       const all = scanList(), first = !SCAN.at;
       const list = all.filter(u => first || openNow(u));
       if (!list.length) return;
-      SCAN.total = list.length; SCAN.done = 0; SCAN.failed = 0;
+      SCAN.total = list.length; SCAN.done = 0; SCAN.failed = 0; SCAN.emaBlocked = 0;
       const keep = new Map(SCAN.signals.map(s => [s.tkr, s]));           // instruments not scanned now keep their last result
       const found = [], pend = [];
       for (const u of list) {
@@ -749,11 +768,17 @@ async function scanCycle() {
             const smc = EN.engine(ctx, { lite: true });
             const sigs = smc.concat(EN.engineNormal(ctx, { lite: true }, smc), EN.engineTrend(ctx, { lite: true }, smc), EN.engineORB(ctx, { lite: true }, smc));
             const last = b[b.length - 1];
-            for (const s of sigs) found.push({ tkr: u.tkr, fy: u.fy, sym: u.sym, seg: u.seg, lot: u.lot, side: s.side, tab: tabOfSig(s), grade: s.grade,
+            // daily EMA check: fetched only for instruments with a signal today (keeps the Fyers allowance)
+            let DB = null;
+            if (sigs.some(s => istDay(s.ts) === day)) { try { DB = EN.toBars((await dailyOf(u)).candles); } catch (e) { DB = null; } }
+            const ema = s => { const g = EN.demaJudge(DB ? EN.demaOf(DB, istDay(s.ts)) : null, s.side === "BUY" ? 1 : -1, s.entry); return g; };
+            for (const s0 of sigs) { const g = ema(s0); if (g.block) { SCAN.emaBlocked = (SCAN.emaBlocked || 0) + 1; continue; }
+              const s = Object.assign({}, s0, { reasons: (s0.reasons || []).concat(g.lines.map(x => "Daily EMAs: " + x)) });
+              found.push({ tkr: u.tkr, fy: u.fy, sym: u.sym, seg: u.seg, lot: u.lot, side: s.side, tab: tabOfSig(s), grade: s.grade,
               setup: s.setup || (s.grade === "N" ? "trend pull-back" : s.trig || "structure"), ts: s.ts, entry: s.entry, sl: s.sl, t1: s.t1, t2: s.t2, t3: s.t3,
               rr: s.rr, reasons: s.reasons, state: s.res.state, status: s.res.status, hit: s.res.hit, px: s.res.px, R: s.res.R, stop: s.res.stop,
-              last: last.c, lastTs: last.ts });
-            if (smc.pending) pend.push({ tkr: u.tkr, fy: u.fy, sym: u.sym, seg: u.seg, side: smc.pending.side, grade: smc.pending.grade, ts: smc.pending.ts,
+              last: last.c, lastTs: last.ts, ema: { score: g.score, of: g.of, label: g.label, missing: !!g.missing } }); }
+            if (smc.pending && !ema(smc.pending).block) pend.push({ tkr: u.tkr, fy: u.fy, sym: u.sym, seg: u.seg, side: smc.pending.side, grade: smc.pending.grade, ts: smc.pending.ts,
               entry: smc.pending.entry, sl: smc.pending.sl, t1: smc.pending.t1, t2: smc.pending.t2, t3: smc.pending.t3, limit: smc.pending.limit });
           }
           keep.delete(u.tkr);

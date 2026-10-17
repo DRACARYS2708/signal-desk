@@ -136,7 +136,9 @@ They use closed candles only, so they never change after they appear. Being loos
 **Telegram tab (on Home)** — trade calls from Telegram sources you choose, checked against live market data. They are other people's calls: shown separately, never mixed into the site's own signals or results, and a failed call is never turned into the opposite trade.
 - **Sources:** add a public channel by its link (https://t.me/name) or @name; the site reads Telegram's free public preview page (t.me/s/name), at most 20 pages a minute. Private groups can't be read from an invite link; for a group you are in, create a free bot with @BotFather, turn its privacy mode off (/setprivacy → Disable), add it to the group, and put its token on Render as TELEGRAM_BOT_TOKEN. The bot sees only messages posted after it joined, and the server keeps them in memory until it restarts (the page keeps its own copy).
 - **Your Telegram account (optional, free):** reads any channel or group you are a member of, including ones with no public preview. One-time setup: on my.telegram.org → API development tools, create an app and copy api_id and api_hash; on Render → Environment add TELEGRAM_API_ID and TELEGRAM_API_HASH. Then on the Telegram tab → Sources, log in with your phone number, the code Telegram sends to your app, and your two-step password if you use one, and tick the channels to follow. You stay logged in until you press "Log out of Telegram" (the browser keeps an encrypted copy of the login, which only this server can open, so it comes back after the free server sleeps). The site never posts or messages anyone. New posts arrive within seconds while the server is awake and are checked within about 15 seconds while the page is open; when the server wakes up it reads the last 150 posts of each followed chat, so nothing is skipped.
-- **Signal Desk plan:** for each live call the site works out its own plan from the underlying's levels and the option's live premium: TAKE (buy up to a price, stop loss, three targets, reward : risk at least 1.5, underlying trend in the call's direction, option liquid) or SKIP with the reason. It is worked out even when the source keeps its stop loss back, is shown separately from the source's numbers, never says TAKE on a call that is missed, contradicted, stopped or expired, and premium levels are estimates. With alerts on, a TAKE plan beeps and notifies.
+- **Signal Desk plan:** for each live call the site works out its own plan from the underlying's levels and the option's live premium: TAKE (buy up to a price, stop loss, three targets, reward : risk at least 1.5, underlying trend in the call's direction, option liquid) or SKIP with the reason. It is worked out even when the source keeps its stop loss back, is shown separately from the source's numbers, never says TAKE on a call that is contradicted, stopped, cancelled or expired, and premium levels are estimates. With alerts on, a TAKE plan beeps and notifies.
+- **Late calls:** if the premium has already moved past the channel's entry (for example "buy above 200" and it is now 300), the plan is worked out again from the current price and needs reward : risk of 2 or better; if the premium is more than 60% past the channel's entry the site says SKIP (most of the move is gone). If a "buy above" trigger has not been crossed yet, the site says wait.
+- **Trade now (the tab's first view):** only calls the site's plan says can be traded now. Each card asks "Did you take this trade?". No: the updated entry, stop loss and targets keep refreshing (about every 40 seconds for today's calls). Yes: type your buy price (pre-filled with the current premium) and lots; the trade is added to My trades and the card switches to live advice (hold with stop loss, book half and trail, book profit, exit / cut loss, exit before close) on your own buy price. "I didn't take it after all" removes it. Your answers are kept on this device.
 - **Reading calls:** finds instrument, strike, CE/PE, entry or entry range ("110–115", "above 95", "@ 60"), stop loss, up to three targets, lots and expiry. Missing items are shown as missing, never filled in. Follow-ups ("Target 1 done", "SL hit", "exit", "cancel / avoid") are attached to their call. The same call posted again or forwarded from another channel counts once. Edits keep the original text; posts deleted later stay in the record.
 - **Checks:** the contract exists near the current price and the expiry is listed; the option's own 5-minute prices from the moment of publication (was the entry reached, then which came first, stop or targets); fresh prices; stop, entry and targets in order; reward : risk to Target 1 at least your minimum (1.2 by default); liquidity (trades today, bid-ask spread up to 5%); and whether the underlying's 5-minute structure and 1-hour EMAs both point against the call.
 - **Statuses:** VALIDATED — SETUP CONFIRMED, PARTIALLY VALIDATED, ENTRY MISSED, CONTRADICTED BY MARKET, INVALIDATED, EXPIRED, NO TRADE and AWAITING DATA, each with its reason.
@@ -204,6 +206,29 @@ Searched instruments stay in your list after a reload. Instruments without liste
 
 **Data labels** — every price and signal says where it came from: **Live** (fresh from Fyers), **Delayed** or **Stale** (no fresh price or candle while the market should be open — a holiday, halt or feed problem), **Saved** (this browser's copy from the last visit, shown at once while fresh data loads), **Closed** (market shut; last candle time shown). Signals are only issued on live data during market hours.
 
+
+### Daily EMAs (every section)
+
+Every signal is checked against the daily EMAs before it is shown: Strict, Other, Normal, trendline, opening range, All F&O, Scalp, BTST, the Telegram plan and the My trades advice.
+
+| EMA | What it is used for |
+|---|---|
+| 5 EMA | strong momentum (price above it and 5 above 10, for a call) |
+| 9 EMA | trailing stop (My trades: in 30%+ profit and price past it → book profit) |
+| 10 EMA | short-term trend (price on the trade's side and the 10 EMA moving that way) |
+| 20 EMA | pullback support: price within half a day's range of it in an uptrend is marked as a good place to join |
+| 30 EMA | stage analysis: stage 2 = price above a rising 30 EMA, stage 4 = below a falling one, 1 and 3 = flat after a fall (base) or after a rise (top) |
+| 50 EMA | uptrend defence line |
+| 100 EMA | big-dip zone (marked when price is within a day's range of it) |
+| 200 EMA | long-term trend: bulls' last stand in an uptrend, bears' last stand in a downtrend |
+| 250 EMA | value zone (marked when price is near it) |
+
+- Stage uses the 30-day EMA: its slope over the last 5 sessions (more than ±0.3% = rising / falling) and where it was 20 sessions ago.
+- The check uses completed daily candles only (the days before the signal's day), so signals don't change after they appear. About two years of daily candles are fetched once a day per instrument (two Fyers requests each, kept 12 hours). The All F&O scan fetches them only for instruments with a signal that day.
+- A signal is **dropped** only when it fights the daily trend on all three big measures at once: the wrong side of the 200 EMA and of the 50 EMA, in the opposite stage (a call in stage 4, a put in stage 2). A signal with none of the checks on its side (0/5) is dropped too. Every other signal shows a line such as "Daily EMAs 4/5 with the trade · Stage 2 · above 200 EMA", and the details are under "Why this signal".
+- BTST adds "Daily EMAs" to its checklist. The Telegram plan says SKIP when the call is against the daily EMAs. My trades shows the 9 EMA trailing stop, and turns HOLD into HOLD, TIGHT STOP when the daily EMAs are all against your option.
+- The chart page has a "Daily EMAs" panel with each EMA's value, whether price is above or below it, the stage, and the score for a call and for a put.
+- If daily history isn't available (a new listing, or Fyers didn't answer), the card says "not checked" instead of guessing, and the signal is not dropped.
 
 ## Audit of the previous signal engine (October 2026)
 

@@ -660,6 +660,12 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
 .fnof input{flex:1 1 200px;font:600 15px var(--s);padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--fg);min-height:42px}
 
 .bbar input{font:600 14px var(--s);padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--fg)}
+
+.tgq{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:12px;padding:10px 12px;border-radius:10px;border:1px dashed var(--key)}
+.tgq b{margin-right:auto;font-size:15.5px}
+.tgbuy{margin-top:12px}.tgbuy input{flex:1 1 140px}
+
+.emarow{font-size:12.5px;margin:6px 0 2px;padding:4px 9px;border-radius:8px;color:var(--ec);background:color-mix(in srgb, var(--ec) 11%, transparent);border:1px solid color-mix(in srgb, var(--ec) 35%, transparent);display:inline-block}
 </style>
 </head>
 <body>
@@ -1104,7 +1110,23 @@ async function refreshAll(){
   await Promise.all([worker(),worker(),worker(),worker()]);
   await qp;
   S.failedLoads=failed;
-  renderAll(); pumpTrades();
+  renderAll(); pumpTrades(); loadDaily();
+}
+
+/* Daily candles for the daily EMA check, once a day per instrument (kept on the server for 12 hours). */
+S.daily={}; S.dailyTried={};
+function emaGate(tkr, dir, px, ts){ const x=S.daily[tkr]; return demaJudge(x?demaOf(x.b,istDay(ts||Date.now())):null, dir, px); }
+async function loadDaily(){
+  if(S.dailyBusy) return; const today=istDay(Date.now());
+  const list=[...new Set([S.tkr].concat(S.universe.filter(u=>u.seg!=="OPT").map(u=>u.tkr)))].filter(t=>t&&(!S.daily[t]||S.daily[t].day!==today)&&!(S.dailyTried[t]&&Date.now()-S.dailyTried[t]<600000&&!S.daily[t]));
+  if(!list.length) return; S.dailyBusy=true; let i=0, got=0;
+  const w=async()=>{ while(i<list.length){ const t=list[i++];
+    try{ const j=await api("/api/daily?tkr="+encodeURIComponent(t),30000); S.daily[t]={b:toBars(j.candles), day:today, at:Date.now()}; got++; try{ recompute(t); }catch(e){} }
+    catch(e){ if(e.status===401) break; } finally{ S.dailyTried[t]=Date.now(); } } };
+  try{ await Promise.all([w(),w()]); }
+  finally{ S.dailyBusy=false; S.dailyAt=Date.now();
+    try{ if(XS.scalp.cache) XS.scalp.cache={}; }catch(e){}
+    if(got){ try{ btstCount(); }catch(e){} renderAll(); if(S.page==="home") renderStrictSegs(); } }
 }
 
 /* ---- the last data this browser saw, so a reload shows something at once.
@@ -1758,6 +1780,8 @@ function scalpBuild(){
   list.forEach(u=>{ const e=X.bars[u.tkr]; if(!e){ states.push([u,"No 3-minute data"]); return; }
     const key=u.tkr+"|"+e.at; let r=X.cache[u.tkr];
     if(!r||r.key!==key){ const old=r&&r.sigs||[]; r=scalpEngine(u,e.b); r.key=key;
+      r.sigs=r.sigs.filter(s=>{ s.ema=emaGate(u.tkr,s.d,s.entry,s.ts); if(s.ema.block) return false;
+        s.why=(s.why||[]).concat(s.ema.lines.map(x=>"Daily EMAs: "+x)); return true; });
       r.sigs.forEach(s=>{ const o=old.find(z=>z.ts===s.ts&&z.d===s.d); if(o&&o.opt){ s.opt=o.opt; s.optAt=o.optAt; } });
       X.cache[u.tkr]=r; }
     all.push(...r.sigs.map(s=>Object.assign(s,{u}))); states.push([u,r.state]); });
@@ -1781,7 +1805,7 @@ function renderScalp(){
       `${u.fo?"SPOT":s.d>0?"BUY":"SELL"} ${sn2(s.entry)} | SL ${sn2(s.sl)}\nT1/T2/T3 - ${sn2(s.t1)}/${sn2(s.t2)}/${sn2(s.t3)}\nExit within 30 min`;
     return `<div class="xcard" style="--xc:${s.d>0?C.up:C.dn}"><div class="xh"><b class="xn">${esc(s.sym)}</b><span class="chip" style="background:${s.d>0?C.up:C.dn}">${esc(chip)}</span>`+
       `<span class="xst" style="color:${col}">${st}</span></div>`+
-      `<div class="xsub">${s.d>0?"Buy call":"Buy put"} scalp · signal ${hhmm(s.ts)} IST · ${u.seg==="MCX"?"futures":"index"} levels below${live?` · ${s.res.left} candle${s.res.left===1?"":"s"} (${s.res.left*3} min) left`:""}</div>`+
+      emaRow(s.ema)+`<div class="xsub">${s.d>0?"Buy call":"Buy put"} scalp · signal ${hhmm(s.ts)} IST · ${u.seg==="MCX"?"futures":"index"} levels below${live?` · ${s.res.left} candle${s.res.left===1?"":"s"} (${s.res.left*3} min) left`:""}</div>`+
       `<div class="xlv"><div><span>${u.fo?"Spot entry":s.d>0?"Buy @":"Sell @"}</span><b style="color:${C.key}">${f(s.entry)}</b></div><div><span>Stop loss</span><b style="color:${C.dn}">${f(live&&s.res.stop!=null?s.res.stop:s.sl)}</b></div>`+
         `<div><span>Target 1 / 2 / 3</span><b>${f(s.t1)} / ${f(s.t2)} / ${f(s.t3)}</b></div><div><span>${live?"Now":"Exit"}</span><b style="color:${col}">${f(s.res.px)}</b></div></div>`+
       (live&&u.fo?(o?`<div class="xopt">Option <b>${o.strike} ${o.ty}</b>, expiry ${new Date(o.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}: premium now <b>₹${nf(o.ltp,2)}</b>`+
@@ -1837,6 +1861,60 @@ function dailyOf(b){ const days=[]; let cur=null;
     else { cur.h=Math.max(cur.h,x.h); cur.l=Math.min(cur.l,x.l); cur.c=x.c; cur.v+=x.v||0; cur.bars.push(x); } }
   return days; }
 const lastOf=a=>a[a.length-1];
+/* ---- Daily EMAs, used by every section ----
+   5 EMA strong momentum · 9 EMA trailing stop · 10 EMA short-term trend · 20 EMA pullback support ·
+   30 EMA for stage analysis · 50 EMA uptrend defence line · 100 EMA big dip ·
+   200 EMA long-term trend (bulls' last stand in an uptrend, bears' last stand in a downtrend) · 250 EMA value zone.
+   Worked out from COMPLETED daily candles only (the days before the signal's day), so a signal never
+   changes after it appears. A signal is dropped only when it fights the daily trend on all three big
+   measures at once: the wrong side of the 200 EMA and of the 50 EMA, in the opposite stage (from the 30 EMA). */
+const DEMA_P=[5,9,10,20,30,50,100,200,250];
+function wma(v,p){ const o=Array(v.length).fill(null), den=p*(p+1)/2;
+  for(let i=p-1;i<v.length;i++){ let s=0; for(let k=0;k<p;k++) s+=v[i-k]*(p-k); o[i]=s/den; } return o; }
+const DEMA_C=new WeakMap();
+function demaOf(DB, day){                  // DB: daily candles (toBars), oldest first; day: the signal's IST day
+  if(!DB||!DB.length) return null;
+  let m=DEMA_C.get(DB); if(!m){ m={}; DEMA_C.set(DB,m); }
+  if(m[day]!==undefined) return m[day];
+  const days=DB.filter(x=>x.day<day);
+  if(days.length<30) return m[day]=null;
+  const c=days.map(x=>x.c), n=c.length-1, e={}, prev={};
+  for(const p of DEMA_P){ if(c.length>=p+10){ const a=ema(c,p); e[p]=a[n]; prev[p]=a[n-3]; } else e[p]=null; }
+  // stage analysis on the 30-day EMA: its slope over the last week (5 sessions) and where it was a month ago (20 sessions)
+  const e30=c.length>=40?ema(c,30):null;
+  const W=e30?e30[n]:null, W4=e30&&n>=34?e30[n-5]:null, W13=e30&&n>=49?e30[n-20]:null;
+  const A=atr(days,14)[n];
+  return m[day]={ day:days[n].day, close:c[n], e, prev, W, W4, W13, A, n:days.length };
+}
+function demaJudge(D, dir, px){
+  if(!D) return { missing:true, block:false, score:null, of:5, label:"Daily EMAs: not enough daily history loaded yet, not checked", lines:["not enough daily history loaded yet, not checked"] };
+  const e=D.e, A=D.A||px*0.015, f=v=>v==null?"—":(v>=1000?Math.round(v).toLocaleString("en-IN"):(+v.toFixed(2)).toString());
+  const side=v=>v==null?null:dir*(px-v)>0, near=(v,k)=>v!=null&&Math.abs(px-v)<=k*A;
+  // stage from the 30 EMA
+  let stage=null;
+  if(D.W!=null&&D.W4!=null){ const sl=(D.W-D.W4)/D.W*100, up=sl>0.3, dn=sl<-0.3, ref=px;
+    stage=ref>D.W&&up?2:ref<D.W&&dn?4:(D.W13!=null&&D.W>D.W13?3:1); }
+  const stTxt={1:"Stage 1 (base: 30 EMA flat after a fall)",2:"Stage 2 (advancing: price above a rising 30 EMA)",3:"Stage 3 (topping: 30 EMA flattening after a rise)",4:"Stage 4 (declining: price below a falling 30 EMA)"};
+  const want=dir>0?2:4, oppose=dir>0?4:2;
+  const lt=side(e[200]), def=side(e[50]), st=e[10]!=null&&D.prev[10]!=null?side(e[10])&&dir*(e[10]-D.prev[10])>0:null;
+  const mom=e[5]!=null&&e[10]!=null?side(e[5])&&dir*(e[5]-e[10])>0:null, stg=stage==null?null:stage===want;
+  const checks=[lt,stg,def,st,mom], known=checks.filter(x=>x!=null), score=known.filter(Boolean).length;
+  const block=(lt===false&&def===false&&(stage!=null?stage===oppose:st===false))||(known.length>=4&&score===0);   // all three big measures against, or every check against
+  const lines=[];
+  lines.push(e[200]==null?"200 EMA: not enough history":`${side(e[200])?(dir>0?"above":"below"):(dir>0?"below":"above")} the 200 EMA ${f(e[200])}: ${lt?(dir>0?"long-term uptrend, bulls hold their last stand":"long-term downtrend, bears hold their last stand"):(dir>0?"long-term downtrend, against a call":"long-term uptrend, against a put")}`);
+  lines.push(stage==null?"30 EMA stage: not enough history":`${stTxt[stage]}, 30 EMA ${f(D.W)}${stg?", with the trade":stage===oppose?", against the trade":""}`);
+  lines.push(e[50]==null?"50 EMA: not enough history":`${def?"on the trade's side of":"on the wrong side of"} the 50 EMA ${f(e[50])}${dir>0?(def?" (uptrend defence line holding)":" (uptrend defence line broken)"):(def?" (price held under it)":" (price back above it)")}`);
+  if(e[10]!=null) lines.push(`10 EMA ${f(e[10])}: short-term trend ${st?"with the trade":"not with the trade"}`);
+  if(e[5]!=null) lines.push(`5 EMA ${f(e[5])}: ${mom?"strong momentum with the trade":"no strong momentum for the trade"}`);
+  if(e[20]!=null&&near(e[20],0.5)&&lt) lines.push(`at the 20 EMA ${f(e[20])}: pullback ${dir>0?"support":"resistance"}, a good place to join the trend`);
+  if(e[100]!=null&&near(e[100],1)) lines.push(`near the 100 EMA ${f(e[100])}: big-dip zone`);
+  if(e[250]!=null&&near(e[250],1)) lines.push(`near the 250 EMA ${f(e[250])}: value zone`);
+  if(e[9]!=null) lines.push(`9 EMA trailing stop ${f(e[9])}${side(e[9])?"":" (price is already past it)"}`);
+  const tags=[stage?("Stage "+stage):null, lt==null?null:(dir>0?(lt?"above":"below"):(lt?"below":"above"))+" 200 EMA",
+    e[20]!=null&&near(e[20],0.5)&&lt?"20 EMA pullback":null, e[100]!=null&&near(e[100],1)?"100 EMA dip":null, e[250]!=null&&near(e[250],1)?"250 EMA value":null].filter(Boolean);
+  return { block, score, of:known.length, stage, e, W:D.W, e9:e[9], lines,
+    label:`Daily EMAs ${score}/${known.length} with the trade${tags.length?" · "+tags.join(" · "):""}${block?" · against the daily trend":""}` };
+}
 function niftyOk(nd, day){        // NIFTY 50 above its 20-day EMA at 15:15 on `day`
   const k=nd.findIndex(x=>x.day===day); if(k<20) return null;
   const bar=nd[k].bars.find(x=>x.t===BT.decideT); if(!bar) return null;
@@ -1862,6 +1940,7 @@ function btstEngine(u, b, nd){
       ["Daily RSI", r!=null&&r>=55&&r<=75, `RSI ${r==null?"—":r.toFixed(0)}`],
       ["Market (NIFTY 50)", mkt===true, mkt==null?"NIFTY 50 data not available":mkt?"NIFTY 50 above its 20-day EMA":"NIFTY 50 below its 20-day EMA"],
     ];
+    { const g=emaGate(u.tkr,1,c,dec.ts); checks.push(["Daily EMAs", !g.block, g.label+(g.missing?"":". "+g.lines.slice(0,3).join("; "))]); }
     const pass=checks.every(x=>x[1]);
     if(isToday&&!decClosed){ watch={day:day.day, checks, pass, forming:true}; continue; }
     if(isToday) watch={day:day.day, checks, pass};
@@ -2186,6 +2265,7 @@ async function mtEval(tr, force){
     Object.assign(L,{d, leg, lot:d.lot||uni(tr.tkr).lot||null, chainAt:Date.now()});
   }catch(e){ L.err=e.message; }
   if(onHomeTab("mine")) renderMine();
+  if(onHomeTab("tg")&&TGR.view==="trade") renderTg();
 }
 /* The advice: plain rules, shown with their reasons. */
 function mtAdvice(tr, L){
@@ -2214,6 +2294,8 @@ function mtAdvice(tr, L){
   if(sup) why.push(`Nearest ${dir>0?"support":"resistance"} ${px(sup.px,u)} (${sup.kind.toLowerCase()}); next ${dir>0?"resistance":"support"} ${res?px(res.px,u)+" ("+res.kind.toLowerCase()+")":"not close"}.`);
   if(g) why.push(d.daysOut<1?`Option expires today: time decay is very fast, especially after 13:30.`:`Option: ${delta?`delta ${delta.toFixed(2)}, `:""}time decay about ₹${Math.abs(g.theta).toFixed(2)} a day per unit, ${d.daysOut.toFixed(1)} days to expiry.`);
   if(mismatch) why.push(`The option chain's ${u.sym} price (${px(d.spot,u)}) differs from the chart price by over 1%, so premium stop and target use simple −25% / +40% steps.`);
+  const eg=emaGate(tr.tkr,dir,spot,Date.now());
+  if(!eg.missing) why.push(`${eg.label}. ${eg.lines.slice(0,3).join("; ")}.`+(eg.e9!=null?` Daily 9 EMA trailing stop on ${u.sym}: ${px(eg.e9,u)}${dir*(spot-eg.e9)>0?"":" (price is already past it)"}.`:""));
   let act, col;
   const fav=tdir===dir||!!withSig, bad=tdir===-dir||!!against;
   if(!open){ act="MARKET CLOSED"; col=C.mid; why.unshift("The market is closed; prices are the last traded. Re-check at the open; options can open far from these prices."); }
@@ -2226,7 +2308,9 @@ function mtAdvice(tr, L){
   else if(pct>=15){ act="BOOK PROFIT"; col=C.up; why.unshift("Sideways market: options lose value while price waits. A 15%+ gain is worth taking."); }
   else if(pct<=-20){ act="EXIT / CUT LOSS"; col=C.dn; why.unshift("Down more than 20% with no trend to help. Cut it before it grows."); }
   else { act="HOLD, TIGHT STOP"; col=C.warn; why.unshift("No clear direction. Hold only with a tight stop, and exit if nothing moves in the next 15–20 minutes."); }
-  return {act, col, why, ltp, pnl, pct, qty, lot, slP, tgP, uSL, uT, delta, spot, bid:leg.bid, ask:leg.ask, expiry:d.expiry};
+  if(eg.block&&act==="HOLD WITH STOP LOSS"){ act="HOLD, TIGHT STOP"; col=C.warn; why.unshift("The intraday trend helps, but the daily EMAs (200, 50 and the 30 EMA stage) all point against this option. Keep the stop tight."); }
+  if(eg.e9!=null&&open&&pct>=30&&dir*(spot-eg.e9)<0&&/HOLD/.test(act)){ act="BOOK PROFIT"; col=C.up; why.unshift(`In profit and ${u.sym} is past its daily 9 EMA trailing stop (${px(eg.e9,u)}). Lock it in.`); }
+  return {act, col, why, ltp, pnl, pct, qty, lot, slP, tgP, uSL, uT, delta, spot, bid:leg.bid, ask:leg.ask, expiry:d.expiry, ema:eg};
 }
 function renderMine(){
   if(!onHomeTab("mine")) return;
@@ -2314,7 +2398,7 @@ function renderFno(){
       `<span class="chip" style="background:${d1>0?C.up:C.dn}">${o?o.strike+" "+o.ty:(d1>0?"CALL":"PUT")}</span>`+
       `<span class="chip ghost" style="color:${C.key};border:1px solid ${C.key};background:none">${FNO_KIND[s.tab]}${s.grade==="O"?" · OPENING RANGE":s.grade==="T"?" · TRENDLINE":""}</span>`+
       `<span class="xst" style="color:${col}">${st}</span></div>`+
-      `<div class="xsub">Buy ${d1>0?"call (CE)":"put (PE)"} · signal ${hhmm(s.ts)} IST${o?` · expiry ${new Date(o.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}${o.lot?" · lot "+o.lot:""}`:""}</div>`+
+      emaRow(s.ema)+`<div class="xsub">Buy ${d1>0?"call (CE)":"put (PE)"} · signal ${hhmm(s.ts)} IST${o?` · expiry ${new Date(o.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}${o.lot?" · lot "+o.lot:""}`:""}</div>`+
       (o?`<div class="xlv"><div><span>Buy @ (premium)</span><b style="color:${C.key}">₹${f2(o.buy)}</b></div><div><span>Stop loss</span><b style="color:${C.dn}">₹${f2(o.sl)}</b></div>`+
           `<div><span>Target 1 / 2 / 3</span><b>₹${f2(o.t1)} / ${f2(o.t2)} / ${f2(o.t3)}</b></div>`+
           (on&&o.now?`<div><span>Premium now</span><b style="color:${pnl>=0?C.up:C.dn}">₹${f2(o.now)} (${pnl>=0?"+":""}${pnl.toFixed(1)}%)</b></div>`:"")+`</div>`
@@ -2363,7 +2447,7 @@ function renderFno(){
    the opposite trade. Everything is kept on this device. */
 const TGR={ src:(()=>{ try{ return JSON.parse(localStorage.getItem("sd_tg_src")||"[]"); }catch(e){ return []; } })(),
   msgs:{}, ev:(()=>{ try{ return JSON.parse(localStorage.getItem("sd_tg_ev")||"{}"); }catch(e){ return {}; } })(),
-  busy:false, at:0, err:{}, bot:null, claims:{}, promo:{}, view:store.get("sd_tg_view","valid"), minRR:+store.get("sd_tg_rr","1.2")||1.2, names:{} };
+  busy:false, at:0, err:{}, bot:null, claims:{}, promo:{}, view:store.get("sd_tg_view2","trade"), minRR:+store.get("sd_tg_rr","1.2")||1.2, names:{} };
 const tgKey=s=>s.kind+":"+(s.kind==="bot"||s.kind==="acct"?s.chat:s.name.toLowerCase());
 // sources you asked for (added once on each device; you can turn them off or remove them)
 ["BankNifty_Option_Groww_trading_8","Gxtradermadhav_trading_mcx_stock"].forEach(n=>{ const seen=store.get("sd_tg_def_"+n,"");
@@ -2487,10 +2571,18 @@ function tgPlan(c, d, leg, ub, trend){
   why.push(`stop beyond ${guard?guard.kind.toLowerCase()+" "+nf(guard.px,2):"1.2 ATR"} on ${uni(c.tkr).sym||c.tkr} (${nf(uSL,2)}); targets at ${nf(u1,2)} / ${nf(u2,2)} / ${nf(u3,2)}; premium levels from delta ${delta.toFixed(2)}`);
   const want=dir, against=trend&&trend.t5===-want&&trend.t60===-want, with_=trend&&(trend.t5===want||trend.t60===want);
   const plan={entryMax:t05(Math.min(prem*1.02,c.entryHi||Infinity)), sl, t1, t2, t3, rr, uSL, u1, u2, u3, delta, prem};
+  const tk=uni(c.tkr).tkr||c.tkr, eg=emaGate(tk,dir,spot,Date.now()); plan.ema=eg; why.push(eg.label);
+  if(eg.block) return Object.assign(plan,skip("against the daily EMAs: "+eg.lines.slice(0,3).join("; ")));
   if(against) return Object.assign(plan,skip("the underlying trend points the other way"));
   if(!with_) return Object.assign(plan,skip("the underlying has no trend in this direction yet"));
   if(rr<1.5) return Object.assign(plan,skip(`reward : risk only ${rr.toFixed(2)} to Target 1 (need 1.5)`));
-  if(c.entryHi!=null&&prem>c.entryHi*1.03) return Object.assign(plan,skip("the premium is already above the source's entry; buying now would be chasing"));
+  if(c.above&&c.entryLo!=null&&prem<c.entryLo*0.99) return Object.assign(plan,skip(`wait: the channel's trigger is above ₹${nf(c.entryLo,2)} and the premium is ₹${nf(prem,2)}; this updates when it crosses`));
+  if(c.entryHi!=null&&prem>c.entryHi*1.03){                     // the price has run past the channel's entry
+    plan.late=true; plan.entryMax=t05(prem*1.02);
+    why.unshift(`the premium moved from the channel's ₹${nf(c.entryHi,2)} to ₹${nf(prem,2)}; the plan is worked out again from the current price`);
+    if(prem>c.entryHi*1.6) return Object.assign(plan,skip(`the premium has already run ${((prem/c.entryHi-1)*100).toFixed(0)}% past the channel's entry; most of the move is gone`));
+    if(rr<2) return Object.assign(plan,skip(`late entry needs reward : risk of 2 or better; it is ${rr.toFixed(2)}`));
+  }
   return Object.assign(plan,{verdict:"TAKE", why:[`trend agrees, reward : risk ${rr.toFixed(2)} to Target 1`].concat(why)});
 }
 /* ---- reading a call out of a message ---- */
@@ -2560,12 +2652,12 @@ function tgCalls(){
 async function tgEval(c){
   const prev=TGR.ev[c.key];
   if(prev&&prev.final) return prev;
-  if(prev&&Date.now()-prev.at<170000) return prev;
+  if(prev&&Date.now()-prev.at<(Date.now()-c.msg.ts<6*3600e3?40000:170000)) return prev;
   const r={at:Date.now(), checks:[], status:null, why:[], final:false}, add=(n,ok,w)=>r.checks.push({n,ok,w});
   const pubDay=istDay(c.msg.ts), today=istDay(Date.now());
   const done=(st,w,final)=>{ r.status=st; if(w) r.why.unshift(w); r.final=!!final;
     // the site's own plan never says TAKE on a call the market has already ruled out
-    if(r.plan&&r.plan.verdict==="TAKE"&&/ENTRY MISSED|CONTRADICTED|INVALIDATED|EXPIRED|AWAITING/.test(st)) Object.assign(r.plan,{verdict:"SKIP",why:[st.toLowerCase()+": "+(w||"")].concat(r.plan.why)});
+    if(r.plan&&r.plan.verdict==="TAKE"&&/CONTRADICTED|INVALIDATED|EXPIRED|AWAITING/.test(st)) Object.assign(r.plan,{verdict:"SKIP",why:[st.toLowerCase()+": "+(w||"")].concat(r.plan.why)});
     TGR.ev[c.key]=r; tgSaveEv(); return r; };
   if(c.dupOf) return done("NO TRADE","Same call as an earlier message (posted again or forwarded); counted once.",true);
   if(c.type==="nonoption") return done("NO TRADE","Not a CALL / PUT option call; this tab follows option buys only.",true);
@@ -2658,7 +2750,7 @@ async function loadTg(force){
   try{
     for(const s of TGR.src.filter(s=>s.enabled)) await tgFetch(s, !s.ok||Date.now()-s.ok>6*3600e3);
     const calls=tgCalls().filter(c=>c.msg.ts>Date.now()-8*864e5);
-    let n=0; for(const c of calls.slice().reverse()){ if(n>=25) break; const p=TGR.ev[c.key]; if(p&&(p.final||Date.now()-p.at<170000)) continue; n++;
+    let n=0; for(const c of calls.slice().reverse()){ if(n>=25) break; const p=TGR.ev[c.key]; if(p&&(p.final||Date.now()-p.at<(Date.now()-c.msg.ts<6*3600e3?40000:170000))) continue; n++;
       try{ await tgEval(c); }catch(e){} }
     TGR.at=Date.now();
     // Target 1 alerts, confirmed by the option's own prices
@@ -2698,8 +2790,67 @@ function tgPerf(calls){
     avgW:P.wins.length?P.wins.reduce((a,b)=>a+b,0)/P.wins.length:null, avgL:P.losses.length?P.losses.reduce((a,b)=>a+b,0)/P.losses.length:null,
     net:P.wins.concat(P.losses).reduce((a,b)=>a+b,0)}));
 }
+/* ---- "Trade now": only calls the site's analysis says can be traded, and what you did ---- */
+const TGT=(()=>{ try{ return JSON.parse(localStorage.getItem("sd_tg_take")||"{}"); }catch(e){ return {}; } })();
+const tgtSave=()=>{ try{ localStorage.setItem("sd_tg_take",JSON.stringify(TGT)); }catch(e){} };
+function tgTradeCard(c){
+  const e=TGR.ev[c.key]||{}, p=e.plan, u=uni(c.tkr), me=TGT[c.key]||{}, name=`${u.sym||c.tkr} ${c.strike} ${c.ty}`;
+  const src=`${esc(c.srcName||"")} · posted ${istT(c.msg.ts)} IST (${uaeT(c.msg.ts)} UAE)`;
+  const said=`${c.entryLo!=null?(c.above?"above ₹"+nf(c.entryLo,2):c.entryLo===c.entry&&c.entryHi===+(c.entry*1.02).toFixed(2)?"₹"+nf(c.entry,2):"₹"+nf(c.entryLo,2)+"–"+nf(c.entryHi,2)):"no entry given"}`+
+    `, SL ${c.slWithheld?"withheld (VIP)":c.sl!=null?"₹"+nf(c.sl,2):"not given"}${c.targets.length?", targets ₹"+c.targets.map(v=>nf(v,2)).join(" / "):", no targets given"}`;
+  let body="";
+  if(me.state==="yes"){
+    const tr=MT.list.find(x=>x.id===me.mt), L=tr&&MT.live[tr.id];
+    if(!tr) body=`<div class="xres" style="color:${C.mid}">Your trade was removed from My trades.</div>`;
+    else if(L&&L.err) body=`<div class="xres" style="color:${C.warn}">Can't check your trade: ${esc(L.err)}</div>`;
+    else if(!L||!L.leg){ body=`<div class="xres" style="color:${C.mid}">Checking your trade…</div>`; mtEval(tr); }
+    else { if(Date.now()-(L.chainAt||0)>30000) setTimeout(()=>mtEval(tr),0);   // keep the advice live
+      const a=mtAdvice(tr,L), up=a.pnl>=0;
+      alerts.fire("mt|"+tr.id+"|"+a.act,`Your ${name}: ${a.act} (now ₹${nf(a.ltp,2)}, ${up?"+":"−"}₹${nf(Math.abs(a.pnl),0)})`);
+      body=`<div class="mtadv" style="color:${a.col}">${a.act}</div>`+
+        `<div class="xlv"><div><span>You bought at</span><b>₹${nf(tr.buy,2)} × ${tr.qty>0?tr.qty+" qty":tr.lots+" lot"+(tr.lots>1?"s":"")}</b></div><div><span>Premium now</span><b>₹${nf(a.ltp,2)}</b></div>`+
+          `<div><span>Profit / loss</span><b style="color:${up?C.up:C.dn}">${up?"+":"−"}₹${nf(Math.abs(a.pnl),0)} (${a.pct>=0?"+":""}${a.pct.toFixed(1)}%)</b></div>`+
+          `<div><span>Stop loss / target</span><b><span style="color:${C.dn}">₹${nf(a.slP,2)}</span> / <span style="color:${C.up}">₹${nf(a.tgP,2)}</span></b></div></div>`+
+        `<details class="xwhy" open><summary>Why</summary>${a.why.map(w=>"• "+esc(w)).join("<br>")}</details>`+
+        `<div class="xact"><button class="btn tgtx" data-k="${esc(c.key)}" data-a="undo">I didn't take it after all</button></div>`; }
+  } else {
+    const take=p&&p.verdict==="TAKE";
+    body=(take?`<div class="xsize"><span>Updated signal now (${hhmm(e.at)} IST)${p.late?" · late entry, recalculated from the current price":""}</span>`+
+        `<b>BUY ${c.strike} ${c.ty} up to ₹${nf(p.entryMax,2)} · SL ₹${nf(p.sl,2)} · T1/T2/T3 ₹${nf(p.t1,2)} / ${nf(p.t2,2)} / ${nf(p.t3,2)}</b>`+
+        `<small>Reward : risk ${p.rr.toFixed(2)} to Target 1. ${esc(p.why.join("; "))}. Premium levels are estimates.</small></div>`
+      :`<div class="xsize no"><span>Updated signal now</span><b>Don't enter now</b><small>${esc(p?p.why.join("; "):"checking…")}</small></div>`)+
+      (me.state==="no"?`<div class="xact"><span class="sub" style="margin:0">You said you didn't take it; the signal above keeps updating.</span><button class="btn tgtx" data-k="${esc(c.key)}" data-a="ask">I took it after all</button></div>`
+        :me.state==="ask"?`<div class="mtrow tgbuy"><input type="number" step="0.05" min="0.05" placeholder="Your buy price ₹" value="${e.now?nf(e.now,2).replace(/,/g,""):""}" data-f="px">`+
+            `<input type="number" step="1" min="1" placeholder="Lots" value="1" data-f="lots" style="max-width:110px"><button class="btn pri tgtx" data-k="${esc(c.key)}" data-a="save">Save my entry</button>`+
+            `<button class="btn tgtx" data-k="${esc(c.key)}" data-a="no">Cancel</button></div>`
+        :`<div class="tgq"><b>Did you take this trade?</b><button class="btn pri tgtx" data-k="${esc(c.key)}" data-a="ask">Yes, I bought</button><button class="btn tgtx" data-k="${esc(c.key)}" data-a="no">No</button></div>`)+
+      (take?`<div class="xact">${xCopyBtn(`${u.sym||c.tkr} - ${(e.expiry?new Date(e.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"}).toUpperCase()+" EXPIRY":"")}\nBUY ${c.strike} ${c.ty} @ ${sn2(p.entryMax)}\nSL - ${sn2(p.sl)}\nT1/T2/T3 - ${sn2(p.t1)}/${sn2(p.t2)}/${sn2(p.t3)}`,"Copy for WhatsApp")}</div>`:"");
+  }
+  return `<div class="xcard" style="--xc:${me.state==="yes"?C.key:p&&p.verdict==="TAKE"?C.up:C.warn}"><div class="xh"><b class="xn">${esc(name)}</b>`+
+    `<span class="chip ghost" style="color:${C.violet};border:1px solid ${C.violet};background:none">TELEGRAM</span>`+
+    `<span class="xst" style="color:${me.state==="yes"?C.key:C.up}">${me.state==="yes"?"YOUR TRADE":"CAN BE TRADED"}</span></div>`+
+    `<div class="xsub">${src}${e.now!=null?` · premium now ₹${nf(e.now,2)} (${hhmm(e.nowAt)})`:""}</div>`+
+    `<div class="xopt">The channel said: ${esc(said)}.${e.status?" Check of the channel's own levels: "+esc(e.status.toLowerCase())+".":""}</div>`+body+
+    `<details class="xwhy"><summary>Original message</summary><span style="white-space:pre-wrap">${esc(c.msg.text)}</span></details></div>`;
+}
+if(typeof document!=="undefined"&&document.addEventListener) document.addEventListener("focusout",ev=>{ if(TGR.pendingRender&&ev.target.closest&&ev.target.closest(".tgbuy"))
+  setTimeout(()=>{ const a=document.activeElement; if(!(a&&a.tagName==="INPUT"&&a.closest(".tgbuy"))){ TGR.pendingRender=false; renderTg(); } },150); });
+function tgTradeWire(el){
+  el.querySelectorAll(".tgtx").forEach(b=>b.onclick=()=>{ const k=b.dataset.k, a=b.dataset.a, c=tgCalls().find(x=>x.key===k); if(!c) return;
+    if(a==="no"){ TGT[k]={state:"no", at:Date.now()}; }
+    else if(a==="ask"){ TGT[k]={state:"ask", at:Date.now()}; }
+    else if(a==="undo"){ const t=TGT[k]; if(t&&t.mt){ MT.list=MT.list.filter(x=>x.id!==t.mt); delete MT.live[t.mt]; mtSave(); } TGT[k]={state:"no", at:Date.now()}; }
+    else if(a==="save"){ const row=b.closest(".tgbuy"), px=+row.querySelector('[data-f=px]').value, lots=Math.max(1,Math.round(+row.querySelector('[data-f=lots]').value||1));
+      if(!(px>0)){ row.querySelector('[data-f=px]').focus(); return; }
+      const tr={id:Date.now().toString(36), raw:`Telegram: ${c.msg.text.slice(0,80)}`, tkr:c.tkr, strike:c.strike, ty:c.ty, buy:px, lots, qty:0, day:istDay(Date.now()), at:Date.now(),
+        expiry:(TGR.ev[k]||{}).expiry||undefined, from:"telegram"};
+      MT.list.push(tr); mtSave(); TGT[k]={state:"yes", mt:tr.id, at:Date.now()}; mtEval(tr,true); }
+    tgtSave(); renderTg(); });
+}
 function renderTg(){
   if(!onHomeTab("tg")) return;
+  const typing=document.activeElement&&document.activeElement.tagName==="INPUT"&&document.activeElement.closest(".tgbuy");
+  if(typing&&TGR.view==="trade"){ TGR.pendingRender=true; return; }     // don't wipe a half-typed buy price
   const el=document.getElementById("tgBody"), calls=tgCalls().filter(c=>c.msg.ts>Date.now()-8*864e5);
   const st=c=>(TGR.ev[c.key]||{}).status||(c.dupOf?"NO TRADE":"checking…");
   const VAL=c=>st(c)==="VALIDATED — SETUP CONFIRMED", ACT=c=>{ const e=TGR.ev[c.key]; return e&&e.outcome&&e.outcome.fill!=null&&!e.outcome.stop&&!e.outcome.ended&&e.status!=="INVALIDATED"; };
@@ -2728,6 +2879,14 @@ function renderTg(){
   const perf=tgPerf(calls);
   let html=`<div class="bbar">${TGR.src.length?`${TGR.src.filter(s=>s.enabled).length} source${TGR.src.filter(s=>s.enabled).length===1?"":"s"} on`:"No sources yet"} · ${TGR.at?"checked "+hhmm(TGR.at)+" IST":TGR.busy?"reading…":"not read yet"} · minimum reward : risk <input id="tgRR" type="number" step="0.1" min="0.5" max="5" value="${TGR.minRR}" style="width:64px"> <button class="btn" id="tgRef">Check now</button></div>`;
   html+=`<div class="seg tabs" id="tgView" style="margin-top:12px"></div>`;
+  const TRADE=c=>{ const e=TGR.ev[c.key], me=TGT[c.key]; if(c.dupOf||c.type!=="call") return false;
+    if(me&&me.state==="yes") return istDay(me.at)===today;
+    return !!(e&&e.plan&&e.plan.verdict==="TAKE"&&!(e.outcome&&e.outcome.ended)); };
+  if(TGR.view==="trade"){ const list=calls.filter(TRADE).sort((a,b)=>b.msg.ts-a.msg.ts);
+    html+=`<h3>Trade now (${list.length})</h3><div class="sub" style="margin:-4px 0 10px">Only Telegram calls that the site's own analysis says can be traded now, with the entry, stop loss and targets worked out again from the current price. Tell the site whether you took each one: if not, the signal keeps updating; if you did, you get stay-or-exit advice on your own buy price.</div>`+
+      (list.length?`<div class="xgrid">${list.map(tgTradeCard).join("")}</div>`
+        :`<div class="notrade"><b>NO TELEGRAM TRADE right now</b><span>${calls.filter(c=>c.type==="call").length?"The calls from your channels don't pass the site's analysis at the current prices. They are listed under Latest and Rejected with the reasons.":TGR.src.length?"No calls found in your channels yet.":"Add a channel under Sources."}</span></div>`);
+  }
   if(TGR.view==="valid") html+=sec("Validated Telegram setups",calls.filter(c=>VAL(c)&&!ACT(c)),"No Telegram call passes the checks and is inside its entry range right now.")+
       sec("Being followed (entry reached)",calls.filter(ACT),"None of the validated calls has been entered by the market yet.");
   if(TGR.view==="latest") html+=sec("Latest Telegram recommendations (today)",todays.filter(c=>c.type==="call"||c.type==="nonoption"),TGR.src.length?"No calls found in today's posts.":"Add a source first (Sources).");
@@ -2755,8 +2914,8 @@ function renderTg(){
   }
   html+=`<div class="sub" style="margin-top:14px">Telegram calls are other people's opinions. They are checked here against live prices but are not the site's own signals, and they are never counted in the site's own results. Do not assume a call was a trade anyone took. Sources, posts and checks are kept on this device only.</div>`;
   el.innerHTML=html;
-  seg(document.getElementById("tgView"),[{l:`Validated · ${calls.filter(c=>VAL(c)||ACT(c)).length}`,v:"valid"},{l:`Latest · ${todays.filter(c=>c.type==="call").length}`,v:"latest"},{l:`Rejected / missed · ${calls.filter(REJ).length}`,v:"rejected"},{l:"Source performance",v:"perf"},{l:`Sources · ${TGR.src.length}`,v:"src"}],
-    it=>TGR.view===it.v, it=>{ TGR.view=it.v; store.set("sd_tg_view",it.v); renderTg(); });
+  seg(document.getElementById("tgView"),[{l:`Trade now · ${calls.filter(TRADE).length}`,v:"trade"},{l:`Validated · ${calls.filter(c=>VAL(c)||ACT(c)).length}`,v:"valid"},{l:`Latest · ${todays.filter(c=>c.type==="call").length}`,v:"latest"},{l:`Rejected / missed · ${calls.filter(REJ).length}`,v:"rejected"},{l:"Source performance",v:"perf"},{l:`Sources · ${TGR.src.length}`,v:"src"}],
+    it=>TGR.view===it.v, it=>{ TGR.view=it.v; store.set("sd_tg_view2",it.v); renderTg(); });
   const rr=document.getElementById("tgRR"); rr.onchange=()=>{ TGR.minRR=Math.max(0.5,Math.min(5,+rr.value||1.2)); store.set("sd_tg_rr",String(TGR.minRR));
     Object.keys(TGR.ev).forEach(k=>{ if(!TGR.ev[k].final) delete TGR.ev[k]; }); loadTg(true); };
   document.getElementById("tgRef").onclick=()=>{ Object.keys(TGR.ev).forEach(k=>{ if(!TGR.ev[k].final) TGR.ev[k].at=0; }); loadTg(true); };
@@ -2767,7 +2926,7 @@ function renderTg(){
   el.querySelectorAll(".tgDel").forEach(b=>b.onclick=()=>{ const s=TGR.src.splice(+b.dataset.i,1)[0]; try{ localStorage.removeItem("sd_tg_m_"+tgKey(s)); }catch(e){} tgSaveSrc(); renderTg(); });
   el.querySelectorAll(".tgBot").forEach(b=>b.onclick=()=>{ if(TGR.src.some(s=>s.kind==="bot"&&s.chat===b.dataset.id)) return;
     TGR.src.push({kind:"bot", chat:b.dataset.id, chatTitle:b.dataset.t, enabled:true, added:Date.now()}); tgSaveSrc(); loadTg(true); renderTg(); });
-  xWire(el);
+  xWire(el); if(TGR.view==="trade") tgTradeWire(el);
   if(TGR.view==="src"){ if(!TGU.st) tguStatus().then(()=>{ if(TGR.view==="src") renderTg(); }); else tguWire(el); }
   if(TGR.view==="src"&&TGR.bot==null) api("/api/tg/bot",10000).then(j=>{ TGR.bot=j; if(TGR.view==="src") renderTg(); }).catch(()=>{ TGR.bot={enabled:false}; });
 }
@@ -2895,7 +3054,14 @@ function recompute(tkr){
   const ctx={u, E, St, H, tf:S.tf, stf, htf};
   S.ctx[tkr]=ctx; S.ind[tkr]=E.ind; S.struct[tkr]=chartStructure(E);
   const smc=engine(ctx), nor=engineNormal(ctx,{},smc), tre=engineTrend(ctx,{},smc), orb=engineORB(ctx,{},smc);
-  S.sigs[tkr]=smc.concat(nor,tre,orb).sort((a,b)=>a.ts-b.ts); S.sigs[tkr].pending=smc.pending;
+  // daily EMA check: a signal fighting the daily trend on the 200 EMA, the 50 EMA and the 30 EMA stage is dropped
+  const all=smc.concat(nor,tre,orb); S.emaOut=S.emaOut||{}; S.emaOut[tkr]=[];
+  const kept=all.filter(s=>{ s.ema=emaGate(tkr,s.side==="BUY"?1:-1,s.entry,s.ts);
+    if(s.ema.block){ S.emaOut[tkr].push(s); return false; }
+    s.reasons=(s.reasons||[]).concat(s.ema.lines.map(x=>"Daily EMAs: "+x)); return true; });
+  S.sigs[tkr]=kept.sort((a,b)=>a.ts-b.ts);
+  const pg=smc.pending&&emaGate(tkr,smc.pending.side==="BUY"?1:-1,smc.pending.entry,smc.pending.ts);
+  S.sigs[tkr].pending=pg&&pg.block?null:smc.pending;
   S.status[tkr]=instrumentState(ctx,smc);
   S.marks=S.marks||{}; S.marks[tkr]=[];
 }
@@ -3424,7 +3590,7 @@ async function pickInstrument(x){
     await loadCandles(u.tkr); await loadMTF(u.tkr); recompute(u.tkr);
     setConn("ok",liveLabel());
   }catch(e){ setConn("err","Could not load "+u.sym+": "+e.message); }
-  renderAll(); pumpTrades();
+  renderAll(); pumpTrades(); loadDaily();
 }
 
 /* ---------------------------------------------- the analysis panel -- */
@@ -3461,6 +3627,7 @@ function renderAnalysis(){
         lv.dn.map((L,i)=>[`Support ${i+1}`,`${f(L.px)} · ${L.kind.toLowerCase()}`,C.up]))
         .concat(S.struct[S.tkr]&&S.struct[S.tkr].range?[["Zone",last>S.struct[S.tkr].range.eq?"Premium (upper half)":"Discount (lower half)"]]:[])
         .concat(lv.up.length+lv.dn.length?[]:[["Levels","none untested nearby"]]))}</div>
+      ${emaCard(S.tkr, kv)}
     </div>`;
   // the signal box
   const s=st.sig, t=s&&S.otr[sigKey(s)];
@@ -3952,6 +4119,7 @@ const alerts={ on:store.get("sd_alerts","0")==="1", seen:new Set(), t0:Date.now(
   },
 };
 function alertEvents(s,m){
+  if(s.ema&&s.ema.missing&&!S.daily[s.tkr]&&!S.dailyTried[s.tkr]) return;     // wait for the daily EMA check
   const k=takeKey(s), txt=shareUpdate(s,m).replace(/\n/g," · ");
   if(m.active) alerts.fire(k+"|new",`New signal: ${shareSignal(s,m).replace(/\n/g," · ")}`);
   for(let h=1;h<=Math.min(m.hit,3);h++) alerts.fire(k+"|t"+h,txt);
@@ -4073,7 +4241,7 @@ function renderTrades(){
     const b=document.createElement("div"); b.className="trade "+cls;
     b.innerHTML=`<div class="tr1"><span class="nm">${esc(m.name)}</span><span class="chip" style="background:${m.chipCol}">${esc(m.chip)}</span>`+
         `${s.strict?'<span class="chip ghost">STRICT</span>':s.grade==="N"?'<span class="chip ghost">NORMAL</span>':s.grade==="T"?'<span class="chip ghost">TRENDLINE · A</span>':s.grade==="O"?'<span class="chip ghost">OPENING RANGE</span>':""}<span class="st" style="color:${bcol};border-color:${bcol}">${badge}</span></div>`+
-      `<div class="tr2">${m.sub}</div>`+
+      `<div class="tr2">${m.sub}</div>`+emaRow(s.ema)+
       `<div class="nowrow"><div><span class="lbl">${m.active?"Current price":"Closed at"}</span>`+
         `<b class="big" style="color:${up?C.up:C.dn}">${f(m.now)}</b><span class="pc" style="color:${up?C.up:C.dn}">${pc}</span></div>`+
         `<div class="mv" style="color:${mv.col}">${m.active?`<span class="ar">${mv.arrow}</span>${mv.txt}`:""}</div>${sparkline(m,m.active?mv.col:C.low)}</div>`+
@@ -4515,6 +4683,19 @@ function renderHead(){
 }
 
 /* Simple view: each signal as a card with its five price levels. */
+const emaRow=g=>!g?"":`<div class="emarow" style="--ec:${g.missing?"var(--mid)":g.score>=Math.ceil(g.of*0.6)?C.up:g.score<=1?C.dn:C.warn}">${esc(g.label)}</div>`;
+function emaCard(tkr, kv){
+  const u=uni(tkr), x=S.daily[tkr], D=x?demaOf(x.b,istDay(Date.now())):null, q=S.quotes[tkr]||{}, b=S.bars[tkr]||[], last=q.ltp!=null?q.ltp:b.length?b[b.length-1].c:null;
+  if(!D||last==null) return `<div class="ana-card"><h4>Daily EMAs</h4><div class="sub" style="margin:0">${x||S.dailyTried[tkr]?"Not enough daily history for this instrument.":"Loading daily candles…"}</div></div>`;
+  const row=(p,name)=>{ const v=D.e[p]; return [`${p} EMA · ${name}`, v==null?"not enough history":`${px(v,u)} · price ${last>v?"above":"below"}`, v==null?null:last>v?C.up:C.dn]; };
+  const g=demaJudge(D,1,last);
+  return `<div class="ana-card"><h4>Daily EMAs (completed days)</h4>${kv([
+    row(5,"strong momentum"),row(9,"trailing stop"),row(10,"short-term trend"),row(20,"pullback support"),row(30,"stage analysis"),
+    row(50,"uptrend defence"),row(100,"big dip"),row(200,"long-term trend"),row(250,"value zone"),
+    ["Stage (30 EMA)",g.stage?["","1 · base","2 · advancing","3 · topping","4 · declining"][g.stage]:"not enough history",g.stage===2?C.up:g.stage===4?C.dn:C.warn],
+    ["For a CALL",`${g.score}/${g.of} with it${g.block?" · against the daily trend":""}`,g.block?C.dn:null],
+    ["For a PUT",(()=>{ const h=demaJudge(D,-1,last); return `${h.score}/${h.of} with it${h.block?" · against the daily trend":""}`; })()]])}</div>`;
+}
 function renderCards(){
   if(!S.simple) return;
   const el=document.getElementById("cards");
@@ -4538,7 +4719,7 @@ function renderCards(){
       <div class="c1"><span class="sd" style="background:${col}">${s.side}</span>
         <span class="nm">${esc(s.sym)}</span>
         <span class="st" style="color:${t};border-color:${t}">${s.res.state==="ACTIVE"?"Active":"Closed"}</span></div>
-      <div class="c2">${hhmm(s.ts)} IST · ${ago(s.ts)} · ${esc(s.res.status)}</div>
+      <div class="c2">${hhmm(s.ts)} IST · ${ago(s.ts)} · ${esc(s.res.status)}</div>${emaRow(s.ema)}
       <div class="lvls">${lv("Entry",px(s.entry,u),C.key)}${lv("Stop",px(s.sl,u),C.dn)}
         ${lv("Target 1",px(s.t1,u),tg(1))}${lv("Target 2",px(s.t2,u),tg(2))}${lv("Target 3",px(s.t3,u),tg(3))}</div>
       ${o?`<div class="opt">Option to buy: <b style="color:${col}">${o.ty==="CE"?"CALL":"PUT"}</b> · ${esc(s.tkr)} ${o.strike} ${o.ty}</div>`:""}
