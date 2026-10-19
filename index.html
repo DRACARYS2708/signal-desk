@@ -357,7 +357,8 @@ table.rt th:first-child,table.rt td:first-child{text-align:left;font-family:var(
 .trade .tra{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .trade .tra .btn{font-size:14.5px;min-height:42px;padding:8px 14px;text-decoration:none;display:inline-flex;align-items:center}
 .trade .tra .btn.wa{border-color:#25D366;color:var(--fg)}
-#alertBtn.on{border-color:var(--up);color:var(--up)}
+#alertBtn.on,#pushBtn.on{border-color:var(--up);color:var(--up)}
+.pushbox{max-width:1180px;margin:12px auto 0;padding:0 16px}.pushbox .mtform{margin:0}
 .hsig{display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;width:100%;text-align:left;background:var(--panel);
   border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px;font-size:15px}
 .hsig:hover{border-color:var(--mid)}
@@ -685,6 +686,7 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
   <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
     <div class="seg" id="modeSeg" aria-label="View"></div>
     <button class="btn adv" id="cfgBtn">Feed settings</button>
+    <button class="btn" id="pushBtn" title="Notifications on your phone when a new signal is posted, even with the site closed">📱 Notify</button>
     <button class="btn" id="themeBtn" title="Switch between dark and light">Light</button>
     <button class="btn" id="refreshBtn">Refresh</button>
     <button class="btn" id="logoutBtn" hidden>Log out</button>
@@ -692,6 +694,7 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
 </header>
 <nav class="nav" id="nav" hidden aria-label="Pages"></nav>
 
+<div id="pushBox" class="pushbox" hidden></div>
 <div class="risk"><b>Not risk-free.</b> Signals are worked out by rules, not advice, and any of them can lose.</div>
 
 <div id="setup" style="display:none">
@@ -748,6 +751,7 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
 
   <div class="bar-row" style="margin-top:14px"><h3 id="homeSigTitle" style="margin:0 auto 0 0">Live signals</h3>
     <button class="btn" id="alertBtn" title="Sound and notification when a target, stop or exit alert happens">Turn on alerts</button></div>
+
   <div class="sub" id="homeTabNote" style="margin:-4px 0 12px"></div>
   <div id="homeSigs"></div>
   <div class="sub" id="homeSigNote" style="margin-top:10px"></div>
@@ -987,6 +991,7 @@ async function boot(){
     loadNews(true);                       // in the background: headlines for warnings on signals
     setConn("ok", liveLabel());              // a symbol that didn't load is simply tried again on the next update
     startPolling(); xPoll(); setTimeout(()=>loadFno(true),3000);
+    if(PN.on) pushSub(false).catch(e=>{ PN.msg=e.message; renderPush(); });
     if(tguBlob()) setTimeout(()=>{ tguStatus().then(()=>loadTg(true)); },5000); setTimeout(()=>{ if(Date.now()>(S.pauseUntil||0)&&S.universe.some(u=>sessionOpen(u))){ loadScalp(true); setTimeout(()=>loadBtst(true),30000); } },60000);   // counts for the Scalp and BTST tabs
   }catch(e){
     if(e.status===401){ S.ready=false; S.cacheShown=false; return boot(); }
@@ -4615,6 +4620,53 @@ function setTheme(light){
 document.getElementById("themeBtn").onclick=()=>setTheme(document.documentElement.dataset.theme!=="light");
 document.getElementById("themeBtn").textContent=document.documentElement.dataset.theme==="light"?"Dark":"Light";
 
+
+/* ---- Phone notifications (Web Push): sent by the server when a new signal is posted, even with the site closed ---- */
+const PN={ on:store.get("sd_push_on","0")==="1", open:false, msg:"", busy:false,
+  prefs:(()=>{ try{ return Object.assign({watch:true,fno:false,tg:true},JSON.parse(store.get("sd_push_prefs","{}"))); }catch(e){ return {watch:true,fno:false,tg:true}; } })() };
+const b64u8=b=>{ const p="=".repeat((4-b.length%4)%4), r=atob((b+p).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from(r,c=>c.charCodeAt(0)); };
+const pushPost=(path,body)=>fetch(S.api+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(async r=>{ const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error||("HTTP "+r.status)); return j; });
+if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
+async function pushSub(ask){
+  if(!("serviceWorker" in navigator)||!("PushManager" in window)||!window.Notification)
+    throw new Error(/iPhone|iPad/.test(navigator.userAgent)?"On iPhone, first add this site to the home screen (Share → Add to Home Screen), open it from there, then turn notifications on.":"This browser can't receive notifications. Use Chrome on Android.");
+  const perm=ask?await Notification.requestPermission():Notification.permission;
+  if(perm!=="granted") throw new Error("Notifications are blocked for this site. Allow them in the browser's site settings (tap the lock icon by the address), then try again.");
+  const reg=await navigator.serviceWorker.register("/sw.js"); await navigator.serviceWorker.ready;
+  const k=await api("/api/push/key"); if(!k.ok) throw new Error("Notifications are not available on the server: "+(k.error||"unknown reason"));
+  let sub=await reg.pushManager.getSubscription();
+  if(sub){ const cur=sub.options&&sub.options.applicationServerKey?new Uint8Array(sub.options.applicationServerKey):null, want=b64u8(k.key);
+    if(cur&&(cur.length!==want.length||cur.some((v,i)=>v!==want[i]))){ await sub.unsubscribe(); sub=null; } }
+  if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64u8(k.key)});
+  await pushPost("/api/push/sub",{sub:sub.toJSON(), prefs:PN.prefs}); PN.endpoint=sub.endpoint; return sub;
+}
+async function pushOff(){
+  try{ const reg=await navigator.serviceWorker.getRegistration("/"); const sub=reg&&await reg.pushManager.getSubscription();
+    if(sub){ await pushPost("/api/push/unsub",{endpoint:sub.endpoint}).catch(()=>{}); await sub.unsubscribe(); } }catch(e){}
+}
+function renderPush(){
+  const b=document.getElementById("pushBtn"), el=document.getElementById("pushBox"); if(!b||!el) return;
+  b.textContent=PN.on?"📱 Notify on":"📱 Notify"; b.classList.toggle("on",PN.on);
+  el.hidden=!PN.open; if(!PN.open) return;
+  const ck=(k,l)=>`<label style="display:flex;gap:8px;align-items:center;margin:4px 0"><input type="checkbox" data-k="${k}" ${PN.prefs[k]?"checked":""}> ${l}</label>`;
+  el.innerHTML=`<div class="mtform" style="margin:0 0 12px"><b>Phone notifications</b><span>A notification on this phone when a new signal is posted, even with the site closed. Free (the phone's own browser notifications); no app or account needed.</span>`+
+    ck("watch","New signals on my 9 symbols (NIFTY, BANK NIFTY, SENSEX, CRUDE OIL, NATURAL GAS, HDFC BANK, RELIANCE, ICICI BANK, SBIN), with Target 1 and end")+
+    ck("fno","Strict signals on any F&O stock, index or commodity")+ck("tg","New posts in the Telegram channels you follow")+
+    `<div class="mtrow" style="margin-top:8px"><button class="btn pri" id="pnOn">${PN.on?"Save choices":"Turn on"}</button>${PN.on?`<button class="btn" id="pnTest">Send a test</button><button class="btn" id="pnOff">Turn off</button>`:""}</div>`+
+    `<div class="bmsg" id="pnMsg">${esc(PN.msg)}</div>`+
+    `<span style="margin-top:6px">Notifications need the server awake and logged in to Fyers: open the site once each trading morning (Fyers asks for a login every day). While a phone is signed up, the server keeps itself awake on weekdays 09:00–23:35 IST. iPhone: add the site to the home screen first and turn this on from there.</span></div>`;
+  el.querySelectorAll("input[data-k]").forEach(c=>c.onchange=()=>{ PN.prefs[c.dataset.k]=c.checked; store.set("sd_push_prefs",JSON.stringify(PN.prefs)); });
+  const say=t=>{ PN.msg=t; const m=document.getElementById("pnMsg"); if(m) m.textContent=t; };
+  document.getElementById("pnOn").onclick=async()=>{ if(PN.busy) return; PN.busy=true; say("Setting up…");
+    try{ await pushSub(true); PN.on=true; store.set("sd_push_on","1"); PN.msg="On. This phone will be notified about the choices above."; }catch(e){ PN.msg=e.message; }
+    PN.busy=false; renderPush(); };
+  const t=document.getElementById("pnTest"); if(t) t.onclick=async()=>{ say("Sending…");
+    try{ const reg=await navigator.serviceWorker.getRegistration("/"); let sub=reg&&await reg.pushManager.getSubscription(); if(!sub) sub=await pushSub(true);
+      await pushPost("/api/push/test",{endpoint:sub.endpoint}); say("Sent. It should appear within a few seconds."); }catch(e){ say(e.message); } };
+  const o=document.getElementById("pnOff"); if(o) o.onclick=async()=>{ await pushOff(); PN.on=false; store.set("sd_push_on","0"); PN.msg="Turned off for this phone."; renderPush(); };
+}
+document.getElementById("pushBtn").onclick=()=>{ PN.open=!PN.open; renderPush(); };
+renderPush();
 const alertBtn=document.getElementById("alertBtn");
 const alertLabel=()=>{ alertBtn.textContent=alerts.on?"🔔 Alerts on":"Turn on alerts"; alertBtn.classList.toggle("on",alerts.on); };
 alertBtn.onclick=()=>{ alerts.on?alerts.disable():alerts.enable(); alertLabel(); };

@@ -230,6 +230,17 @@ Every signal is checked against the daily EMAs before it is shown: Strict, Other
 - The chart page has a "Daily EMAs" panel with each EMA's value, whether price is above or below it, the stage, and the score for a call and for a put.
 - If daily history isn't available (a new listing, or Fyers didn't answer), the card says "not checked" instead of guessing, and the signal is not dropped.
 
+## Phone notifications
+
+Tap **📱 Notify** at the top, choose what to be told about, and tap **Turn on** (allow notifications when the phone asks). Notifications arrive even with the site closed. They use the phone's own free browser notifications (Web Push): no app, no account, nothing paid, and nothing to add on Render (the keys are worked out from the Fyers secret).
+
+- **New signals on your 9 symbols** (with the option, premium, stop loss and Target 1), then **Target 1 reached** and **signal ended**.
+- **Strict signals on any F&O stock, index or commodity** (off unless you tick it).
+- **New posts in the Telegram channels you follow** (open the site for its own signal on the call).
+- **Send a test** checks it works; **Turn off** stops it for that phone.
+- **Android:** works in Chrome, and best after "Add to Home screen" / "Install app". **iPhone:** add the site to the home screen first (Share → Add to Home Screen), open it from there, then turn notifications on.
+- **What it needs:** the server awake and logged in to Fyers. Open the site once each trading morning (Fyers asks for a new login every day). While a phone is signed up, the server keeps itself awake on weekdays 09:00–23:35 IST by calling its own address every 10 minutes (about 340 of Render's 750 free hours a month), and keeps scanning even if the site is not open. The signals come from the server's All F&O scan, which uses the same rules as the pages.
+
 ## Today's signals only; the site's own signal for Telegram calls
 
 - Every signal list (Home tabs, the chart page's cards and table, Telegram) shows **today's** signals only. BTST is the exception: yesterday's pick stays on its tab while it is held overnight. The Results page and Telegram source performance still use past days to measure records.

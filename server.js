@@ -492,6 +492,16 @@ app.get("/manifest.webmanifest", (_req, res) => res.type("application/manifest+j
   icons: [{ src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" }],
 }));
 
+/* The service worker: shows phone notifications sent by this server, even when the site is closed. */
+const SW_JS = `self.addEventListener("install",e=>self.skipWaiting());
+self.addEventListener("activate",e=>e.waitUntil(self.clients.claim()));
+self.addEventListener("push",e=>{ let d={}; try{ d=e.data?e.data.json():{}; }catch(x){ d={title:"Signal Desk",body:e.data?e.data.text():""}; }
+  e.waitUntil(self.registration.showNotification(d.title||"Signal Desk",{body:d.body||"",tag:d.tag||undefined,renotify:!!d.tag,icon:"/icon.svg",badge:"/icon.svg",data:{url:d.url||"/"},requireInteraction:!!d.sticky})); });
+self.addEventListener("notificationclick",e=>{ e.notification.close(); const url=(e.notification.data&&e.notification.data.url)||"/";
+  e.waitUntil(self.clients.matchAll({type:"window",includeUncontrolled:true}).then(ws=>{ for(const w of ws){ if("focus" in w){ w.navigate&&w.navigate(url); return w.focus(); } } return self.clients.openWindow(url); })); });
+self.addEventListener("fetch",()=>{});`;
+app.get("/sw.js", (_req, res) => { res.set({ "Content-Type": "text/javascript", "Cache-Control": "no-cache", "Service-Worker-Allowed": "/" }); res.send(SW_JS); });
+
 /* Optional password. Real-time exchange data is licensed to you for your own
    use, and every visitor spends your Fyers request limit, so keep it private. */
 if (SITE_PASSWORD) app.use((req, res, next) => {
@@ -959,6 +969,59 @@ async function chainDataRest(u, expiry) {
 }
 
 
+
+/* -------------------------------------------------- phone notifications -- */
+/* Web Push: the free notification service built into Android Chrome (and iPhone Safari for a site added to the
+   home screen). No account or app store is involved. The keys are worked out from the Fyers secret, so they
+   stay the same after a restart and nothing has to be added on Render. Subscriptions are kept in a file and the
+   page sends its own again each time it opens, so a restart loses nothing for long. */
+let webpush = null; try { webpush = require("web-push"); } catch (e) {}
+const PUSH = { subs: new Map(), sent: new Set(), ok: false, err: null, file: path.join(require("os").tmpdir(), "signal-desk-push.json"), pub: null };
+(function pushInit() {
+  if (!webpush) { PUSH.err = "web-push package not installed"; return; }
+  let seed = SECRET ? crypto.createHash("sha256").update("signal-desk-vapid|" + APP_ID + "|" + SECRET).digest() : crypto.randomBytes(32), pub = null;
+  for (let i = 0; i < 6 && !pub; i++) { try { const e = crypto.createECDH("prime256v1"); e.setPrivateKey(seed); pub = e.getPublicKey(); } catch (x) { seed = crypto.createHash("sha256").update(seed).digest(); } }
+  try { webpush.setVapidDetails(BASE.startsWith("https") ? BASE : "mailto:alerts@signal-desk.invalid", pub.toString("base64url"), seed.toString("base64url"));
+    PUSH.pub = pub.toString("base64url"); PUSH.ok = true; } catch (e) { PUSH.err = e.message; }
+  try { for (const x of JSON.parse(require("fs").readFileSync(PUSH.file, "utf8"))) if (x && x.sub && x.sub.endpoint) PUSH.subs.set(x.sub.endpoint, x); } catch (e) {}
+})();
+const pushSave = () => { try { require("fs").writeFileSync(PUSH.file, JSON.stringify([...PUSH.subs.values()])); } catch (e) {} };
+// kinds: "watch" (signals on the watchlist), "fno" (strict signals on any F&O instrument), "tg" (new Telegram posts)
+function pushSend(kind, key, msg) {
+  if (!PUSH.ok || PUSH.sent.has(key)) return; PUSH.sent.add(key);
+  if (PUSH.sent.size > 5000) PUSH.sent = new Set([...PUSH.sent].slice(-2000));
+  for (const x of [...PUSH.subs.values()]) {
+    if (!(x.prefs || {})[kind]) continue;
+    webpush.sendNotification(x.sub, JSON.stringify(msg), { TTL: 900, urgency: "high" })
+      .then(() => { x.okAt = Date.now(); x.fails = 0; })
+      .catch(e => { if (e.statusCode === 404 || e.statusCode === 410) { PUSH.subs.delete(x.sub.endpoint); pushSave(); } else { x.fails = (x.fails || 0) + 1; x.err = e.message; } });
+  }
+}
+app.get("/api/push/key", (_req, res) => res.json({ ok: PUSH.ok, key: PUSH.pub, error: PUSH.err }));
+app.post("/api/push/sub", (req, res) => {
+  const sub = req.body && req.body.sub, p = (req.body && req.body.prefs) || {};
+  if (!sub || typeof sub.endpoint !== "string" || !/^https:\/\//.test(sub.endpoint) || sub.endpoint.length > 1000 || !sub.keys || !sub.keys.p256dh || !sub.keys.auth)
+    return res.status(400).json({ error: "not a valid push subscription" });
+  if (!PUSH.subs.has(sub.endpoint) && PUSH.subs.size >= 50) return res.status(429).json({ error: "too many devices" });
+  PUSH.subs.set(sub.endpoint, { sub: { endpoint: sub.endpoint, keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) } },
+    prefs: { watch: p.watch !== false, fno: !!p.fno, tg: p.tg !== false }, at: Date.now() });
+  pushSave(); res.json({ ok: true, devices: PUSH.subs.size });
+});
+app.post("/api/push/unsub", (req, res) => { const e = req.body && req.body.endpoint; if (e) { PUSH.subs.delete(String(e)); pushSave(); } res.json({ ok: true }); });
+app.post("/api/push/test", (req, res) => {
+  const x = PUSH.subs.get(String((req.body && req.body.endpoint) || ""));
+  if (!PUSH.ok || !x) return res.status(400).json({ error: PUSH.ok ? "this device is not signed up for notifications" : PUSH.err });
+  webpush.sendNotification(x.sub, JSON.stringify({ title: "Signal Desk", body: "Test notification: phone notifications are working.", tag: "test" }), { TTL: 60 })
+    .then(() => res.json({ ok: true })).catch(e => res.status(502).json({ error: "the push service refused it: " + e.message }));
+});
+/* With phones signed up, stay awake on weekdays from 09:00 to 23:35 IST (Render's free plan sleeps after 15 minutes
+   without requests, and a sleeping server can't send anything). About 340 of the 750 free hours a month. */
+setInterval(() => {
+  if (!PUSH.subs.size || !BASE.startsWith("https")) return;
+  const x = new Date(Date.now() + IST), wd = x.getUTCDay(), m = x.getUTCHours() * 60 + x.getUTCMinutes();
+  if (wd >= 1 && wd <= 5 && m >= 535 && m <= 1415) fetch(BASE + "/healthz", { signal: AbortSignal.timeout(20000) }).catch(() => {});
+}, 10 * 60000).unref();
+
 /* ------------------------------------------------------ all-F&O scanner -- */
 /* Every instrument with listed options (NSE F&O stocks, index options, MCX
    commodities with options) is checked once after each 5-minute candle closes,
@@ -1019,7 +1082,7 @@ async function scanOption(u, s) {               // the contract to buy, its prem
 async function scanCycle() {
   if (!EN || SCAN.running) return;
   const sess = [...sessions.values()].filter(v => v.access && (!v.exp || Date.now() < v.exp - 60000)).sort((a, b) => b.seen - a.seen)[0];
-  if (!sess || Date.now() - sess.seen > 4 * 3600e3) return;              // nobody has used the site for hours: don't spend their Fyers allowance
+  if (!sess || (Date.now() - sess.seen > 4 * 3600e3 && !PUSH.subs.size)) return;   // nobody has used the site for hours and no phone is signed up: don't spend their Fyers allowance
   SCAN.running = true; SCAN.started = Date.now(); let cpu = 0;
   try {
     await visitor.run(sess, () => lane.run("low", async () => {
@@ -1090,8 +1153,26 @@ async function scanCycle() {
         for (const q of j.d || []) if (q && q.v && q.v.lp > 0) live.filter(o => o.sym === q.n).forEach(o => { o.now = q.v.lp; o.nowAt = Date.now(); });
       } catch (e) {}
     }));
+    try { scanNotify(); } catch (e) {}
     SCAN.at = Date.now(); SCAN.cycleMs = Date.now() - SCAN.started; SCAN.cpuMs = cpu;
   } finally { SCAN.running = false; }
+}
+// phone notifications for new scan signals (only ones from the last 15 minutes), then for their Target 1 and their end
+function scanNotify() {
+  const f2 = v => v == null ? "—" : (v >= 1000 ? Math.round(v).toLocaleString("en-IN") : (+v.toFixed(2)).toString());
+  const KIND = { strict: "Strict", other: "Other", normal: "Normal" };
+  for (const s of SCAN.signals) {
+    const k = scanKey(s), o = SCAN.opts.get(k), watch = WATCH.has(s.tkr), kind = watch ? "watch" : s.tab === "strict" ? "fno" : null;
+    if (!kind) continue;
+    const opt = o && o.strike ? `${o.strike} ${o.ty}` : (s.side === "BUY" ? "CALL (CE)" : "PUT (PE)");
+    if (s.state === "ACTIVE" && Date.now() - s.ts < 15 * 60000)
+      pushSend(kind, "new|" + k, { title: `${s.sym} — BUY ${opt}`, tag: "sig-" + k, url: "/",
+        body: (o && o.buy ? `Premium ₹${f2(o.buy)} · SL ₹${f2(o.sl)} · T1 ₹${f2(o.t1)}` : `${s.sym} entry ${f2(s.entry)} · SL ${f2(s.sl)} · T1 ${f2(s.t1)}`) +
+          ` · ${KIND[s.tab] || ""} signal ${new Date(s.ts + IST).toISOString().slice(11, 16)} IST` });
+    if (!PUSH.sent.has("new|" + k)) continue;                       // follow-ups only for signals that were notified
+    if (s.hit >= 1) pushSend(kind, "t1|" + k, { title: `${s.sym} ${opt} — Target 1 reached`, tag: "sig-" + k, url: "/", body: "Stop loss can move to the entry price. Open Signal Desk for the trailing stop." });
+    if (s.state !== "ACTIVE") pushSend(kind, "end|" + k, { title: `${s.sym} ${opt} — signal ended`, tag: "sig-" + k, url: "/", body: String(s.status || "Ended") });
+  }
 }
 // run 25 s after every 5-minute candle closes (IST is a whole number of 5-minute steps from UTC)
 function scheduleScan() {
@@ -1233,7 +1314,13 @@ async function tguClient(session) {
 }
 function tguListen(T) {                          // new and edited messages arrive within a second or two
   const on = async ev => { try { const m = ev.message; const chat = String(m.chatId); if (!T.watch.has(chat)) return; tguStore(T, chat, tguMsg(m)); } catch (e) {} };
+  const onNew = async ev => { try { const m = ev.message, chat = String(m.chatId);
+    if (!T.watch.has(chat) || !m.message || Date.now() - (m.date || 0) * 1000 > 120000) return;
+    let title = "Telegram"; try { const ch = await m.getChat(); title = (ch && (ch.title || ch.firstName)) || title; } catch (e) {}
+    pushSend("tg", "tg|" + chat + "|" + m.id, { title: "Telegram · " + title, tag: "tg-" + chat + "-" + m.id, url: "/",
+      body: m.message.replace(/\s+/g, " ").slice(0, 150) + " — open Signal Desk for its own signal." }); } catch (e) {} };
   T.client.addEventHandler(on, new GJ.events.NewMessage({}));
+  T.client.addEventHandler(onNew, new GJ.events.NewMessage({}));
   try { T.client.addEventHandler(on, new GJ.Edited.EditedMessage({})); } catch (e) {}
 }
 async function tguReady(T) {
