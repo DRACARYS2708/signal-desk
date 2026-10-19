@@ -230,6 +230,26 @@ Every signal is checked against the daily EMAs before it is shown: Strict, Other
 - The chart page has a "Daily EMAs" panel with each EMA's value, whether price is above or below it, the stage, and the score for a call and for a put.
 - If daily history isn't available (a new listing, or Fyers didn't answer), the card says "not checked" instead of guessing, and the signal is not dropped.
 
+## Today's signals only; the site's own signal for Telegram calls
+
+- Every signal list (Home tabs, the chart page's cards and table, Telegram) shows **today's** signals only. BTST is the exception: yesterday's pick stays on its tab while it is held overnight. The Results page and Telegram source performance still use past days to measure records.
+- **Telegram:** for each of today's calls the site gives its **own independent signal**, worked out from the option's live premium and the underlying's levels: entry (buy up to), stop loss and three targets. It does not depend on the channel's levels, so a call with its stop loss "kept for VIP members" or no targets still gets a full plan. Once the site says buy, the signal is kept and followed on the option's own 5-minute candles with a live status: BUY ZONE, IN PLAY · DON'T CHASE, T1 / T2 HIT · HOLD (stop loss moved to the entry after Target 1 and to Target 1 after Target 2), ALL TARGETS HIT, STOP LOSS HIT, or SESSION ENDED. If the site's analysis says skip, the card says DON'T TRADE with the reasons. If Fyers prices are not available, the card says WAITING FOR PRICES instead of showing empty fields. The channel's own numbers are shown on one small line underneath.
+
+## Options only
+
+This platform gives option trades only; shares are never bought or sold. Every signal, on every tab, is a CALL (CE) buy when the price is expected to rise and a PUT (PE) buy when it is expected to fall, at the strike nearest the price. Until the option's live premium loads, a card says "Buy CALL (CE)" or "Buy PUT (PE)" and marks its levels as the share, index or future price. Instruments without listed options show "No option trade". BTST picks the stock's at-the-money CALL option in the nearest expiry that does not end the next day (with a warning when no later expiry exists); BTST results are still measured on the share price.
+
+## When Fyers' normal requests fail (still Fyers only, free, no other login)
+
+Fyers counts its normal data requests (history, quotes, option chain) against a limit, but not its live price stream (the WebSocket). So the site keeps working on the live stream alone:
+
+- **Prices:** come from the live stream; quotes no longer need a request.
+- **Option chains (indices, stocks, MCX):** if Fyers' option-chain request fails, the server builds the chain itself from Fyers' public symbol lists (public.fyers.in, which list every contract's strike, expiry and lot) and the live premiums, bid / ask and volume of the strikes near the price. Open interest is not in the live stream, so the chain page says so and OI-based numbers are left out. Expiries come from the same lists.
+- **Charts and signals:** the page keeps the candle history on your device (for 4 days). If history can't be fetched, it joins its saved history to today's live candles, so signals keep working.
+- **Daily EMAs:** the daily candles are also saved on your device and used until fresh ones arrive.
+- **Not covered:** the All F&O scan, Scalp and BTST need history fetched on the server; if Fyers refuses history requests all day, they fill in only as live candles build up. Telegram checks use the live premiums from the moment the contract is followed.
+- Whether Fyers also stops the live stream when it blocks normal requests is not documented; if it did, the backup chart buttons (NSE, Yahoo, Screener, GoCharting, TradingView) remain.
+
 ## Watchlist and backup charts
 
 - **Watchlist:** the pages load and refresh only NIFTY 50, BANK NIFTY, SENSEX, CRUDE OIL, NATURAL GAS, HDFC BANK, RELIANCE, ICICI BANK and SBIN. Other instruments (FIN NIFTY, gold, silver and so on) stay known, so Telegram calls, My trades and search still work for them; they load only when opened. The All F&O tab still scans every instrument with options. A symbol that doesn't load is retried quietly on the next update; there is no "symbols failed to load" message.

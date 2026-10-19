@@ -351,9 +351,15 @@ const MASTERS = [
   ["MCX_COM", "https://public.fyers.in/sym_details/MCX_COM.csv"],
 ];
 const SYM = { list: [], byTicker: new Map(), at: 0, status: {}, busy: null };
+/* Every listed option contract, by underlying ("NSE:NIFTY", "MCX:CRUDEOIL"), as [ticker, strike, "CE"|"PE", expiry ms, lot],
+   from Fyers' public symbol lists. Used to build an option chain from the live price feed when Fyers' normal
+   requests are refused or slow. */
+let OPTS = new Map();
+const OPT_TAIL = /(\d+(?:\.\d+)?)(CE|PE)$/;
 const TICK = /^(NSE|BSE|MCX):[A-Z0-9&_.-]+$/;
 async function loadMasters() {
-  const list = [], fo = new Map(), mcx = new Map(), status = {};
+  const list = [], fo = new Map(), mcx = new Map(), status = {}, opts = new Map();
+  const addOpt = (key, t, strike, ty, exp, lot) => { if (!(strike > 0) || !exp) return; let a = opts.get(key); if (!a) { a = []; opts.set(key, a); } a.push([t, strike, ty, exp * 1000, lot]); };
   for (const [name, url] of MASTERS) {
     try {
       const r = await fetch(env("FYERS_MASTER_BASE") ? env("FYERS_MASTER_BASE") + "/" + name + ".csv" : url, { signal: AbortSignal.timeout(60000) });
@@ -366,13 +372,22 @@ async function loadMasters() {
         if (name.endsWith("_FO")) {                       // remember which underlyings have options, and their lot size
           const m = /^(NSE|BSE):([A-Z0-9&-]+?)\d{2}(?:[A-Z]{3}|[1-9OND]\d{2})/.exec(t), und = (c[13] && /^[A-Z0-9&-]+$/.test(c[13])) ? c[13] : m && m[2];
           if (und) { const k = exch + ":" + und, o = fo.get(k) || { opt: false, lot: null };
-            if (/(CE|PE)$/.test(t)) o.opt = true; if (lot && !o.lot) o.lot = lot; fo.set(k, o); }
+            if (/(CE|PE)$/.test(t)) o.opt = true; if (lot && !o.lot) o.lot = lot; fo.set(k, o);
+            if (/(CE|PE)$/.test(t) && exp * 1000 > Date.now() - 864e5) {
+              const ty = /^(CE|PE)$/.test(c[16] || "") ? c[16] : t.slice(-2);
+              // strike: its own column; if that is empty, the date code + strike at the end of the ticker
+              let k15 = parseFloat(c[15]);
+              if (!(k15 > 0)) { const mm = /\d{2}(?:[A-Z]{3}|[1-9OND]\d{2})(\d+(?:\.\d+)?)(?:CE|PE)$/.exec(t); k15 = mm ? +mm[1] : 0; }
+              addOpt(k, t, k15, ty, exp, lot);
+            } }
           return;
         }
         if (name === "MCX_COM") {
           const m = /^MCX:([A-Z]+?)\d{2}[A-Z]{3}(FUT|\d+(CE|PE))$/.exec(t); if (!m) return;
           const k = m[1], o = mcx.get(k) || { opt: false, fut: null };
-          if (m[3]) o.opt = true;
+          if (m[3]) { o.opt = true;
+            if (exp * 1000 > Date.now() - 864e5) { let k15 = parseFloat(c[15]); if (!(k15 > 0)) { const mm = /\d{2}[A-Z]{3}(\d+(?:\.\d+)?)(?:CE|PE)$/.exec(t); k15 = mm ? +mm[1] : 0; }
+              addOpt("MCX:" + k, t, k15, m[3], exp, lot); } }
           else if (exp * 1000 > Date.now() - 864e5 && (!o.fut || exp < o.fut.exp)) o.fut = { t, exp, lot, desc };
           mcx.set(k, o); return;
         }
@@ -397,6 +412,7 @@ async function loadMasters() {
   for (const u of UNIVERSE) if (u.fy && !list.some(x => x.t === u.fy))
     list.push({ t: u.fy, exch: u.fy.slice(0, 3), type: u.seg, short: u.tkr, name: u.label || u.name, lot: u.lot, fo: u.fo });
   if (list.length) { SYM.list = list; SYM.byTicker = new Map(list.map(x => [x.t, x])); SYM.at = Date.now(); }
+  if (opts.size) OPTS = opts;
   SYM.status = status;
   console.log("  symbol lists: " + Object.entries(status).map(([k, v]) => k + (v.ok ? " " + v.rows : " FAILED (" + v.error + ")")).join(", "));
 }
@@ -756,7 +772,7 @@ async function candlesOf(u, want, hot) {
     const fresh = hit && hit.val && hit.val.fetchedAt >= subAt && istDay(hit.val.fetchedAt) === istDay(Date.now());
     let bf;
     try { bf = await cached(key, fresh ? 864e5 : 0, () => restHistory(u, want)); }
-    catch (e) { if (hit && hit.val) bf = hit.val; else if (e.budget || /rate limit/i.test(e.message)) bf = { candles: [] }; else throw e; }   // no history allowed now: live candles only
+    catch (e) { if (hit && hit.val) bf = hit.val; else if (e.message !== NEED_LOGIN) bf = { candles: [], partial: true }; else throw e; }   // history not available now: live candles only (the page adds its saved history)
     const live = liveCandles(u, want, Math.floor(subAt / 60000) * 60000);
     const out = bf.candles.slice();
     for (const c of live) {                                 // join: a candle in both keeps the wider range and the live close
@@ -764,7 +780,7 @@ async function candlesOf(u, want, hot) {
       if (i >= 0) { const x = out[i]; out[i] = [x[0], x[1], Math.max(x[2], c[2]), Math.min(x[3], c[3]), c[4], x[5] + c[5]]; }
       else if (!out.length || c[0] > out[out.length - 1][0]) out.push(c);
     }
-    return { tkr: u.tkr, interval: want + "m", candles: out, feed: "live" };
+    return { tkr: u.tkr, interval: want + "m", candles: out, feed: "live", partial: !!bf.partial };
   }
   const ttl = !openNow(u) ? 1800000 : want >= 15 ? 600000 : hot ? 60000 : 600000;
   return cached(`c:${u.tkr}:${want}`, ttl, () => restHistory(u, want));
@@ -815,7 +831,7 @@ app.get("/api/quotes", guard(async (req, res) => {
                    close: prev, chg: v.chp != null ? v.chp : (prev ? ((v.lp - prev) / prev) * 100 : 0), vol: v.volume || 0 };
     }
     return q;
-  }); } catch (e) { if (!allLive) throw e; out = { __at: 0 }; }
+  }); } catch (e) { if (!(FEED.state === "live" && FEED.last.size)) throw e; out = { __at: 0 }; }
   // live prices from the feed replace the requested ones
   out = Object.assign({}, out); let at = out.__at || 0;
   for (const u of watched().concat(extra.map(t => ({ tkr: t, fy: t })))) {
@@ -850,7 +866,10 @@ app.get("/api/expiries", guard(async (req, res) => {
   const u = bySym(req.query.tkr);
   if (!u) return res.status(404).json({ error: "unknown symbol" });
   if (!u.fo) return res.json({ expiries: [], note: "no option chain for this instrument" });
-  res.json({ expiries: (await expiriesOf(u)).slice(0, 6).map(e => e.iso) });
+  try { res.json({ expiries: (await expiriesOf(u)).slice(0, 6).map(e => e.iso) }); }
+  catch (e) {                                       // the symbol lists know the expiries too
+    const ex = [...new Set((OPTS.get(undKey(u)) || []).map(o => o[3]).filter(t => t > Date.now() - 6 * 3600e3))].sort((a, b) => a - b).map(istDay);
+    if (!ex.length || e.message === NEED_LOGIN) throw e; res.json({ expiries: ex.slice(0, 6) }); }
 }));
 
 app.get("/api/chain", guard(async (req, res) => {
@@ -859,7 +878,47 @@ app.get("/api/chain", guard(async (req, res) => {
   if (!u.fo) return res.status(404).json({ error: "no option chain for " + u.name });
   res.json(await chainData(u, req.query.expiry));
 }));
+/* The underlying name the symbol lists use: "NSE:NIFTY", "BSE:SENSEX", "NSE:RELIANCE", "MCX:CRUDEOIL". */
+function undKey(u) {
+  if (u.seg === "MCX") { const m = /^MCX:([A-Z]+?)\d{2}[A-Z]{3}FUT$/.exec(u.fy || ""); return "MCX:" + (m ? m[1] : u.tkr); }
+  const ex = (u.fy || "NSE:").slice(0, 3);
+  if (u.seg === "IDX") { const m = /^(?:NSE|BSE):([A-Z0-9]+)-INDEX$/.exec(u.fy || ""); return ex + ":" + (m ? idxUnder(m[1]) : u.tkr); }
+  const m = /^(?:NSE|BSE):([A-Z0-9&_-]+?)-(EQ|BE|A|B)$/.exec(u.fy || ""); return ex + ":" + (m ? m[1] : u.tkr);
+}
+/* An option chain built from Fyers' public symbol lists and the live price feed (no request counted against the
+   limit): live premiums, bid / ask and volume for the strikes near the price. Open interest is not in the feed. */
+async function feedChain(u, expiry) {
+  if (FEED.state !== "live") throw new Error("the live price feed is not connected");
+  const all = (OPTS.get(undKey(u)) || []).filter(o => o[3] > Date.now() - 6 * 3600e3);
+  if (!all.length) throw new Error("no listed options found for " + (u.label || u.name || u.tkr) + " in Fyers' symbol lists");
+  const exps = [...new Set(all.map(o => o[3]))].sort((a, b) => a - b), iso = ms => istDay(ms);
+  const pick = exps.find(e => iso(e) === expiry) || exps[0];
+  feedSub([u.fy]);
+  let lv = FEED.last.get(u.fy);
+  for (let i = 0; i < 12 && !lv; i++) { await sleep(250); lv = FEED.last.get(u.fy); }
+  if (!lv) throw new Error("no live price yet for " + (u.label || u.name || u.tkr));
+  const spot = lv.ltp, legs = all.filter(o => o[3] === pick);
+  const strikes = [...new Set(legs.map(o => o[1]))].sort((a, b) => a - b);
+  const near = strikes.slice().sort((a, b) => Math.abs(a - spot) - Math.abs(b - spot)).slice(0, 41).sort((a, b) => a - b);
+  const sym = (k, ty) => (legs.find(o => o[1] === k && o[2] === ty) || [])[0];
+  const want = near.flatMap(k => [sym(k, "CE"), sym(k, "PE")]).filter(Boolean);
+  feedSub(want);
+  for (let i = 0; i < 12 && want.filter(t => FEED.last.has(t)).length < Math.min(6, want.length); i++) await sleep(250);
+  const leg = t => { const x = t && FEED.last.get(t); return { sym: t || null, ltp: x ? x.ltp : 0, oi: 0, chgOi: 0, vol: x && x.vol || 0, chg: 0, iv: null, bid: x && x.bid || null, ask: x && x.ask || null }; };
+  const rows = near.map(k => ({ strike: k, ce: leg(sym(k, "CE")), pe: leg(sym(k, "PE")) })).filter(r => r.ce.sym && r.pe.sym);
+  if (!rows.length) throw new Error("no option contracts near the price for " + (u.label || u.name || u.tkr));
+  const gaps = near.slice(1).map((k, i) => k - near[i]).filter(g => g > 0).sort((a, b) => a - b), step = gaps[0] || u.step || 50;
+  const lot = (legs[0] || [])[4] || u.lot || null;
+  return { tkr: u.tkr, expiry: iso(pick), expiries: exps.map(iso), spot, prevClose: lv.prev || null, atm: Math.round(spot / step) * step, step,
+    lot, daysOut: Math.max((pick - Date.now()) / 864e5, 0.02), rows, ivFromFeed: false, source: "feed",
+    note: "Built from the live price feed because Fyers' option-chain request was not available: premiums, bid / ask and volume are live; open interest is not included." };
+}
 async function chainData(u, expiry) {
+  try { return await chainDataRest(u, expiry); }
+  catch (e) { if (e.message === NEED_LOGIN || FEED.state !== "live") throw e;
+    try { return await feedChain(u, expiry); } catch (e2) { throw new Error(e.message + "; " + e2.message); } }
+}
+async function chainDataRest(u, expiry) {
   const list = await expiriesOf(u);
   if (!list.length) throw new Error("Fyers returned no expiries for " + u.name);
   const pick = list.find(e => e.iso === expiry) || list[0];

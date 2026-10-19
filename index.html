@@ -739,10 +739,10 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
 <div class="xsec" id="tgPage" hidden><h3 class="xsh">Telegram signals — calls from your sources, checked against the market</h3><div id="tgBody"></div></div>
 <div class="xsec" id="minePage" hidden><h3 class="xsh">My trades — advice on the option you took</h3><div id="mineBody"></div></div>
 <div class="xsec" id="btstPage" hidden>
-  <h3 class="xsh">BTST — buy today, sell tomorrow</h3>
-  <div class="sub">Strong stocks bought in the last half hour and sold the next morning. Decided on the hourly candle that closes at 15:15 IST: daily uptrend,
+  <h3 class="xsh">BTST — buy a CALL option today, sell tomorrow</h3>
+  <div class="sub">The stock's at-the-money CALL option, bought in the last half hour and sold the next morning. The stock is picked on the hourly candle that closes at 15:15 IST: daily uptrend,
     up 1–6% on the day, closing near the high and above yesterday's high, on above-average volume, with NIFTY 50 also above its 20-day EMA. Sell by 10:15 next morning.
-    Overnight news can open a stock far past the stop. Rules-based analysis, not advice.</div>
+    An expiry ending tomorrow is skipped. Overnight news can open far past the stop, and the option also loses a day of time value. Rules-based analysis, not advice.</div>
   <div id="btstBody"></div>
 </div>
 
@@ -1087,7 +1087,12 @@ function quotesPath(){
 }
 async function loadCandles(tkr){
   const d = await api("/api/candles?tkr="+encodeURIComponent(tkr)+"&interval="+S.tf+(tkr===S.tkr?"&hot=1":""));
-  S.bars[tkr] = toBars(d.candles); S.barsAt[tkr]=Date.now(); S.raw[tkr]=d.candles; saveCache();
+  let cs=d.candles;
+  if(d.partial&&S.raw[tkr]&&S.raw[tkr].length){       // Fyers' history request was refused: saved history + today's live candles
+    const first=cs.length?cs[0][0]:Infinity, old=S.raw[tkr].filter(c=>c[0]<first);
+    cs=old.concat(cs); S.partialHist=S.partialHist||{}; S.partialHist[tkr]=true; }
+  else if(S.partialHist) delete S.partialHist[tkr];
+  S.bars[tkr] = toBars(cs); S.barsAt[tkr]=Date.now(); S.raw[tkr]=cs; saveCache();
 }
 /* Larger candles made from smaller ones, aligned to the session open the way the exchange's own are. */
 function aggregate(bars, mins, open){
@@ -1131,16 +1136,20 @@ async function refreshAll(){
 
 /* Daily candles for the daily EMA check, once a day per instrument (kept on the server for 12 hours). */
 S.daily={}; S.dailyTried={};
+try{ const dd=JSON.parse(localStorage.getItem("sd_daily")||"{}");        // saved daily candles: used until today's arrive
+  for(const [t,x] of Object.entries(dd)) if(x&&x.raw&&Date.now()-x.at<10*864e5) S.daily[t]={b:toBars(x.raw), day:x.day, at:x.at, raw:x.raw, saved:true}; }catch(e){}
+function saveDaily(){ try{ const o={}; for(const [t,x] of Object.entries(S.daily)) if(x.raw) o[t]={raw:x.raw.slice(-560), day:x.day, at:x.at};
+  localStorage.setItem("sd_daily",JSON.stringify(o)); }catch(e){} }
 function emaGate(tkr, dir, px, ts){ const x=S.daily[tkr]; return demaJudge(x?demaOf(x.b,istDay(ts||Date.now())):null, dir, px); }
 async function loadDaily(){
   if(S.dailyBusy) return; const today=istDay(Date.now());
   const list=[...new Set([S.tkr].concat(S.universe.filter(u=>u.seg!=="OPT").map(u=>u.tkr)))].filter(t=>t&&(!S.daily[t]||S.daily[t].day!==today)&&!(S.dailyTried[t]&&Date.now()-S.dailyTried[t]<600000&&!S.daily[t]));
   if(!list.length) return; S.dailyBusy=true; let i=0, got=0;
   const w=async()=>{ while(i<list.length){ const t=list[i++];
-    try{ const j=await api("/api/daily?tkr="+encodeURIComponent(t),30000); S.daily[t]={b:toBars(j.candles), day:today, at:Date.now()}; got++; try{ recompute(t); }catch(e){} }
+    try{ const j=await api("/api/daily?tkr="+encodeURIComponent(t),30000); S.daily[t]={b:toBars(j.candles), day:today, at:Date.now(), raw:j.candles}; got++; try{ recompute(t); }catch(e){} }
     catch(e){ if(e.status===401) break; } finally{ S.dailyTried[t]=Date.now(); } } };
   try{ await Promise.all([w(),w()]); }
-  finally{ S.dailyBusy=false; S.dailyAt=Date.now();
+  finally{ S.dailyBusy=false; S.dailyAt=Date.now(); if(got) saveDaily();
     try{ if(XS.scalp.cache) XS.scalp.cache={}; }catch(e){}
     if(got){ try{ btstCount(); }catch(e){} renderAll(); if(S.page==="home") renderStrictSegs(); } }
 }
@@ -1158,7 +1167,7 @@ function saveCache(){
 }
 function loadCache(){
   try{ const c=JSON.parse(localStorage.getItem("sd_cache")||"null");
-    if(!c||c.v!==1||c.tf!==S.tf||Date.now()-c.at>36*3600e3) return false;
+    if(!c||c.v!==1||c.tf!==S.tf||Date.now()-c.at>100*3600e3) return false;      // kept over a weekend: its history fills in if Fyers refuses history requests
     S.universe=c.universe||[]; S.quotes=c.quotes||{}; S.quotesAt=c.quotesAt||0; S.fromCache=c.at;
     for(const [t,raw] of Object.entries(c.raw||{})){ S.raw[t]=raw; S.bars[t]=toBars(raw); S.barsAt[t]=c.at; }
     if(!S.universe.some(u=>u.tkr===S.tkr)&&S.universe.length) S.tkr=S.universe[0].tkr;
@@ -1622,7 +1631,7 @@ function xTable(rows, unit){
   rows=rows.slice().sort((a,b)=>a.ts-b.ts);
   const dfm=ts=>new Date(ts).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false});
   return `<div class="tblw"><table class="rt"><tr><th>When (IST)</th><th>Instrument</th><th>Side</th><th>Entry</th><th>Exit</th><th>How it ended</th><th>Result</th></tr>`+
-    rows.slice().reverse().slice(0,60).map(x=>`<tr><td>${dfm(x.ts)}</td><td>${esc(x.sym)}</td><td style="color:${x.d>0?C.up:C.dn}">${x.d>0?"BUY":"SELL"}</td>`+
+    rows.slice().reverse().slice(0,60).map(x=>`<tr><td>${dfm(x.ts)}</td><td>${esc(x.sym)}</td><td style="color:${x.d>0?C.up:C.dn}">${x.d>0?"CALL":"PUT"}</td>`+
       `<td>${px(x.entry,uni(x.tkr))}</td><td>${px(x.exit,uni(x.tkr))}</td><td>${esc(x.how)}</td>`+
       `<td style="color:${x.R>0.02?C.up:x.R<-0.02?C.dn:C.fg}">${x.R>=0?"+":"−"}${Math.abs(x.R).toFixed(2)}${unit}${x.pct!=null?` (${x.pct>=0?"+":"−"}${Math.abs(x.pct).toFixed(2)}%)`:""}</td></tr>`).join("")+`</table></div>`;
 }
@@ -1999,6 +2008,23 @@ function btstCount(){
   S.universe.filter(u=>u.seg==="EQ").forEach(u=>{ const e=X.bars[u.tkr]; if(e) n+=btstEngine(u,e.b,nd).sigs.filter(s=>s.day===today).length; });
   X.picks=n;
 }
+/* The CALL option for a BTST pick: at the money, in the nearest expiry that does not end tomorrow. */
+const BTO={};
+async function btstOption(s){
+  const k=s.tkr+"|"+s.day; if(BTO[k]) return; BTO[k]={loading:true};
+  try{
+    const q="/api/chain?tkr="+encodeURIComponent(s.tkr); let d=await api(q,20000);
+    if(d.daysOut<1.6&&d.expiries&&d.expiries[1]) d=await api(q+"&expiry="+d.expiries[1],20000);
+    if(!d.rows||!d.rows.length) throw new Error("no strikes");
+    const row=d.rows.reduce((a,r)=>Math.abs(r.strike-s.entry)<Math.abs(a.strike-s.entry)?r:a,d.rows[0]), leg=row.ce;
+    if(!leg||!(leg.ltp>0)) throw new Error("no traded price for the "+row.strike+" CE");
+    const T=Math.max(d.daysOut/365,1/(365*24)), sp=d.spot||s.entry, iv=impliedVol(leg.ltp,sp,row.strike,T,"CE")||leg.iv;
+    const delta=iv?Math.abs(bs(sp,row.strike,T,iv,"CE").delta):null, at=v=>delta?Math.max(0.05,leg.ltp+delta*(v-sp)):null;
+    BTO[k]={strike:row.strike, expiry:d.expiry, ltp:leg.ltp, delta, lot:d.lot||null, sl:at(s.sl), t1:at(s.t1), t2:at(s.t2), soon:d.daysOut<1.6,
+      spread:leg.bid>0&&leg.ask>0?(leg.ask-leg.bid)/((leg.ask+leg.bid)/2)*100:null};
+  }catch(e){ BTO[k]={err:e.message}; }
+  if(onHomeTab("btst")) renderBtst();
+}
 function renderBtst(){
   if(!onHomeTab("btst")) return;
   const X=XS.btst, el=document.getElementById("btstBody"); X.shownAt=X.at;
@@ -2014,14 +2040,20 @@ function renderBtst(){
   const card=s=>{
     const u=s.u, f=v=>px(v,u), done=s.res.done, col=done?(s.res.R>0.02?C.up:s.res.R<-0.02?C.dn:C.mid):C.key;
     const st=done?(s.res.R>0.02?"PROFIT":s.res.R<-0.02?"LOSS":"FLAT"):s.day===today?"TODAY'S PICK":"HOLDING";
-    const share=`${s.sym} - BTST\nBUY @ ${sn2(s.entry)}\nSL - ${sn2(s.sl)}\nT1/T2 - ${sn2(s.t1)}/${sn2(s.t2)}\nExit by 10:15 tomorrow`;
-    return `<div class="xcard" style="--xc:${C.up}"><div class="xh"><b class="xn">${esc(s.sym)}</b><span class="chip" style="background:${C.up}">BTST BUY</span>`+
+    const o=!done&&BTO[s.tkr+"|"+s.day]; if(!done&&!o) btstOption(s);
+    const f2=v=>v==null?"—":"₹"+nf(v,2), ok=o&&!o.err&&o.strike;
+    const share=ok?`${s.sym} - BTST CALL\nBUY ${o.strike} CE @ ${sn2(o.ltp)}${o.expiry?" ("+new Date(o.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"}).toUpperCase()+" EXPIRY)":""}\n`+
+        (o.delta?`SL - ${sn2(o.sl)}\nT1/T2 - ${sn2(o.t1)}/${sn2(o.t2)} (estimated)\n`:"")+`Exit by 10:15 tomorrow`
+      :`${s.sym} - BTST CALL (CE)\n(option not picked yet; share levels)\nENTRY @ ${sn2(s.entry)}\nSL - ${sn2(s.sl)}\nT1/T2 - ${sn2(s.t1)}/${sn2(s.t2)}\nExit by 10:15 tomorrow`;
+    return `<div class="xcard" style="--xc:${C.up}"><div class="xh"><b class="xn">${esc(s.sym)}</b><span class="chip" style="background:${C.up}">${ok?esc(o.strike+" CE"):"BTST CALL"}</span>`+
       `<span class="xst" style="color:${col}">${st}</span></div>`+
-      `<div class="xsub">Decided ${new Date(s.ts).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false})} IST · shares (delivery)</div>`+
-      `<div class="xlv"><div><span>Buy @</span><b style="color:${C.key}">${f(s.entry)}</b></div><div><span>Stop loss</span><b style="color:${C.dn}">${f(s.sl)} (−${((s.entry-s.sl)/s.entry*100).toFixed(1)}%)</b></div>`+
-        `<div><span>Target 1 / 2</span><b>${f(s.t1)} / ${f(s.t2)} (+${((s.t1-s.entry)/s.entry*100).toFixed(1)}% / +${((s.t2-s.entry)/s.entry*100).toFixed(1)}%)</b></div>`+
-        (s.res.px!=null?`<div><span>${done?"Sold at":"Now"}</span><b style="color:${col}">${f(s.res.px)}</b></div>`:"")+`</div>`+
-      `<div class="xres" style="color:${col}">${esc(s.res.how)}${done?` · ${s.res.pct>=0?"+":"−"}${Math.abs(s.res.pct).toFixed(2)}% after charges (${s.res.R>=0?"+":"−"}${Math.abs(s.res.R).toFixed(2)}R)`:""}</div>`+
+      `<div class="xsub">Decided ${new Date(s.ts).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false})} IST · buy the CALL option, sell by 10:15 tomorrow${ok&&o.expiry?` · expiry ${new Date(o.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}${o.lot?" · lot "+o.lot:""}`:""}</div>`+
+      (ok?`<div class="xlv"><div><span>${s.day===today?"Buy @ (premium)":"Premium now"}</span><b style="color:${C.key}">${f2(o.ltp)}</b></div><div><span>Stop loss</span><b style="color:${C.dn}">${o.delta?f2(o.sl):"exit if the share hits "+f(s.sl)}</b></div>`+
+          `<div><span>Target 1 / 2</span><b>${o.delta?f2(o.t1)+" / "+f2(o.t2):"—"}</b></div>${o.spread!=null&&o.spread>5?`<div><span>Bid-ask spread</span><b style="color:${C.warn}">${o.spread.toFixed(1)}% (thin)</b></div>`:""}</div>`
+        :!done?`<div class="xopt">${o&&o.err?"Option contract not available ("+esc(o.err)+").":"Finding the CALL option…"}</div>`:"")+
+      `<div class="xopt">${esc(s.sym)} share levels: entry ${f(s.entry)}, stop ${f(s.sl)} (−${((s.entry-s.sl)/s.entry*100).toFixed(1)}%), targets ${f(s.t1)} / ${f(s.t2)}${s.res.px!=null?` · ${done?"share at exit":"share now"} ${f(s.res.px)}`:""}${ok&&o.delta?` · premium levels estimated from delta ${o.delta.toFixed(2)}; actual premiums will differ`:""}</div>`+
+      (ok&&o.soon?`<div class="xopt"><b style="color:${C.warn}">This option expires tomorrow (no later expiry listed).</b> Holding it overnight is very risky: much of its value can be gone by the morning. Consider skipping.</div>`:"")+
+      `<div class="xres" style="color:${col}">${esc(s.res.how)}${done?` · ${s.res.R>=0?"+":"−"}${Math.abs(s.res.R).toFixed(2)}R on the share price (option results are not recorded)`:""}</div>`+
       `<details class="xwhy"><summary>Why this BTST</summary>${s.why.map(w=>"✓ "+esc(w)).join("<br>")}</details>`+
       `<div class="xact">${xCopyBtn(share)}<button class="btn xchart" data-tkr="${u.tkr}">View on chart</button></div></div>`;
   };
@@ -2032,7 +2064,7 @@ function renderBtst(){
       `<div><span>Today's picks</span><b style="color:${picks.length?C.up:C.fg}">${picks.length}</b><small>${nowT<915?"decided at 15:15 IST":"buy 15:15–15:29 IST"}</small></div>`+
       `<div><span>Holding overnight</span><b>${holding.length}</b><small>sell by 10:15 IST</small></div>`+
       `<div><span>Last session result</span><b>${recon.length?recon.filter(s=>s.res.R>0.02).length+" / "+recon.length:"—"}</b><small>${lastDay?"picks from "+new Date(lastDay+"T00:00:00Z").toLocaleDateString("en-IN",{timeZone:"UTC",day:"2-digit",month:"short"})+" in profit":"no finished picks yet"}</small></div>`+
-      `<div><span>Data</span><b style="font-size:20px">${X.at?hhmm(X.at):"—"}</b><small>hourly candles, ${stocks.length} stocks</small></div></div>`+
+      `<div><span>Data</span><b style="font-size:20px">${X.at?hhmm(X.at):"—"}</b><small>hourly candles, ${stocks.length} stocks with options</small></div></div>`+
     (holding.length?`<h3>Holding overnight — sell tomorrow by 10:15</h3><div class="xgrid">${holding.map(card).join("")}</div>`:"")+
     (picks.length?`<h3>Today's BTST picks</h3><div class="xgrid">${picks.map(card).join("")}</div>`
       :`<div class="notrade"><b>NO BTST TRADE ${nowT>=BT.decideT+60?"today":"yet"}</b><span>${nowT<BT.decideT+60?`Picks are decided on the hourly candle that closes at 15:15 IST.${forming.length?` Forming now (not a signal until 15:15): ${forming.map(([u])=>esc(u.sym)).join(", ")}.`:""}`:"No stock met every BTST rule at 15:15 today. No trade is the right call on such days."}</span>`+
@@ -2666,15 +2698,50 @@ function tgCalls(){
   return calls;
 }
 /* ---- checking one call against the market ---- */
+/* Follow the site's own signal on the option's 5-minute candles after it was given: the stop is checked
+   before the targets inside a candle (the worse case); after Target 1 the stop moves to the entry, after
+   Target 2 to Target 1. */
+function tgTrack(fx, bars, ended){
+  let hit=0, sl=fx.sl, stop=false, exit=null; const T=[fx.t1,fx.t2,fx.t3];
+  for(const b of bars){ if(b.ts<=fx.at) continue;
+    if(b.l<=sl){ stop=true; exit=sl; break; }
+    while(hit<3&&b.h>=T[hit]){ hit++; if(hit===1) sl=Math.max(sl,fx.entry); if(hit===2) sl=Math.max(sl,fx.t1); }
+    if(hit>=3){ exit=fx.t3; break; } }
+  const now=bars.length?bars[bars.length-1].c:fx.entry, px=exit!=null?exit:now;
+  return { state:stop?(hit?"TRAIL":"STOP"):hit>=3?"T3":ended?"ENDED":"ACTIVE", hit, sl, now, pct:(px-fx.entry)/fx.entry*100 };
+}
+/* What the site says about a Telegram call right now: its own independent signal and where it stands. */
+function tgSite(e){
+  const n2=v=>"₹"+nf(v,2);
+  if(!e||!e.status) return {lab:"CHECKING", col:C.mid, line:"Checking the market…"};
+  const fx=e.fix, t=e.track;
+  if(fx&&t){
+    if(t.state==="STOP") return {lab:"STOP LOSS HIT", col:C.dn, line:`The premium fell to the stop loss ${n2(t.sl)}. Exit; the signal is over (${t.pct.toFixed(1)}%).`};
+    if(t.state==="TRAIL") return {lab:`T${t.hit} HIT, THEN STOPPED`, col:C.up, line:`Target ${t.hit} was reached, then the premium came back to the moved stop ${n2(t.sl)}. Closed ${t.pct>=0?"+":""}${t.pct.toFixed(1)}%.`};
+    if(t.state==="T3") return {lab:"ALL TARGETS HIT", col:C.up, line:`Target 3 ${n2(fx.t3)} reached. Closed +${t.pct.toFixed(1)}%.`};
+    if(t.state==="ENDED") return {lab:"SESSION ENDED", col:C.mid, line:`The session ended with the premium at ${n2(t.now)} (${t.pct>=0?"+":""}${t.pct.toFixed(1)}% from ${n2(fx.entry)}).`};
+    if(t.hit>0) return {lab:`T${t.hit} HIT · HOLD`, col:C.up, line:`Target ${t.hit} reached. Stop loss moved to ${n2(t.sl)}; next target ${n2([fx.t1,fx.t2,fx.t3][t.hit])}. Premium now ${n2(t.now)}.`};
+    if(t.now<=fx.entryMax*1.01) return {lab:"BUY ZONE", col:C.up, line:`Buy up to ${n2(fx.entryMax)}. Premium now ${n2(t.now)}. Stop loss ${n2(fx.sl)}.`};
+    return {lab:"IN PLAY · DON'T CHASE", col:C.warn, line:`The entry was up to ${n2(fx.entryMax)}; the premium is now ${n2(t.now)}. Buy only if it comes back near ${n2(fx.entryMax)}.`};
+  }
+  if(e.status==="AWAITING DATA") return {lab:"WAITING FOR PRICES", col:C.warn, line:`The site works out its own entry, stop loss and targets from live prices, and they are not available right now (${(e.why[0]||"").replace(/^Option chain not available: |^Option prices not available: /,"")}). They appear here as soon as prices load.`};
+  if(e.plan&&e.plan.verdict==="SKIP") return {lab:"DON'T TRADE", col:C.mid, line:"The site's own analysis says skip: "+e.plan.why.join("; ")+"."};
+  return {lab:"NO TRADE", col:C.mid, line:e.why[0]||"Not tradeable."};
+}
 async function tgEval(c){
   const prev=TGR.ev[c.key];
   if(prev&&prev.final) return prev;
   if(prev&&Date.now()-prev.at<(Date.now()-c.msg.ts<6*3600e3?40000:170000)) return prev;
-  const r={at:Date.now(), checks:[], status:null, why:[], final:false}, add=(n,ok,w)=>r.checks.push({n,ok,w});
+  const r={at:Date.now(), checks:[], status:null, why:[], final:false, fix:prev&&prev.fix||null, track:prev&&prev.track||null}, add=(n,ok,w)=>r.checks.push({n,ok,w});
   const pubDay=istDay(c.msg.ts), today=istDay(Date.now());
   const done=(st,w,final)=>{ r.status=st; if(w) r.why.unshift(w); r.final=!!final;
     // the site's own plan never says TAKE on a call the market has already ruled out
     if(r.plan&&r.plan.verdict==="TAKE"&&/CONTRADICTED|INVALIDATED|EXPIRED|AWAITING/.test(st)) Object.assign(r.plan,{verdict:"SKIP",why:[st.toLowerCase()+": "+(w||"")].concat(r.plan.why)});
+    // the site's own signal: fixed the first time the plan says TAKE, then followed on the option's own candles
+    if(r.plan&&r.plan.verdict==="TAKE"&&!r.fix&&r._last)
+      r.fix={entry:r._last.c, entryMax:r.plan.entryMax, sl:r.plan.sl, t1:r.plan.t1, t2:r.plan.t2, t3:r.plan.t3, at:r._last.ts, wall:Date.now(), late:!!r.plan.late};
+    if(r.fix&&r._bars) r.track=tgTrack(r.fix, r._bars, r._ended);
+    delete r._bars; delete r._last; delete r._ended;
     TGR.ev[c.key]=r; tgSaveEv(); return r; };
   if(c.dupOf) return done("NO TRADE","Same call as an earlier message (posted again or forwarded); counted once.",true);
   if(c.type==="nonoption") return done("NO TRADE","Not a CALL / PUT option call; this tab follows option buys only.",true);
@@ -2723,6 +2790,7 @@ async function tgEval(c){
     if(fill!=null&&!stop&&hit<T.length) exitPx=hit?T[hit-1]:(after.length?after[after.length-1].c:null);
   }
   const ended=pubDay<today||!sessionOpen(uni(tkr).tkr?uni(tkr):{open:555,close:930});
+  r._bars=bars; r._last=now; r._ended=ended;
   r.outcome={fill, hit, stop, amb, missed, exitPx, ended,
     pct:fill!=null&&exitPx!=null?((exitPx-fill)/fill*100-1):null};            // 1% for charges and slippage (estimate)
   if(fill==null&&!missed&&ended&&lo!=null) r.outcome.noFill=true;
@@ -2771,8 +2839,8 @@ async function loadTg(force){
       try{ await tgEval(c); }catch(e){} }
     TGR.at=Date.now();
     // Target 1 alerts, confirmed by the option's own prices
-    for(const c of calls){ const e=TGR.ev[c.key]; if(e&&e.plan&&e.plan.verdict==="TAKE"&&c.msg.ts>Date.now()-3600e3)
-      alerts.fire("tgplan|"+c.key,`Telegram ${c.srcName}: ${uni(c.tkr).sym||c.tkr} ${c.strike} ${c.ty} → Signal Desk plan BUY up to ₹${e.plan.entryMax}, SL ₹${e.plan.sl}, T1 ₹${e.plan.t1}`); }
+    for(const c of calls){ const e=TGR.ev[c.key]; if(e&&e.fix&&e.track&&istDay(c.msg.ts)===istDay(Date.now())){ const z=tgSite(e);
+      alerts.fire("tgs|"+c.key+"|"+e.track.state+e.track.hit,`Telegram ${c.srcName}: ${uni(c.tkr).sym||c.tkr} ${c.strike} ${c.ty} → ${z.lab}: ${z.line}`); } }
     for(const c of calls){ const e=TGR.ev[c.key]; if(e&&e.outcome&&e.outcome.hit>=1&&!e.outcome.ended)
       alerts.fire("tg|"+c.key+"|t1",`Telegram call ${uni(c.tkr).sym||c.tkr} ${c.strike} ${c.ty} (${c.srcName}): Target 1 ₹${c.targets[0]} reached`); }
   }finally{ TGR.busy=false; if(onHomeTab("tg")) renderTg(); if(S.page==="home") renderStrictSegs(); }
@@ -2831,8 +2899,10 @@ function tgTradeCard(c){
         `<details class="xwhy" open><summary>Why</summary>${a.why.map(w=>"• "+esc(w)).join("<br>")}</details>`+
         `<div class="xact"><button class="btn tgtx" data-k="${esc(c.key)}" data-a="undo">I didn't take it after all</button></div>`; }
   } else {
-    const take=p&&p.verdict==="TAKE";
-    body=(take?`<div class="xsize"><span>Updated signal now (${hhmm(e.at)} IST)${p.late?" · late entry, recalculated from the current price":""}</span>`+
+    const take=p&&p.verdict==="TAKE", fx=e.fix, z=tgSite(e);
+    body=(fx?`<div class="xsize${e.track&&e.track.state==="ACTIVE"?"":" no"}"><span>Signal Desk signal · given ${hhmm(fx.wall)} IST · ${esc(z.lab)}</span>`+
+        `<b>BUY ${c.strike} ${c.ty} up to ₹${nf(fx.entryMax,2)} · SL ₹${nf(e.track?e.track.sl:fx.sl,2)} · T1/T2/T3 ₹${nf(fx.t1,2)} / ${nf(fx.t2,2)} / ${nf(fx.t3,2)}</b><small>${esc(z.line)}</small></div>`
+      :take?`<div class="xsize"><span>Updated signal now (${hhmm(e.at)} IST)${p.late?" · late entry, recalculated from the current price":""}</span>`+
         `<b>BUY ${c.strike} ${c.ty} up to ₹${nf(p.entryMax,2)} · SL ₹${nf(p.sl,2)} · T1/T2/T3 ₹${nf(p.t1,2)} / ${nf(p.t2,2)} / ${nf(p.t3,2)}</b>`+
         `<small>Reward : risk ${p.rr.toFixed(2)} to Target 1. ${esc(p.why.join("; "))}. Premium levels are estimates.</small></div>`
       :`<div class="xsize no"><span>Updated signal now</span><b>Don't enter now</b><small>${esc(p?p.why.join("; "):"checking…")}</small></div>`)+
@@ -2868,36 +2938,39 @@ function renderTg(){
   if(!onHomeTab("tg")) return;
   const typing=document.activeElement&&document.activeElement.tagName==="INPUT"&&document.activeElement.closest(".tgbuy");
   if(typing&&TGR.view==="trade"){ TGR.pendingRender=true; return; }     // don't wipe a half-typed buy price
-  const el=document.getElementById("tgBody"), calls=tgCalls().filter(c=>c.msg.ts>Date.now()-8*864e5);
+  const el=document.getElementById("tgBody"), recent=tgCalls().filter(c=>c.msg.ts>Date.now()-8*864e5);
+  const calls=recent.filter(c=>istDay(c.msg.ts)===istDay(Date.now()));       // only today's calls are shown
   const st=c=>(TGR.ev[c.key]||{}).status||(c.dupOf?"NO TRADE":"checking…");
   const VAL=c=>st(c)==="VALIDATED — SETUP CONFIRMED", ACT=c=>{ const e=TGR.ev[c.key]; return e&&e.outcome&&e.outcome.fill!=null&&!e.outcome.stop&&!e.outcome.ended&&e.status!=="INVALIDATED"; };
   const REJ=c=>/NO TRADE|ENTRY MISSED|CONTRADICTED|INVALIDATED|EXPIRED/.test(st(c));
   const today=istDay(Date.now());
   const col=s=>/^VALIDATED/.test(s)?C.up:/PARTIAL|AWAITING|checking/.test(s)?C.warn:/EXPIRED/.test(s)?C.mid:C.dn;
-  const card=c=>{ const e=TGR.ev[c.key]||{}, s=st(c), u=uni(c.tkr), o=e.outcome, f=v=>v==null?"<i style='color:"+C.warn+"'>missing</i>":"₹"+nf(+v,2);
-    return `<div class="xcard" style="--xc:${col(s)}"><div class="xh"><b class="xn">${esc(u.sym||c.tkr||"Unknown instrument")}${c.strike?" "+c.strike:""} ${c.ty||""}</b>`+
-      `<span class="chip ghost" style="color:${C.violet};border:1px solid ${C.violet};background:none">TELEGRAM</span><span class="xst" style="color:${col(s)}">${esc(s)}</span></div>`+
-      `<div class="xsub">${esc(c.srcName||"")} · posted ${istT(c.msg.ts)} IST (${uaeT(c.msg.ts)} UAE)${c.msg.fwd?" · forwarded from "+esc(c.msg.fwd):""}${c.msg.edited?" · edited by the source (original kept)":""}${c.msg.deleted?" · deleted by the source (kept here)":""}${c.msg.link?` · <a href="${esc(c.msg.link)}" target="_blank" rel="noopener">open post</a>`:""}</div>`+
-      `<div class="xlv"><div><span>Entry</span><b style="color:${C.key}">${c.entryLo==null?f(null):c.entryLo===c.entryHi||c.entry&&!c.above&&c.entryHi===+(c.entry*1.02).toFixed(2)?f(c.entry):"₹"+nf(c.entryLo,2)+"–"+nf(c.entryHi,2)}</b></div>`+
-        `<div><span>Stop loss</span><b style="color:${C.dn}">${c.slWithheld?`<i style='color:${C.warn}'>withheld (VIP)</i>`:f(c.sl)}</b></div><div><span>Targets</span><b>${c.targets.length?c.targets.map(v=>"₹"+nf(v,2)).join(" / "):f(null)}</b></div>`+
-        `<div><span>Premium now</span><b>${e.now!=null?"₹"+nf(e.now,2)+" · "+hhmm(e.nowAt):"—"}</b></div></div>`+
-      (o?`<div class="xopt">At publication the option traded near ${e.pubPx!=null?"₹"+nf(e.pubPx,2):"—"}. ${o.fill!=null?`Entry reached at about ₹${nf(o.fill,2)}`+(o.stop?", then the stop was hit":o.hit?`, Target ${o.hit} reached since`:""):o.missed?"It ran past the entry without filling":o.noFill?"The entry was never reached":"Entry not reached yet"}.${o.pct!=null&&o.ended?` Result ${o.pct>=0?"+":""}${o.pct.toFixed(1)}% after an estimated 1% for charges.`:""}${e.expiry?" Expiry "+e.expiry+(e.lot?", lot "+e.lot:""):""}</div>`:"")+
-      `<div class="xres" style="color:${col(s)}">${esc((e.why||[])[0]||(c.dupOf?"Same call as an earlier message.":"Checking against the market…"))}</div>`+
-      (e.plan&&e.plan.sl?`<div class="xsize ${e.plan.verdict==="TAKE"?"":"no"}"><span>Signal Desk plan (the site's own analysis, ${hhmm(e.at)} IST)</span>`+
-        `<b>${e.plan.verdict==="TAKE"?`BUY ${esc(String(c.strike))} ${c.ty} up to ₹${nf(e.plan.entryMax,2)} · SL ₹${nf(e.plan.sl,2)} · T1/T2/T3 ₹${nf(e.plan.t1,2)} / ${nf(e.plan.t2,2)} / ${nf(e.plan.t3,2)}`:"SKIP"}</b>`+
-        `<small>${esc(e.plan.why.join("; "))}. Premium levels are estimates; actual premiums will differ.</small>`+
-        (e.plan.verdict==="TAKE"?`<div style="margin-top:8px">${xCopyBtn(`${uni(c.tkr).sym||c.tkr} - ${(e.expiry?new Date(e.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"}).toUpperCase()+" EXPIRY":"")}\nBUY ${c.strike} ${c.ty} @ ${sn2(e.plan.entryMax)}\nSL - ${sn2(e.plan.sl)}\nT1/T2/T3 - ${sn2(e.plan.t1)}/${sn2(e.plan.t2)}/${sn2(e.plan.t3)}`,"Copy plan for WhatsApp")}</div>`:"")+`</div>`
-      :e.plan?`<div class="xsize no"><span>Signal Desk plan</span><small>SKIP: ${esc(e.plan.why.join("; "))}</small></div>`:"")+
+  const card=c=>{ const e=TGR.ev[c.key]||{}, s=st(c), u=uni(c.tkr), z=tgSite(e), fx=e.fix, t=e.track, n2=v=>"₹"+nf(v,2);
+    const said=[c.entryLo==null?"no entry given":c.entryLo===c.entryHi||c.entry&&!c.above&&c.entryHi===+(c.entry*1.02).toFixed(2)?"entry "+n2(c.entry):(c.above?"entry above "+n2(c.entryLo):"entry "+n2(c.entryLo)+"–"+nf(c.entryHi,2)),
+      c.slWithheld?"stop loss kept for paying members":c.sl!=null?"SL "+n2(c.sl):"no stop loss given", c.targets.length?"targets "+c.targets.map(n2).join(" / "):"no targets given"].join(", ");
+    const name=`${u.sym||c.tkr||"Unknown instrument"}${c.strike?" "+c.strike:""} ${c.ty||""}`;
+    if(fx&&t) alerts.fire("tgs|"+c.key+"|"+t.state+t.hit,`${name}: ${z.lab} — ${z.line}`);
+    return `<div class="xcard" style="--xc:${z.col}"><div class="xh"><b class="xn">${esc(name)}</b>`+
+      `<span class="chip ghost" style="color:${C.violet};border:1px solid ${C.violet};background:none">TELEGRAM</span><span class="xst" style="color:${z.col}">${esc(z.lab)}</span></div>`+
+      `<div class="xsub">${esc(c.srcName||"")} · posted ${istT(c.msg.ts)} IST (${uaeT(c.msg.ts)} UAE)${c.msg.fwd?" · forwarded from "+esc(c.msg.fwd):""}${c.msg.edited?" · edited by the source":""}${c.msg.deleted?" · deleted by the source":""}${c.msg.link?` · <a href="${esc(c.msg.link)}" target="_blank" rel="noopener">open post</a>`:""}</div>`+
+      (fx?`<div class="xsize"><span>Signal Desk signal · given ${hhmm(fx.wall)} IST${fx.late?" (late entry, worked out from the price then)":""}</span>`+
+          `<b>BUY ${esc(String(c.strike))} ${c.ty} up to ${n2(fx.entryMax)} · SL ${n2(t&&t.sl!=null?t.sl:fx.sl)}${t&&t.sl>fx.sl?" (moved)":""} · T1/T2/T3 ${n2(fx.t1)} / ${nf(fx.t2,2)} / ${nf(fx.t3,2)}</b>`+
+          `<small>${esc(z.line)} Premium levels are the site's estimates from the underlying's levels; actual premiums will differ.</small>`+
+          (t&&t.state==="ACTIVE"?`<div style="margin-top:8px">${xCopyBtn(`${u.sym||c.tkr} - ${(e.expiry?new Date(e.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"}).toUpperCase()+" EXPIRY":"")}\nBUY ${c.strike} ${c.ty} @ ${sn2(fx.entryMax)}\nSL - ${sn2(t.sl)}\nT1/T2/T3 - ${sn2(fx.t1)}/${sn2(fx.t2)}/${sn2(fx.t3)}`,"Copy for WhatsApp")}</div>`:"")+`</div>`
+        :`<div class="xsize no"><span>Signal Desk signal</span><b>${esc(z.lab)}</b><small>${esc(z.line)}</small></div>`)+
+      `<div class="xopt">The channel said: ${esc(said)}.${e.now!=null?` Premium ${n2(e.now)} at ${hhmm(e.nowAt)}.`:""}${e.expiry?" Expiry "+e.expiry+(e.lot?", lot "+e.lot:"")+".":""} Check of the channel's own levels: ${esc(s.toLowerCase())}.</div>`+
       `<details class="xwhy"><summary>Checks and original message</summary>${(e.checks||[]).map(x=>`${x.ok===true?"✓":x.ok===false?"✗":"–"} ${esc(x.n)}: ${esc(x.w)}`).join("<br>")}`+
+        `${(e.why||[]).length?`<br>${esc(e.why[0])}`:""}`+
         `${c.ups.length?`<br><b>Follow-ups from the source</b><br>${c.ups.map(x=>esc(istT(x.ts)+" IST: "+x.text)).join("<br>")}`:""}`+
         `<br><b>Original message</b><br><span style="white-space:pre-wrap">${esc(c.msg.text)}</span>${c.msg.editedText?`<br><b>Edited to</b><br><span style="white-space:pre-wrap">${esc(c.msg.editedText)}</span>`:""}</details></div>`; };
   const sec=(title,list,empty)=>`<h3>${title} (${list.length})</h3>`+(list.length?`<div class="xgrid">${list.slice().reverse().slice(0,40).map(card).join("")}</div>`:`<div class="none">${empty}</div>`);
   const todays=calls.filter(c=>istDay(c.msg.ts)===today&&c.type);
-  const perf=tgPerf(calls);
+  const perf=tgPerf(recent);
   let html=`<div class="bbar">${TGR.src.length?`${TGR.src.filter(s=>s.enabled).length} source${TGR.src.filter(s=>s.enabled).length===1?"":"s"} on`:"No sources yet"} · ${TGR.at?"checked "+hhmm(TGR.at)+" IST":TGR.busy?"reading…":"not read yet"} · minimum reward : risk <input id="tgRR" type="number" step="0.1" min="0.5" max="5" value="${TGR.minRR}" style="width:64px"> <button class="btn" id="tgRef">Check now</button></div>`;
   html+=`<div class="seg tabs" id="tgView" style="margin-top:12px"></div>`;
   const TRADE=c=>{ const e=TGR.ev[c.key], me=TGT[c.key]; if(c.dupOf||c.type!=="call") return false;
     if(me&&me.state==="yes") return istDay(me.at)===today;
+    if(e&&e.fix&&e.track) return e.track.state==="ACTIVE";
     return !!(e&&e.plan&&e.plan.verdict==="TAKE"&&!(e.outcome&&e.outcome.ended)); };
   if(TGR.view==="trade"){ const list=calls.filter(TRADE).sort((a,b)=>b.msg.ts-a.msg.ts);
     html+=`<h3>Trade now (${list.length})</h3><div class="sub" style="margin:-4px 0 10px">Only Telegram calls that the site's own analysis says can be traded now, with the entry, stop loss and targets worked out again from the current price. Tell the site whether you took each one: if not, the signal keeps updating; if you did, you get stay-or-exit advice on your own buy price.</div>`+
@@ -2920,7 +2993,7 @@ function renderTg(){
     html+=`<h3>Sources</h3><div class="mtform" style="margin-top:6px"><b>Add a Telegram source</b><span>Public channel link (https://t.me/name) or @name. Private groups need your own bot (below).</span>`+
       `<div class="mtrow"><input id="tgIn" type="text" placeholder="https://t.me/channelname" autocomplete="off"><button class="btn pri" id="tgAdd">Add</button></div><div class="bmsg" id="tgMsg"></div></div>`;
     html+=TGR.src.length?`<div class="tblw" style="margin-top:12px"><table class="rt"><tr><th>Source</th><th>Type</th><th>Added</th><th>Latest post read</th><th>Calls</th><th>Status</th><th></th></tr>`+
-      TGR.src.map((s,i)=>{ const k=tgKey(s), n=calls.filter(c=>c.src===k&&c.type==="call").length;
+      TGR.src.map((s,i)=>{ const k=tgKey(s), n=recent.filter(c=>c.src===k&&c.type==="call").length;
         return `<tr><td>${s.link?`<a href="${esc(s.link)}" target="_blank" rel="noopener">${esc(s.title||s.name||s.chatTitle)}</a>`:esc(s.chatTitle||s.chat)}</td><td>${s.kind==="bot"?"via your bot":s.kind==="acct"?"your Telegram login":"public channel"}</td><td>${istT(s.added)}</td>`+
           `<td>${s.lastAt?istT(s.lastAt)+" IST":"—"}</td><td>${n}</td><td style="color:${TGR.err[k]?C.dn:C.up}">${TGR.err[k]?esc(TGR.err[k]):s.enabled?"on":"off"}${(TGR.promo[k]||new Set()).size?` <b style="color:${C.warn}">· PAID SOURCE (not subscribed)</b>`:""}</td>`+
           `<td><button class="btn tgTog" data-i="${i}">${s.enabled?"Turn off":"Turn on"}</button> <button class="btn tgDel" data-i="${i}">Remove</button></td></tr>`; }).join("")+`</table></div>`:"";
@@ -3522,14 +3595,14 @@ function statusOf(tkr){
   if(fr.k==="cached") return nc(fr.txt);
   if(fr.k==="stale"||fr.k==="none") return nc(fr.txt+". Signals need fresh data.");
   if(fr.k==="closed"&&!liveSig) return nc(fr.txt+". Signals are given only while the market is open.");
-  if(liveSig&&!u.fo) return {kind:"ul", label:st.sig.side==="BUY"?"BUY SETUP · NO OPTIONS":"SELL SETUP · NO OPTIONS", col:st.sig.side==="BUY"?C.up:C.dn,
-    why:"This instrument has no exchange-listed options, so only the underlying levels are shown. "+st.why, fr, sig:st.sig};
+  if(liveSig&&!u.fo) return {kind:"ul", label:"NO OPTION TRADE · NO OPTIONS LISTED", col:C.mid,
+    why:"This instrument has no exchange-listed options, so this platform gives no trade on it (shares are not bought or sold here). The setup on its price: "+st.why, fr, sig:st.sig};
   if(st.state==="CALL BUY SETUP") return {kind:"ce", label:"VALID CE SIGNAL", col:C.up, why:st.why, fr, sig:st.sig};
   if(st.state==="PUT BUY SETUP") return {kind:"pe", label:"VALID PE SIGNAL", col:C.dn, why:st.why, fr, sig:st.sig};
   const lv2=(S.sigs[tkr]||[]).filter(x=>(x.grade==="N"||x.grade==="T"||x.grade==="O")&&x.res.state==="ACTIVE");
   const nl=lv2.filter(x=>x.grade==="T").pop()||lv2.filter(x=>x.grade==="O").pop()||lv2.pop();
   if(nl){ const w=`${nl.grade==="T"?"Grade A trendline "+nl.setup:nl.grade==="O"?"Opening range breakout":"Normal trend"} signal from ${hhmm(nl.ts)} (structure rules: ${st.why.charAt(0).toLowerCase()+st.why.slice(1)})`;
-    if(!u.fo) return {kind:"ul", label:nl.side==="BUY"?"BUY SETUP · NO OPTIONS":"SELL SETUP · NO OPTIONS", col:nl.side==="BUY"?C.up:C.dn, why:w, fr, sig:nl};
+    if(!u.fo) return {kind:"ul", label:"NO OPTION TRADE · NO OPTIONS LISTED", col:C.mid, why:"No exchange-listed options, so no trade on this platform. "+w, fr, sig:nl};
     return {kind:nl.side==="BUY"?"ce":"pe", label:nl.side==="BUY"?"VALID CE SIGNAL":"VALID PE SIGNAL", col:nl.side==="BUY"?C.up:C.dn, why:w, fr, sig:nl, normal:true}; }
   return {kind:st.state==="WAIT"?"wait":"none", label:"NO VALID SIGNAL", col:st.state==="WAIT"?C.warn:C.mid, why:(st.state==="WAIT"?"Setup forming. ":"")+st.why, fr, pending:st.pending};
 }
@@ -3863,7 +3936,7 @@ function renderNews(){
 /* ------------------------------------------------------------- home -- */
 function renderHome(){
   if(S.page!=="home") return;
-  const all=S.universe.reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);
+  const all=S.universe.reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]).filter(s=>istDay(s.ts)===istDay(Date.now()));
   const act=all.filter(s=>s.res.state==="ACTIVE").sort((a,b)=>b.ts-a.ts);
   document.getElementById("homeSub").textContent=(S.feed&&S.feed.delayed?"Delayed prices":"Live prices")+
     " · "+all.length+" signals today · India time · analysis only, not advice";
@@ -3929,7 +4002,7 @@ function setStrict(v){
   if(S.page==="results") renderResults();
 }
 function renderStrictSegs(){
-  const today=S.universe.filter(u=>u.seg!=="OPT").reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]), cnt=t=>today.filter(x=>tabOf(x)===t&&(t!=="other"||isFocus(x.tkr))).length;
+  const today=S.universe.filter(u=>u.seg!=="OPT").reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]).filter(x=>istDay(x.ts)===istDay(Date.now())), cnt=t=>today.filter(x=>tabOf(x)===t&&(t!=="other"||isFocus(x.tkr))).length;
   const pick=it=>{ if(S.tab!==it.v) setTab(it.v); };
   const sc=XS.scalp.cache?Object.values(XS.scalp.cache).reduce((t,r)=>t+r.sigs.filter(x=>x.day===istDay(Date.now())).length,0):null;
   const fl=FN.d?FN.d.signals.filter(x=>x.state==="ACTIVE").length:null;
@@ -4037,7 +4110,8 @@ const tick05=v=>Math.max(0.05,Math.round(v*20)/20);
 const sigKey=s=>S.tf+"|"+s.tkr+"|"+s.ts+"|"+s.side+(s.grade==="N"?"|N":s.grade==="T"?"|T":s.grade==="O"?"|O":"");
 const pm=v=>v>=100?nf(v,1):nf(v,2);
 function homeSignals(){
-  const all=S.universe.filter(u=>u.seg!=="OPT"&&u.fo!==false).reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);   // call / put buys only: instruments with options
+  const tday=istDay(Date.now());                                  // today's signals only (BTST, on its own tab, keeps overnight holds)
+  const all=S.universe.filter(u=>u.seg!=="OPT"&&u.fo!==false).reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]).filter(s=>istDay(s.ts)===tday);   // call / put buys only: instruments with options
   const live=s=>{ const t=S.otr[sigKey(s)]; return (t&&t.entry!=null?t.state:s.res.state)==="ACTIVE"; };
   const want=S.tab==="active"?(x=>live(x)&&sessionOpen(uni(x.tkr))&&(tabOf(x)!=="other"||isFocus(x.tkr))):S.tab==="today"?(x=>tabOf(x)!=="other"||isFocus(x.tkr))
     :S.tab==="other"?(x=>tabOf(x)==="other"&&isFocus(x.tkr)):(x=>tabOf(x)===S.tab);
@@ -4156,8 +4230,8 @@ function tradeModel(s){
   if(live&&ind&&b.length){ const n=b.length-2, it=S.ctx[s.tkr]&&S.ctx[s.tkr].E.int.trend[n], e=ind.e20[n];
     const against=!!(n>s.i&&(it===-d||(e!=null&&d*(b[n].c-e)<0)));
     warn=against&&d*(now-s.entry)<0; rev=against&&s.res.hit>=1&&d*(now-s.entry)>0; }
-  return { opt:false, d, f:v=>px(v,u), name:s.sym, chip:s.side, chipCol:d>0?C.up:C.dn, verb:d>0?"Buy":"Sell",
-    sub:`${u.seg==="MCX"?"Futures":u.seg==="IDX"?"Index":"Share"} price levels · ${when}`+(t&&t.state==="LOADING"?" · finding the option…":u.fo?" · option price not available":""),
+  return { opt:false, d, f:v=>px(v,u), name:s.sym, chip:d>0?"CALL":"PUT", chipCol:d>0?C.up:C.dn, verb:"Entry",
+    sub:`Buy ${d>0?"CALL (CE)":"PUT (PE)"} · levels below are on the ${u.seg==="MCX"?"future":u.seg==="IDX"?"index":"share"} price until the option contract loads · ${when}`+(t&&t.state==="LOADING"?" · finding the option…":u.fo?" · option price not available right now":""),
     entry:s.entry, sl:s.sl, t1:s.t1, t2:s.t2, t3:s.t3, now, hit:s.res.hit, active:live,
     safe:s.res.stop!=null?s.res.stop:s.sl, warn, rev,
     why:st.startsWith("Stopped")?"STOP":st.startsWith("Breakeven")?"COST":st.startsWith("Trailed")?"TRAIL":st.startsWith("T3")?"T3":"END",
@@ -4169,10 +4243,10 @@ function shareSignal(s,m){
   if(m.opt){ const ex=new Date(m.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short"}).toUpperCase();
     return `${s.sym} - ${ex} EXPIRY\nBUY ${m.strike} ${m.ty} @ ${sn(m.entry)}\nSL - ${sn(m.sl)}\nT1/T2/T3 - ${sn(m.t1)}/${sn(m.t2)}/${sn(m.t3)}`; }
   const u=uni(s.tkr);
-  return `${s.sym} - ${u.seg==="MCX"?"FUTURES":u.seg==="IDX"?"INDEX":"SHARE"} LEVELS\n${m.verb.toUpperCase()} @ ${sn(m.entry)}\nSL - ${sn(m.sl)}\nT1/T2/T3 - ${sn(m.t1)}/${sn(m.t2)}/${sn(m.t3)}`;
+  return `${s.sym} - BUY ${m.d>0?"CALL (CE)":"PUT (PE)"}\n(option not picked yet; ${u.seg==="MCX"?"future":u.seg==="IDX"?"index":"share"} levels)\nENTRY @ ${sn(m.entry)}\nSL - ${sn(m.sl)}\nT1/T2/T3 - ${sn(m.t1)}/${sn(m.t2)}/${sn(m.t3)}`;
 }
 function shareUpdate(s,m){
-  const head=m.opt?`${s.sym} ${m.strike} ${m.ty}`:`${s.sym} ${m.verb.toUpperCase()}`;
+  const head=m.opt?`${s.sym} ${m.strike} ${m.ty}`:`${s.sym} ${m.d>0?"CALL":"PUT"}`;
   if(m.active){
     if(m.rev) return `${head}\n⚠️ EXIT NOW near ${sn(m.now)} to book profit. Trailing SL ${sn(m.safe)}`;
     if(m.warn) return `${head}\n⚠️ Turning against us. Exit near ${sn(m.now)}, don't wait for SL ${sn(m.sl)}`;
@@ -4807,11 +4881,11 @@ function renderCards(){
     const tg=n=>s.res.hit>=n?C.up:C.fg;
     const o=s.opt;
     return `<button class="card${on?" on":""}" data-id="${s.id}" data-tkr="${s.tkr}">
-      <div class="c1"><span class="sd" style="background:${col}">${s.side}</span>
+      <div class="c1"><span class="sd" style="background:${col}">${u.fo===false?s.side:s.side==="BUY"?"CALL":"PUT"}</span>
         <span class="nm">${esc(s.sym)}</span>
         <span class="st" style="color:${t};border-color:${t}">${s.res.state==="ACTIVE"?"Active":"Closed"}</span></div>
       <div class="c2">${hhmm(s.ts)} IST · ${ago(s.ts)} · ${esc(s.res.status)}</div>${emaRow(s.ema)}
-      <div class="lvls">${lv("Entry",px(s.entry,u),C.key)}${lv("Stop",px(s.sl,u),C.dn)}
+      <div class="lvls">${lv(u.fo===false?"Entry":(u.seg==="MCX"?"Future":u.seg==="IDX"?"Index":"Share")+" entry",px(s.entry,u),C.key)}${lv("Stop",px(s.sl,u),C.dn)}
         ${lv("Target 1",px(s.t1,u),tg(1))}${lv("Target 2",px(s.t2,u),tg(2))}${lv("Target 3",px(s.t3,u),tg(3))}</div>
       ${o?`<div class="opt">Option to buy: <b style="color:${col}">${o.ty==="CE"?"CALL":"PUT"}</b> · ${esc(s.tkr)} ${o.strike} ${o.ty}</div>`:""}
       ${on?`<div class="more">Result so far: <b style="color:${s.res.R>=0?C.up:C.dn}">${(s.res.R>=0?"+":"")+s.res.R.toFixed(2)}R</b>
@@ -4841,7 +4915,7 @@ function renderSide(){
   const lv=(k,v,c)=>`<div class="lv"><span>${k}</span><span style="color:${c||C.fg}">${v}</span></div>`;
   el.innerHTML=`<div class="hd">Trade plan</div><div class="sig">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-      <span class="tag" style="background:${col};color:#fff">${s.side}</span>
+      <span class="tag" style="background:${col};color:#fff">${u.fo===false?s.side:s.side==="BUY"?"CALL":"PUT"}</span>
       <h3>${esc(s.sym)}</h3></div>
     <div class="m" style="font-size:11px;color:${C.low};margin-bottom:10px">
       ${esc(s.id)} · posted ${hms(s.ts)} · ${ago(s.ts)}</div>
@@ -4852,7 +4926,7 @@ function renderSide(){
     ${lv("Target 1",px(s.t1,u),s.res.hit>=1?C.up:C.mid)}
     ${lv("Target 2",px(s.t2,u),s.res.hit>=2?C.up:C.mid)}
     ${lv("Target 3",px(s.t3,u),s.res.hit>=3?C.up:C.mid)}
-    ${lv("Risk / share",px(s.risk,u))}${lv("Reward : risk to T1",s.rr.toFixed(1)+" : 1",s.rr>=2?C.up:C.fg)}
+    ${lv("Risk (on price)",px(s.risk,u))}${lv("Reward : risk to T1",s.rr.toFixed(1)+" : 1",s.rr>=2?C.up:C.fg)}
     ${lv("Open P&L",(s.res.R>=0?"+":"")+s.res.R.toFixed(2)+"R", s.res.R>=0?C.up:C.dn)}
     <div style="margin-top:12px" class="m">
       <span style="font-size:10.5px;color:${C.low}">GRADE</span> <b style="color:${s.grade==="A"||s.grade==="T"?C.up:s.grade==="N"||s.grade==="O"?C.key:C.warn}">${s.grade==="N"?"Normal":s.grade==="T"?"A (trendline)":s.grade==="O"?"Opening range":s.grade}</b>
@@ -4878,8 +4952,9 @@ function renderSide(){
 
 const COLS=["Symbol","Side","Posted","Age","Entry","Stop","T1","T2","T3","R:R","Grade","Option","State","Status","R"];
 function rows(){
-  let r = S.scope==="ONE" ? (S.sigs[S.tkr]||[])
-    : S.universe.reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[]);
+  const tday=istDay(Date.now());
+  let r = (S.scope==="ONE" ? (S.sigs[S.tkr]||[])
+    : S.universe.reduce((a,u)=>a.concat(S.sigs[u.tkr]||[]),[])).filter(s=>istDay(s.ts)===tday);     // today's signals only
   if(S.state!=="ALL") r=r.filter(s=>s.res.state===S.state);
   return r.slice().sort((a,b)=>b.ts-a.ts);
 }
@@ -4895,7 +4970,7 @@ function renderBlotter(){
     const u=uni(s.tkr), col=s.side==="BUY"?C.up:C.dn, t=tone(s.res);
     return `<tr class="${S.picked&&S.picked.id===s.id?"on":""}" data-id="${s.id}" data-tkr="${s.tkr}">
       <td style="color:${C.fg}">${esc(s.sym)}</td>
-      <td><span class="tag" style="background:${col};color:#fff">${s.side}</span></td>
+      <td><span class="tag" style="background:${col};color:#fff">${u.fo===false?s.side:s.side==="BUY"?"CALL":"PUT"}</span></td>
       <td>${hms(s.ts)}</td><td class="low">${ago(s.ts)}</td>
       <td style="color:${C.key}">${px(s.entry,u)}</td>
       <td style="color:${C.dn}">${px(s.sl,u)}</td>
@@ -4984,6 +5059,10 @@ async function loadChain(tkr,expiry){
 }
 function drawChain(d){
   const u=uni(d.tkr);
+  let note=document.getElementById("ocNote");
+  if(!note){ const ex=document.getElementById("ocExp"); if(ex&&ex.parentElement){ note=document.createElement("div"); note.id="ocNote"; note.className="sub"; note.style.margin="6px 0";
+    ex.parentElement.insertAdjacentElement("afterend",note); } }
+  if(note){ note.textContent=d.note||""; note.hidden=!d.note; }
   const maxCe=Math.max(...d.rows.map(r=>r.ce.oi))||1, maxPe=Math.max(...d.rows.map(r=>r.pe.oi))||1;
   const ceOI=d.rows.reduce((s,r)=>s+r.ce.oi,0), peOI=d.rows.reduce((s,r)=>s+r.pe.oi,0);
   let maxPain=d.atm, best=Infinity;
