@@ -151,7 +151,7 @@ They use closed candles only, so they never change after they appear. Being loos
 - The server scans them all once after each 5-minute candle closes, with exactly the same rules as the Strict, Other and Normal tabs (it reads them from index.html, so there is one copy). One scan serves every device; the page only reads the result.
 - Each signal shows the option to buy (strike nearest the price, nearest expiry with more than half a day left), its premium when the signal was found, premium stop and three targets (estimated from its implied volatility), the premium now, the underlying's levels, and why. Copy for WhatsApp in the usual format; View on chart opens any of them.
 - Filters: Live now / All today, All types / Strict / Other / Normal, and a name filter. Setups confirmed but waiting for entry are listed at the top.
-- The scan is paced at about 100 Fyers requests a minute so the pages' own requests still fit under Fyers' 200 a minute. It runs on the Fyers login of whoever used the site most recently, and pauses if nobody has used the site for 4 hours.
+- The scan reads prices from the live WebSocket feed, so it costs no requests after each instrument's history has been fetched once that day (it uses at most half of the per-minute budget while doing that). Without the WebSocket it runs every 30 minutes. It runs on the Fyers login of whoever used the site most recently, and pauses if nobody has used the site for 4 hours.
 - On the free Render plan the server has little CPU; a full scan of about 220 instruments took about 3.5 minutes in testing, inside the 5-minute candle.
 - The Strict, Other and Normal tabs now show only instruments with options, so every signal there is a CALL or PUT buy.
 
@@ -230,6 +230,12 @@ Every signal is checked against the daily EMAs before it is shown: Strict, Other
 - The chart page has a "Daily EMAs" panel with each EMA's value, whether price is above or below it, the stage, and the score for a call and for a put.
 - If daily history isn't available (a new listing, or Fyers didn't answer), the card says "not checked" instead of guessing, and the signal is not dropped.
 
+## Watchlist and backup charts
+
+- **Watchlist:** the pages load and refresh only NIFTY 50, BANK NIFTY, SENSEX, CRUDE OIL, NATURAL GAS, HDFC BANK, RELIANCE, ICICI BANK and SBIN. Other instruments (FIN NIFTY, gold, silver and so on) stay known, so Telegram calls, My trades and search still work for them; they load only when opened. The All F&O tab still scans every instrument with options. A symbol that doesn't load is retried quietly on the next update; there is no "symbols failed to load" message.
+- **When Fyers is slow or fails,** the chart page shows buttons that open the same symbol on NSE India, Yahoo Finance, Screener (shares), GoCharting and TradingView, and can show TradingView's chart on the page.
+- **Why buttons and not data:** NSE's terms forbid "systematic or automated data collection", Yahoo's forbid collecting data "using any automated means", Screener allows "personal, non-commercial transitory viewing only", and GoCharting allows data access only through its official methods (which need an account). So the site never reads those sites; the buttons just open their pages in your browser. TradingView allows its widgets on other sites for display only, with its attribution kept; its chart and its buy / sell rating ("Second opinion", loaded only when you tap it) are shown, never read or used in this site's signals.
+
 ## Audit of the previous signal engine (October 2026)
 
 - **Repainting and look-ahead:** order blocks, liquidity sweeps and swing points were worked out with later candles. On test data about 5% of signals shown live later changed or vanished, and the Results page was flattered.
@@ -246,13 +252,22 @@ All of these are addressed by the new engine above.
 Everything the site uses is free; nothing paid is switched on, and if a free service stops working the page says so rather than moving to a paid one. The full list, with each service's free limits and status, is at the bottom of the **Results** page.
 
 - **Render (hosting), free plan:** 750 hours a month (enough for this one site all month), sleeps after 15 minutes without visitors, and comes with a monthly outbound-data allowance. Render charges only if that allowance is exceeded and a payment card is saved on your Render account; with no card it suspends the site until the next month instead. To be sure nothing is ever billed, keep no card on the account (Render → Account → Billing). This site sends little data (about 70 KB per page load and a few kilobytes per price update).
-- **Fyers API:** free (prices, candles and option chains included), with request limits that the site keeps under.
+- **Fyers API, Standard plan:** free (prices, candles, option chains and the live data WebSocket included), with limits of 50 requests a minute and 5,000 a day that the site keeps under (see below). Fyers' paid Prime plan has higher limits; the site does not need it and nothing switches it on. The `fyers-api-v3` package that opens the WebSocket is Fyers' own free code, installed by Render from package.json.
 - **News RSS feeds, Fyers symbol lists, Telegram public preview pages, Telegram Bot API, Google Fonts:** free.
 - **Optional:** UptimeRobot's free plan (keeps the site awake). Paid Render plans or any paid service are never needed for the site to work.
 
 ## Fyers request limits
 
-Fyers allows about 10 requests a second, 200 a minute and a daily total. The server keeps every visitor together under 6 a second and 150 a minute. If Fyers still answers "too many requests", it pauses for 30 seconds (longer if it repeats) and keeps serving the last good prices, marked as older, instead of failing. While all markets are closed the page checks only every 5 minutes and the server reuses its data for up to 30 minutes, so a page left open overnight no longer uses up the daily allowance. `/healthz` shows requests in the last minute and today.
+Fyers' free **Standard** API plan allows **5 data requests a second, 50 a minute and 5,000 a day** (quotes, option chain and history all count). Going over the per-minute limit **more than three times in a day blocks the app's data for the rest of that day** — this is what happened on 19 Oct 2026, when the site was still pacing itself to the older 150-a-minute limit.
+
+How the site stays inside the limits now:
+
+- **Live prices over the Fyers WebSocket.** The server opens the free Fyers data WebSocket (official `fyers-api-v3` package) and receives price ticks for every instrument it follows, up to 3,000 symbols (Fyers allows 5,000). Ticks are **not** counted as requests. The server builds 1-minute candles from them and serves charts, quotes, signals and the All F&O scan from memory.
+- **History once a day.** Each instrument's past candles are fetched once a day (and again after the WebSocket reconnects) and joined to the live candles.
+- **A hard budget.** At most **40 requests a minute** and **4,500 a day**, spread over the trading day (09:00–23:30 IST) so the morning can't use up the evening's share. The background scan gets less than half. When a request can't be sent, the last good data is shown. Change the limits with `FYERS_PER_MIN` and `FYERS_PER_DAY` on Render only if your Fyers plan is higher.
+- **Careful after a refusal.** After a "too many requests" answer nothing is sent for 65 seconds; after a second one in a day the per-minute pace is halved; if Fyers keeps refusing, the server treats the app as blocked for the day, stops asking (one check every 30 minutes) and the page says so plainly.
+- **If the WebSocket can't connect,** the site falls back to normal requests at a slower pace: prices about every minute, the chart you are looking at every minute, other instruments every 10 minutes, and the All F&O scan every 30 minutes. The status pill then reads "Live · saving Fyers requests".
+- The count of requests used today survives a restart of the server process (not a redeploy). `/healthz` shows requests in the last minute and today, the day's allowance, how many were saved, and the WebSocket's state.
 
 ## Limits to know
 

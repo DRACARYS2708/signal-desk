@@ -268,6 +268,10 @@ body.simple header h1{font-size:19px}
 .fr::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--low)}
 .fr.live::before{background:var(--up)}.fr.closed::before{background:var(--mid)}.fr.stale::before,.fr.cached::before{background:var(--warn)}
 .ana{padding:16px;border-top:1px solid var(--line)}
+.fbk{margin:10px 16px;padding:12px 14px;border-radius:12px;border:1px solid var(--warn);background:color-mix(in srgb, var(--warn) 9%, transparent);font-size:14px;line-height:1.5}
+.fbkl{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.fbkl .btn{text-decoration:none}
+.fbkc{height:460px;margin-top:12px}.fbkc .tradingview-widget-copyright{font-size:12px;margin-top:4px}.fbkc .tradingview-widget-copyright a{color:var(--key)}
+.tvbox .tradingview-widget-copyright{font-size:12.5px;margin-top:6px}.tvbox .tradingview-widget-copyright a{color:var(--key)}
 .ana-hd{display:flex;gap:10px 16px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px}
 .ana-hd h3{font-size:20px;font-weight:700}
 .ana-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}
@@ -813,10 +817,12 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
       <button class="btn" id="chainBtn">Option chain</button>
     </div>
     <div class="rdo adv" id="rdo"></div>
+    <div id="fbk" hidden></div>
     <div id="box"><canvas id="cv"></canvas><div id="ohlc" class="adv"></div>
       <div class="zoom"><button id="zOut" title="Show more candles" aria-label="Zoom out">−</button><button id="zIn" title="Show fewer candles" aria-label="Zoom in">+</button></div></div>
 
     <section class="ana" id="ana"></section>
+    <section class="ana tvbox" id="tvbox"></section>
     <section class="simple-only">
       <div class="cards-hd"><h3 id="cardsTitle">Signals today</h3>
         <div class="seg" id="cardState"></div><div class="seg" id="cardScope"></div></div>
@@ -965,7 +971,9 @@ async function boot(){
     const fresh = await api("/api/instruments", 60000);
     if(!fresh.length) throw new Error("the server returned an empty instrument list");
     const extra=S.universe.filter(u=>u.seg==="OPT"||u.searched);          // keep options and searched symbols you opened
-    S.universe=fresh.concat(extra.filter(x=>!fresh.some(f=>f.tkr===x.tkr)));
+    // only the watchlist is loaded and refreshed; the rest stay known for Telegram calls, My trades and search
+    S.known=fresh; const watch=fresh.filter(u=>u.watch!==false);
+    S.universe=watch.concat(extra.filter(x=>!watch.some(f=>f.tkr===x.tkr)));
     if(!S.universe.some(u=>u.tkr===S.tkr)) S.tkr = S.universe[0].tkr;
     document.getElementById("setup").style.display="none";
     document.getElementById("nav").hidden=false; document.getElementById("srch").hidden=false;
@@ -977,13 +985,14 @@ async function boot(){
     await refreshAll();
     S.fromCache=null;
     loadNews(true);                       // in the background: headlines for warnings on signals
-    setConn(S.failedLoads?"err":"ok", S.failedLoads?liveLabel()+" · "+S.failedLoads+" symbols failed to load":liveLabel());
+    setConn("ok", liveLabel());              // a symbol that didn't load is simply tried again on the next update
     startPolling(); xPoll(); setTimeout(()=>loadFno(true),3000);
     if(tguBlob()) setTimeout(()=>{ tguStatus().then(()=>loadTg(true)); },5000); setTimeout(()=>{ if(Date.now()>(S.pauseUntil||0)&&S.universe.some(u=>sessionOpen(u))){ loadScalp(true); setTimeout(()=>loadBtst(true),30000); } },60000);   // counts for the Scalp and BTST tabs
   }catch(e){
     if(e.status===401){ S.ready=false; S.cacheShown=false; return boot(); }
-    const busy=/rate limit|not answering|did not answer|slowing down/i.test(e.message);
-    if(S.cacheShown||S.ready){ setConn("err",busy?"Fyers is busy · showing saved data · retrying in 30 s":"Data feed problem: "+e.message+" · retrying"); setTimeout(boot,busy?30000:15000); return; }
+    const busy=/rate limit|not answering|did not answer|slowing down/i.test(e.message), stop=FY_STOP.test(e.message);
+    if(S.cacheShown||S.ready){ setConn("err",stop?e.message:busy?"Fyers is busy · showing saved data · retrying in 30 s":"Data feed problem: "+e.message+" · retrying"); setTimeout(boot,stop?120000:busy?30000:15000); return; }
+    if(stop){ showSetup(e.message+" Trying again by itself every 2 minutes."); setConn("err","Fyers paused"); setTimeout(boot,120000); return; }
     if(busy){ showSetup("Fyers asked this site to slow down for a moment (too many requests). Trying again by itself in 30 seconds — no need to do anything."); setConn("err","Fyers busy · retrying"); setTimeout(boot,30000); return; }
     showSetup("Couldn't load data from "+S.api+" — "+e.message+".");
     setConn("err","Offline");
@@ -993,8 +1002,12 @@ async function boot(){
    than labelling delayed data "Live". */
 function liveLabel(){
   const f=S.feed||{};
-  return f.delayed ? "Delayed "+(f.delayNote||"") : "Live";
+  if(f.delayed) return "Delayed "+(f.delayNote||"");
+  const fd=f.feed||{};
+  // the live WebSocket feed, or normal requests at a slower pace to stay inside Fyers' limits
+  return fd.state==="off"||fd.state==="unavailable"||(fd.state==="closed"&&S.quotesFeed!=="live") ? "Live · saving Fyers requests (prices about every minute)" : "Live";
 }
+const FY_STOP=/paused this app|allowance/i;          // Fyers paused the app, or the day's request allowance is used
 function showSetup(msg, login){
   const lb=document.getElementById("loginBtn"); lb.hidden=!login; if(login) lb.href=S.api+login;
   ["homePage","stratPage","resPage","newsPage"].forEach(id=>document.getElementById(id).hidden=true);
@@ -1032,7 +1045,8 @@ function startPolling(){
     if(document.hidden&&(hidTick++%4)) return;  // in the background: every 20 s instead of every 5 s
     busy=true;
     try{
-      const q = await api(quotesPath()); S.quotes = q.quotes; S.quotesAt = q.ts||Date.now();
+      const q = await api(quotesPath()); S.quotes = q.quotes; S.quotesAt = q.ts||Date.now(); S.quotesFeed=q.feed||null;
+      if(turn%12===0) api("/api/status").then(st=>{ if(st&&st.authenticated) S.feed=st; }).catch(()=>{});   // feed state (costs no Fyers request)
       await loadCandles(S.tkr);                 // active symbol on every tick
       try{ await loadMTF(S.tkr); }catch(e){}
       recompute(S.tkr);
@@ -1052,11 +1066,13 @@ function startPolling(){
       pumpTrades();                             // option contracts behind the home-page signals
       S.pollFails=0; S.lastErr=null;
       const age=Date.now()-(S.quotesAt||Date.now());
-      setConn("ok", age>60000?"Prices from "+hhmm(S.quotesAt)+" · updating":liveLabel());
+      if(S.feed&&S.feed.note) setConn("err",S.feed.note);
+      else setConn("ok", age>90000?"Prices from "+hhmm(S.quotesAt)+" · updating":liveLabel());
     }catch(e){
       if(e.status===401){ clearInterval(pollTimer); pollTimer=null; S.ready=false; boot(); return; }   // login ran out
       S.pollFails=(S.pollFails||0)+1; S.lastErr=e.message;
-      if(/rate limit|slowing down/i.test(e.message)){ S.pauseUntil=Date.now()+30000; setConn("err","Fyers is busy · showing prices from "+hhmm(S.quotesAt||Date.now())+" · resuming shortly"); }
+      if(FY_STOP.test(e.message)){ S.pauseUntil=Date.now()+60000; setConn("err",e.message+(S.quotesAt?" (prices from "+hhmm(S.quotesAt)+")":"")); }
+      else if(/rate limit|slowing down/i.test(e.message)){ S.pauseUntil=Date.now()+30000; setConn("err","Fyers is busy · showing prices from "+hhmm(S.quotesAt||Date.now())+" · resuming shortly"); }
       // one missed update is normal on a busy connection; only say something if it keeps happening
       else if(S.pollFails>=3) setConn("err","Prices from "+hhmm(S.quotesAt||Date.now())+" · "+(e.status===0?e.message:"server: "+e.message)+" · retrying");
     }
@@ -1070,7 +1086,7 @@ function quotesPath(){
   return "/api/quotes"+(x.length?"?x="+encodeURIComponent(x.join(",")):"");
 }
 async function loadCandles(tkr){
-  const d = await api("/api/candles?tkr="+encodeURIComponent(tkr)+"&interval="+S.tf);
+  const d = await api("/api/candles?tkr="+encodeURIComponent(tkr)+"&interval="+S.tf+(tkr===S.tkr?"&hot=1":""));
   S.bars[tkr] = toBars(d.candles); S.barsAt[tkr]=Date.now(); S.raw[tkr]=d.candles; saveCache();
 }
 /* Larger candles made from smaller ones, aligned to the session open the way the exchange's own are. */
@@ -2234,9 +2250,10 @@ function mtParse(raw){
   let t=" "+String(raw||"").toLowerCase().replace(/[,;|]/g," ").replace(/\s+/g," ")+" ";
   const out={raw:String(raw||"").trim()};
   // instrument: the longest name that matches, from the alias list or the watchlist
-  const names=MT_ALIAS.concat(S.universe.filter(u=>u.seg!=="OPT").flatMap(u=>[[String(u.sym||"").toLowerCase(),u.tkr],[String(u.tkr).toLowerCase(),u.tkr]]))
+  const known=S.universe.concat((S.known||[]).filter(k=>!S.universe.some(u=>u.tkr===k.tkr)));
+  const names=MT_ALIAS.concat(known.filter(u=>u.seg!=="OPT").flatMap(u=>[[String(u.sym||"").toLowerCase(),u.tkr],[String(u.tkr).toLowerCase(),u.tkr]]))
     .filter(([n])=>n&&n.length>=2).sort((a,b)=>b[0].length-a[0].length);
-  for(const [n,k] of names){ const re=new RegExp("(^|[^a-z0-9&])"+n.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"(?=[^a-z0-9&]|$)"); if(re.test(t)&&S.universe.some(u=>u.tkr===k)){ out.tkr=k; t=t.replace(re,"$1 "); break; } }
+  for(const [n,k] of names){ const re=new RegExp("(^|[^a-z0-9&])"+n.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"(?=[^a-z0-9&]|$)"); if(re.test(t)&&known.some(u=>u.tkr===k)){ out.tkr=k; t=t.replace(re,"$1 "); break; } }
   const st=/(\d{2,6}(?:\.\d+)?)\s*(ce|pe|call|put)s?\b/.exec(t);
   if(st){ out.strike=+st[1]; out.ty=/^c/.test(st[2])?"CE":"PE"; t=t.replace(st[0]," "); }
   else { const ty=/\b(ce|pe|call|put)s?\b/.exec(t); if(ty){ out.ty=/^c/.test(ty[1])?"CE":"PE"; t=t.replace(ty[0]," "); } }
@@ -2412,7 +2429,7 @@ function renderFno(){
   const pend=(d.pending||[]).filter(p=>FN.kind==="all"||(FN.kind==="strict"?p.grade==="A":FN.kind==="other"&&p.grade!=="A"))
     .filter(p=>!FN.q||p.sym.toLowerCase().includes(FN.q));
   let html=`<div class="bbar">${d.running?`Scanning now: ${d.done} of ${d.total} instruments…`:`Scanned <b>${d.instruments}</b> instruments with options`}`+
-    ` · last scan ${d.at?hhmm(d.at):"—"} IST · next about ${hhmm(nextScan)}${d.failed?` · ${d.failed} could not be read`:""}</div>`+
+    ` · last scan ${d.at?hhmm(d.at):"—"} IST · next about ${hhmm(nextScan)}${d.failed?` · ${d.failed} could not be read`:""}${d.note?` · <b style="color:${C.warn}">${esc(d.note)}</b>`:""}</div>`+
     `<div class="fnof"><div class="seg" id="fnoShow"></div><div class="seg" id="fnoKind"></div>`+
     `<input id="fnoQ" type="search" placeholder="Filter by name, e.g. TATA" value="${esc(FN.q)}" autocomplete="off"></div>`;
   if(pend.length) html+=`<div class="waits"><h4>Confirmed, waiting for entry (${pend.length})</h4>`+pend.map(p=>`<div class="wait"><b>${esc(p.sym)}</b>`+
@@ -3601,8 +3618,82 @@ function levelsNear(tkr){
   const pick=(side,dir)=>open.filter(L=>L.side===side&&dir*(L.px-last)>0).sort((a,b2)=>dir*(a.px-b2.px)).slice(0,2);
   return {up:pick("BSL",1), dn:pick("SSL",-1)};
 }
+/* ---- TradingView's own rating, shown as a second opinion (free widget, display only) ----
+   TradingView allows its widgets on other sites for display, with its attribution kept. This site
+   cannot read the widget's numbers and does not use them in its own signals. */
+const TV_IDX={NIFTY:"NSE:NIFTY",BANKNIFTY:"NSE:BANKNIFTY",FINNIFTY:"NSE:CNXFINANCE",MIDCPNIFTY:"NSE:NIFTY_MID_SELECT",SENSEX:"BSE:SENSEX"};
+function tvSymbol(tkr){
+  const u=uni(tkr)||{};
+  if(TV_IDX[tkr]) return TV_IDX[tkr];
+  if(u.seg==="OPT") return null;                                   // single option contracts: not in TradingView's widgets
+  if(u.seg==="MCX") return "MCX:"+tkr+"1!";                       // nearest MCX future (continuous contract)
+  let m=/^(NSE|BSE):([A-Z0-9&_-]+?)-(EQ|BE|A|B|INDEX)$/.exec(tkr); if(m) return m[3]==="INDEX"?null:m[1]+":"+m[2].replace(/&/g,"_");
+  m=/^MCX:([A-Z]+)\d{2}[A-Z]{3}FUT$/.exec(tkr); if(m) return "MCX:"+m[1]+"1!";
+  if(/^[A-Z0-9&-]+$/.test(tkr)) return "NSE:"+tkr.replace(/&/g,"_");
+  return null;
+}
+function renderTv(){
+  const el=document.getElementById("tvbox"); if(!el||S.page!=="chart") return;
+  const sym=tvSymbol(S.tkr), light=document.documentElement.dataset.theme==="light";
+  const iv={1:"1m",3:"5m",5:"5m",15:"15m",30:"30m",60:"1h",240:"4h"}[S.tf]||"5m";
+  const key=sym+"|"+light+"|"+iv+"|"+!!S.tvRateOn; if(el.dataset.k===key) return; el.dataset.k=key;
+  const u=uni(S.tkr)||{};
+  if(sym&&!S.tvRateOn){ el.innerHTML=`<div class="ana-card"><h4>Second opinion</h4><div class="sub" style="margin:0 0 8px">TradingView's own buy / sell rating for ${esc(sym)}. It loads from TradingView only when you ask, so this page stays quick, and it is not used in this site's signals.</div><button class="btn" id="tvRateGo">Show TradingView's rating</button></div>`;
+    el.querySelector("#tvRateGo").onclick=()=>{ S.tvRateOn=true; renderTv(); }; return; }
+  if(!sym){ el.innerHTML=`<div class="ana-card"><h4>TradingView's rating (second opinion)</h4><div class="sub" style="margin:0">Not available for ${esc(u.sym||S.tkr)}: TradingView's free widget covers indices, shares and MCX futures, not single option contracts. Open the underlying instead.</div></div>`; return; }
+  el.innerHTML=`<div class="ana-card"><h4>TradingView's rating for ${esc(sym)} (second opinion)</h4>`+
+    `<div class="sub" style="margin:0 0 8px">Worked out by TradingView from its own moving averages and oscillators, not by this site, and not used in this site's signals. When it disagrees with the site's signal above, treat the trade with more caution. TradingView may not cover every symbol; if the box stays empty, TradingView may be blocked on this network or not offer this symbol.</div>`+
+    `<div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div>`+
+    `<div class="tradingview-widget-copyright"><a href="https://in.tradingview.com/symbols/${encodeURIComponent(sym.replace(":","-"))}/technicals/" rel="noopener nofollow" target="_blank">Technical analysis by TradingView</a></div></div></div>`;
+  const sc=document.createElement("script"); sc.type="text/javascript"; sc.async=true;
+  sc.src="https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js";
+  sc.text=JSON.stringify({interval:iv,width:"100%",isTransparent:true,height:420,symbol:sym,showIntervalTabs:true,displayMode:"single",locale:"in",colorTheme:light?"light":"dark"});
+  sc.onerror=()=>{ const w=el.querySelector(".tradingview-widget-container__widget"); if(w) w.innerHTML=`<div class="sub" style="margin:0">TradingView could not be reached from this network.</div>`; };
+  el.querySelector(".tradingview-widget-container").appendChild(sc);
+}
+/* ---- When Fyers is slow or fails: a chart to look at, from sites you can open yourself ----
+   NSE, Yahoo, Screener and GoCharting do not allow other sites to collect their data, so this site never
+   reads them; it gives links that open the same symbol there. TradingView allows its chart widget on other
+   sites for display only (with its attribution), so its chart is shown here; the site does not read it. */
+const YH={NIFTY:"%5ENSEI",BANKNIFTY:"%5ENSEBANK",SENSEX:"%5EBSESN"};
+function altLinks(tkr){
+  const u=uni(tkr)||{}, eqm=/^(?:NSE:)?([A-Z0-9&-]+?)(?:-EQ)?$/.exec(tkr), name=u.seg==="EQ"&&eqm?eqm[1]:(/^NSE:([A-Z0-9&-]+)-EQ$/.exec(tkr)||[])[1];
+  const L=[];
+  if(name){ L.push(["NSE India","https://www.nseindia.com/get-quotes/equity?symbol="+encodeURIComponent(name)]);
+    L.push(["Yahoo Finance","https://finance.yahoo.com/quote/"+encodeURIComponent(name)+".NS/"]);
+    L.push(["Screener","https://www.screener.in/company/"+encodeURIComponent(name)+"/"]); }
+  else if(u.seg==="IDX"){ L.push(["NSE India","https://www.nseindia.com/market-data/live-market-indices"]);
+    if(YH[tkr]) L.push(["Yahoo Finance","https://finance.yahoo.com/quote/"+YH[tkr]+"/"]); }
+  L.push(["GoCharting","https://gocharting.com/in"]);
+  const tv=tvSymbol(tkr); if(tv) L.push(["TradingView","https://in.tradingview.com/chart/?symbol="+encodeURIComponent(tv)]);
+  return L;
+}
+function renderFallback(){
+  const el=document.getElementById("fbk"); if(!el||S.page!=="chart") return;
+  const u=uni(S.tkr)||{}, b=S.bars[S.tkr]||[], open=sessionOpen(u);
+  const noBars=!b.length, stale=open&&S.quotesAt&&Date.now()-S.quotesAt>180000, failing=(S.pollFails||0)>=3;
+  if(!(noBars||stale||failing)){ if(!el.hidden){ el.hidden=true; el.innerHTML=""; el.dataset.k=""; } return; }
+  const sym=tvSymbol(S.tkr), light=document.documentElement.dataset.theme==="light", show=noBars||S.tvChartOn;
+  const key=[S.tkr,sym,light,show,noBars,stale,failing].join("|"); if(el.dataset.k===key) return; el.dataset.k=key; el.hidden=false;
+  const why=noBars?"Fyers data for "+esc(u.sym||S.tkr)+" has not loaded":failing?"Fyers is not answering right now":"Fyers prices are late (last at "+hhmm(S.quotesAt)+")";
+  el.innerHTML=`<div class="fbk"><div><b>${why}.</b> The site's own signals for this symbol wait for Fyers data. To check the chart meanwhile:</div>`+
+    `<div class="fbkl">${altLinks(S.tkr).map(([n,h])=>`<a class="btn" href="${h}" target="_blank" rel="noopener">${n} ↗</a>`).join("")}`+
+    (sym&&!noBars?`<button class="btn" id="fbkTv">${S.tvChartOn?"Hide":"Show"} TradingView chart here</button>`:"")+`</div>`+
+    (sym&&show?`<div class="tradingview-widget-container fbkc"><div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div>`+
+      `<div class="tradingview-widget-copyright"><a href="https://in.tradingview.com/chart/?symbol=${encodeURIComponent(sym)}" rel="noopener nofollow" target="_blank">Chart by TradingView</a> · view only, may be delayed, not used in this site's signals</div></div>`
+      :!sym?`<div class="sub" style="margin:6px 0 0">TradingView's chart widget doesn't cover single option contracts; open the underlying instead.</div>`:"")+`</div>`;
+  const t=el.querySelector("#fbkTv"); if(t) t.onclick=()=>{ S.tvChartOn=!S.tvChartOn; renderFallback(); };
+  const box=el.querySelector(".fbkc");
+  if(box){ const sc=document.createElement("script"); sc.type="text/javascript"; sc.async=true;
+    sc.src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+    sc.text=JSON.stringify({autosize:true,symbol:sym,interval:String({1:1,3:3,5:5,15:15,30:30,60:60,240:240}[S.tf]||5),timezone:"Asia/Kolkata",theme:light?"light":"dark",style:"1",locale:"in",allow_symbol_change:false,hide_side_toolbar:true,save_image:false});
+    sc.onerror=()=>{ const w=box.querySelector(".tradingview-widget-container__widget"); if(w) w.innerHTML=`<div class="sub" style="padding:12px">TradingView could not be reached from this network. Use the links above.</div>`; };
+    box.appendChild(sc); }
+}
 function renderAnalysis(){
   const el=document.getElementById("ana"); if(!el||S.page!=="chart") return;
+  try{ renderTv(); }catch(e){}
+  try{ renderFallback(); }catch(e){}
   const u=uni(S.tkr), c=S.ctx[S.tkr], q=S.quotes[S.tkr]||{}, b=S.bars[S.tkr]||[], st=statusOf(S.tkr), ind=S.ind[S.tkr];
   if(!b.length){ el.innerHTML=`<div class="empty">Loading ${esc(u.sym||S.tkr)}…</div>`; return; }
   const f=v=>v==null||!isFinite(v)?"—":px(v,u), n=b.length-2, last=q.ltp!=null?q.ltp:b[b.length-1].c;
@@ -4527,7 +4618,7 @@ cv.addEventListener("wheel",e=>{e.preventDefault();
 },{passive:false});
 
 /* ------------------------------------------------------------------- UI -- */
-const uni=t=>S.universe.find(x=>x.tkr===t)||{};
+const uni=t=>S.universe.find(x=>x.tkr===t)||(S.known||[]).find(x=>x.tkr===t)||{};
 function seg(el,items,isOn,click){
   el.innerHTML="";
   items.forEach(it=>{ const b=document.createElement("button");

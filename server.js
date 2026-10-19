@@ -17,6 +17,11 @@
                                   page opens. Leave it unset for a normal public site.
      PUBLIC_URL        optional   your site address, if the host doesn't provide
                                   it (Render does)
+     FYERS_PER_MIN     optional   most Fyers data requests a minute (default 40;
+                                  Fyers' free Standard plan allows 50)
+     FYERS_PER_DAY     optional   most Fyers data requests a day (default 4500;
+                                  the Standard plan allows 5,000)
+     FYERS_FEED        optional   "off" turns the live WebSocket price feed off
 
    The Fyers app's redirect address must be:  <your site address>/auth/callback
 
@@ -62,7 +67,7 @@ const idx = (name, tkr, sym, step, lot) => ({ name, tkr, seg:"IDX", cands:() => 
 const eq  = (name, tkr, step, lot, alt) => ({ name, tkr, seg:"EQ", cands:() => [`NSE:${tkr}-EQ`].concat(alt || []), step, lot, fo:true });
 const mcx = (name, tkr, step) => ({ name, tkr, seg:"MCX", cands:() => mcxCands(tkr), step, lot:null, fo:true, open:540, close:1410 });
 
-const UNIVERSE = [
+const UNIVERSE = [            // known instruments; only the WATCH ones below are loaded on the pages
   idx("NIFTY 50", "NIFTY", "NSE:NIFTY50-INDEX", 50, 75),
   idx("BANK NIFTY", "BANKNIFTY", "NSE:NIFTYBANK-INDEX", 100, 30),
   idx("FIN NIFTY", "FINNIFTY", "NSE:FINNIFTY-INDEX", 50, 65),
@@ -92,6 +97,11 @@ const UNIVERSE = [
   eq("HDFC AMC", "HDFCAMC", 50, 150),
 ];
 UNIVERSE.forEach(u => { u.open = u.open || 555; u.close = u.close || 930; u.fy = null; });
+/* The watchlist the pages load and refresh: only the instruments asked for (the others above stay
+   known, so Telegram calls, My trades and search can still use them, but they are not loaded or priced
+   unless opened). The All F&O scan covers every instrument with options separately. */
+const WATCH = new Set(["NIFTY", "BANKNIFTY", "SENSEX", "HDFCBANK", "CRUDEOIL", "RELIANCE", "ICICIBANK", "SBIN", "NATURALGAS"]);
+UNIVERSE.forEach(u => { u.watch = WATCH.has(u.tkr); });
 /* A single option contract (a call or a put) can be charted too. It is not in
    the list above; the page asks for it by its Fyers symbol. */
 const OPT_RE = /^(NSE|BSE|MCX):[A-Z0-9&_-]{3,40}(CE|PE)$/;
@@ -105,6 +115,7 @@ const searchedOf = t => {
 };
 const bySym = t => UNIVERSE.find(u => u.tkr === t && u.fy) || optionOf(String(t || "")) || searchedOf(String(t || ""));
 const live = () => UNIVERSE.filter(u => u.fy);
+const watched = () => UNIVERSE.filter(u => u.fy && u.watch);
 
 /* ----------------------------------------------------------------- login -- */
 /* One session per visitor, found by a cookie. Whatever a request does later —
@@ -147,19 +158,56 @@ async function access() {
 }
 
 /* ------------------------------------------------------- Fyers requests -- */
-/* Fyers allows 10 requests a second and 200 a minute. One queue with a gap
-   keeps us well inside both. */
+/* Fyers' free Standard plan allows 5 data requests a second, 50 a minute and 5,000 a day
+   (quotes, option chain and history all count). Going over the per-minute limit more than
+   three times in a day blocks the app's data for the rest of that day. So:
+   - at most 4 a second and FYERS_PER_MIN (40) in any 60 seconds, shared by every visitor;
+   - at most FYERS_PER_DAY (4,500) a day, spread over the trading day (09:00-23:30 IST),
+     so the morning can't use up the evening's share. The background scan gets less than half;
+   - live prices come over the Fyers WebSocket instead (see "live feed" below), which is not
+     counted as requests;
+   - after a "too many requests" answer, nothing is sent for 65 s; if Fyers keeps refusing,
+     the server assumes the app is blocked for today and stops asking (one check every 30 min).
+   When a request can't be sent, callers get the last good data instead of waiting. */
 let tail = Promise.resolve(), lastCall = 0;
-/* Fyers allows 10 requests a second, 200 a minute and 1,00,000 a day. Stay well
-   inside: at most 6 a second and 150 in any 60 seconds, shared by all visitors.
-   After a "too many requests" answer, pause for 30 s (longer if it repeats).
-   If too many requests are already waiting, refuse new ones at once so callers
-   fall back to the last good data instead of waiting minutes. */
-const RL = { perMin: 150, gapMs: 170, sent: [], waiting: 0, maxWaiting: 40, pauseUntil: 0, strikes: 0, day: "", dayCount: 0, limited: 0 };
+const LIM = { perMin: Math.max(5, Math.min(480, +env("FYERS_PER_MIN") || 40)), perDay: Math.max(200, Math.min(480000, +env("FYERS_PER_DAY") || 4500)) };
+const RL = { perMin: LIM.perMin, gapMs: 250, sent: [], waiting: 0, maxWaiting: 40, pauseUntil: 0, strikes: 0, day: "", dayCount: 0, limited: 0,
+  limitedToday: 0, blockedDay: "", lastProbe: 0, denied: 0 };
+const BUDGET_MSG = "Saving Fyers' daily request allowance: showing the last prices for now";
+const BLOCK_MSG = "Fyers has paused this app's data requests for the rest of today (too many requests earlier). Live data returns tomorrow; saved data is shown until then.";
+const USAGE_FILE = require("path").join(require("os").tmpdir(), "signal-desk-fyers-usage.json");
+try { const u = JSON.parse(require("fs").readFileSync(USAGE_FILE, "utf8"));       // survives a restart of the server process
+  if (u.day === new Date(Date.now() + 19800000).toISOString().slice(0, 10)) { RL.day = u.day; RL.dayCount = u.count || 0; RL.limitedToday = u.limited || 0; RL.blockedDay = u.blocked || ""; } } catch (e) {}
+let usageSaveT = null;
+function saveUsage() { if (usageSaveT) return; usageSaveT = setTimeout(() => { usageSaveT = null;
+  try { require("fs").writeFileSync(USAGE_FILE, JSON.stringify({ day: RL.day, count: RL.dayCount, limited: RL.limitedToday, blocked: RL.blockedDay })); } catch (e) {} }, 3000); }
+// how many requests today may have been used by now: an even share of the day, plus a start-up allowance
+function dayAllowance(low) {
+  const x = new Date(Date.now() + 19800000), m = x.getUTCHours() * 60 + x.getUTCMinutes();
+  const frac = Math.min(1, Math.max(0, (m - 540) / 870));
+  const even = LIM.perDay * 0.8 * frac;
+  return low ? Math.min(LIM.perDay * 0.45, even * 0.45 + LIM.perDay * 0.06) : Math.min(LIM.perDay, even + LIM.perDay * 0.15);
+}
+function budgetRefusal(low) {
+  const today = new Date(Date.now() + 19800000).toISOString().slice(0, 10);
+  if (RL.day !== today) { RL.day = today; RL.dayCount = 0; RL.limitedToday = 0; RL.strikes = 0; RL.perMin = LIM.perMin; }
+  if (RL.blockedDay === today) {
+    if (Date.now() - RL.lastProbe > 30 * 60000 && !low) { RL.lastProbe = Date.now(); return null; }   // one check every 30 minutes
+    return BLOCK_MSG;
+  }
+  if (RL.blockedDay && RL.blockedDay !== today) RL.blockedDay = "";
+  if (RL.dayCount >= LIM.perDay) return "Today's Fyers request allowance (" + LIM.perDay + ") is used up; showing the last data until tomorrow.";
+  if (RL.dayCount >= dayAllowance(low)) return BUDGET_MSG;
+  const left = RL.pauseUntil - Date.now();
+  if (left > 3000) return "Fyers rate limit reached; slowing down.";
+  return null;
+}
 const lane = new AsyncLocalStorage();          // "low" = the background scan; pages' own requests always go first
 const Q = { hi: [], lo: [], pumping: false };
 function queued(fn) {
   const low = lane.getStore() === "low";
+  const no = budgetRefusal(low);
+  if (no) { RL.denied++; const e = new Error(no); e.budget = true; return Promise.reject(e); }
   if (!low && Q.hi.length >= RL.maxWaiting) return Promise.reject(new Error("Fyers rate limit reached; slowing down."));
   return new Promise((resolve, reject) => { (low ? Q.lo : Q.hi).push({ fn, resolve, reject }); RL.waiting = Q.hi.length + Q.lo.length; pump(); });
 }
@@ -174,17 +222,22 @@ async function pump() {
       let wait = Math.max(lastCall + RL.gapMs - now, RL.pauseUntil - now, 0);
       if (RL.sent.length >= RL.perMin) wait = Math.max(wait, RL.sent[0] + 60000 - now + 50);
       if (wait > 0) { await sleep(Math.min(wait, 1000)); continue; }
-      const job = Q.hi.length ? Q.hi.shift() : Q.lo.shift(); RL.waiting = Q.hi.length + Q.lo.length;
-      const d = istDay(Date.now()); if (d !== RL.day) { RL.day = d; RL.dayCount = 0; }
-      RL.sent.push(Date.now()); RL.dayCount++; lastCall = Date.now();
+      const isLow = !Q.hi.length, job = isLow ? Q.lo.shift() : Q.hi.shift(); RL.waiting = Q.hi.length + Q.lo.length;
+      const no = budgetRefusal(isLow);
+      if (no) { RL.denied++; const e = new Error(no); e.budget = true; job.reject(e); continue; }
+      RL.sent.push(Date.now()); RL.dayCount++; lastCall = Date.now(); saveUsage();
       Promise.resolve().then(job.fn).then(job.resolve, job.reject);
     }
   } finally { Q.pumping = false; }
 }
 function rateLimited() {
-  RL.limited++; RL.strikes = Math.min(RL.strikes + 1, 4);
-  RL.pauseUntil = Date.now() + 30000 * RL.strikes;           // 30 s, then 60, 90, 120
-  console.log("  Fyers said too many requests: pausing " + 30 * RL.strikes + " s");
+  RL.limited++; RL.limitedToday++; RL.strikes = Math.min(RL.strikes + 1, 4);
+  RL.pauseUntil = Date.now() + 65000 * RL.strikes;           // let Fyers' one-minute window clear: 65 s, then 130 s...
+  // refused again and again with no good answer in between: the app is blocked for the day
+  if (RL.strikes >= 3) { RL.blockedDay = istDay(Date.now()); RL.lastProbe = Date.now(); }
+  if (RL.limitedToday >= 2) RL.perMin = Math.max(5, Math.floor(LIM.perMin / 2));       // be twice as careful for the rest of the day
+  saveUsage();
+  console.log("  Fyers said too many requests: pausing " + 65 * RL.strikes + " s" + (RL.blockedDay ? " (treating the app as blocked for today)" : ""));
 }
 const AUTH_CODES = [-8, -15, -16, -17];
 
@@ -198,14 +251,13 @@ async function fy(pathname, params) {
   catch (e) { try { r = await once(); } catch (e2) { throw new Error("Fyers did not answer in time; try again shortly"); } }
   if (r.status >= 500) { try { r = await once(); } catch (e) {} }
   const j = await r.json().catch(() => null);
-  if (j && (j.s === "ok" || j.s === "no_data")) return j;
+  if (j && (j.s === "ok" || j.s === "no_data")) { if (RL.strikes) RL.strikes = 0; if (RL.blockedDay) { RL.blockedDay = ""; saveUsage(); } return j; }
   const code = j ? Number(j.code) : 0;
   if (r.status === 401 || r.status === 403 || AUTH_CODES.includes(code)) {
     dropAccess(NEED_LOGIN);
     throw new Error(NEED_LOGIN);
   }
   if (r.status === 429 || code === -429) { rateLimited(); throw new Error("Fyers rate limit reached; slowing down."); }
-  if (RL.strikes && Date.now() > RL.pauseUntil + 120000) RL.strikes = 0;     // calm again
   const e = new Error((j && (j.message || j.errmsg)) || ("Fyers answered HTTP " + r.status));
   e.code = code; throw e;
 }
@@ -236,8 +288,11 @@ function cached(key, ttlMs, fn) {
 let resolved = null, lastProbeFailed = false;                          // { day, promise }
 /* Which candidate symbols are live: all candidates in one or two quote requests
    (Fyers takes up to 50 symbols per request) instead of one request each. */
-async function liveSet(cands) {
+async function liveSet(cands0) {
   const ok = new Set();
+  // only ask about candidates that exist in Fyers' own symbol lists (when loaded), so one unknown symbol can't spoil a batch
+  const cands = SYM.byTicker.size ? cands0.filter(c => SYM.byTicker.has(c) || !/^MCX:/.test(c)) : cands0;
+  let single = 0;
   for (let i = 0; i < cands.length; i += 50) {
     try {
       const j = await fy("/quotes", { symbols: cands.slice(i, i + 50).join(",") });
@@ -247,6 +302,7 @@ async function liveSet(cands) {
       if (/did not answer|rate limit|HTTP 5/.test(e.message)) { ok.failed = e; continue; }
       // Fyers refused the batch as a whole (for example one unknown symbol): ask one by one.
       for (const s of cands.slice(i, i + 50)) {
+        if (++single > 8) { ok.failed = ok.failed || new Error("symbol check skipped to save requests"); break; }
         try { const j = await fy("/quotes", { symbols: s }); const d = (j.d || [])[0]; if (d && d.s !== "error" && d.v && d.v.lp > 0) ok.add(d.n); }
         catch (e2) { if (e2.message === NEED_LOGIN) throw e2; if (/did not answer|rate limit|HTTP 5/.test(e2.message)) ok.failed = e2; }
       }
@@ -408,8 +464,10 @@ app.use(express.json({ limit: "20kb" }));
 const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="96" fill="#0F1319"/>
 <path d="M96 344l88-96 72 56 112-152" fill="none" stroke="#26A96C" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
 <circle cx="368" cy="152" r="34" fill="#4C9AFF"/></svg>`;
-const usage = () => ({ lastMinute: RL.sent.filter(t => Date.now() - t < 60000).length, today: RL.dayCount, waiting: RL.waiting,
-  pausedFor: Math.max(0, Math.round((RL.pauseUntil - Date.now()) / 1000)), limitedTimes: RL.limited });
+const usage = () => ({ lastMinute: RL.sent.filter(t => Date.now() - t < 60000).length, today: RL.dayCount, perDay: LIM.perDay, perMin: LIM.perMin,
+  allowedByNow: Math.round(dayAllowance(false)), waiting: RL.waiting, pausedFor: Math.max(0, Math.round((RL.pauseUntil - Date.now()) / 1000)),
+  limitedTimes: RL.limited, limitedToday: RL.limitedToday, blockedToday: RL.blockedDay === istDay(Date.now()), saved: RL.denied,
+  feed: feedInfo() });
 app.get("/healthz", (_req, res) => res.json({ ok: true, up: Math.round(process.uptime()), ts: Date.now(), fyers: usage() }));
 app.get("/icon.svg", (_req, res) => res.type("image/svg+xml").send(ICON));
 app.get("/manifest.webmanifest", (_req, res) => res.type("application/manifest+json").json({
@@ -472,7 +530,7 @@ app.get("/auth/callback", async (req, res) => {
   if (!code) return fail(String(req.query.message || "Fyers did not return a login code."));
   try {
     const j = await exchangeCode(String(code));
-    setAccess(j.access_token);
+    setAccess(j.access_token); setTimeout(feedEnsure, 500);
     console.log(`  a visitor logged in with Fyers (${[...sessions.values()].filter(v => v.access).length} logged in now)`);
     // Keep the tokens in this browser too, so the site can wake the server
     // after it sleeps without another login.
@@ -493,7 +551,9 @@ app.post("/auth/restore", async (req, res) => {
     if (!hasAccess()) {
       if (!a || (jwtExp(a) && Date.now() > jwtExp(a) - 60000)) throw new Error(NEED_LOGIN);
       setAccess(a);
-      await fy("/quotes", { symbols: "NSE:NIFTY50-INDEX" });
+      // checking the token costs a request: skip it while Fyers has paused this app, and trust the token's own expiry
+      if (RL.blockedDay !== istDay(Date.now())) await fy("/quotes", { symbols: "NSE:NIFTY50-INDEX" });
+      setTimeout(feedEnsure, 500);
     }
     res.json({ ok: hasAccess(), a: auth.access });
   } catch (e) {
@@ -530,8 +590,10 @@ app.get("/api/news", async (_req, res) => {
 app.get("/api/status", async (_req, res) => {
   let ok = true;
   try { await access(); } catch (e) { ok = false; auth.error = auth.error || e.message; }
+  if (ok) feedEnsure();
   res.json({ authenticated: ok, error: ok ? null : auth.error, login: APP_ID && SECRET ? "/auth/login" : null,
-             redirect: REDIRECT, provider: "fyers", delayed: false, pollMs: 5000, ts: Date.now(), fyers: usage() });
+             redirect: REDIRECT, provider: "fyers", delayed: false, pollMs: 5000, ts: Date.now(), fyers: usage(),
+             feed: feedInfo(), note: RL.blockedDay === istDay(Date.now()) ? BLOCK_MSG : null });
 });
 
 const guard = fn => async (req, res) => {
@@ -551,8 +613,123 @@ const guard = fn => async (req, res) => {
 app.get("/api/instruments", guard(async (_req, res) => res.json(live().map(u => ({
   sym: u.label || u.name, tkr: u.tkr, fy: u.fy, seg: u.seg, step: u.step, lot: (SYM.byTicker.get(u.fy) || {}).lot || u.lot,
   lotFromFeed: !!(SYM.byTicker.get(u.fy) || {}).lot,
-  fo: u.fo, open: u.open, close: u.close,
+  fo: u.fo, open: u.open, close: u.close, watch: !!u.watch,
 })))));
+
+/* ------------------------------------------------------------ live feed -- */
+/* Live prices over the Fyers data WebSocket (official "fyers-api-v3" package, free).
+   Ticks are not counted against the request limits, so the server builds 1-minute
+   candles from them and serves charts, quotes and the scan from memory. History is
+   fetched once per instrument per day (and again after a reconnect) and joined to
+   the live candles. If the WebSocket can't be used, everything falls back to normal
+   requests, at a slower pace that stays inside the limits. */
+let FyersDS = null, FEED_LOAD_ERR = null;
+// The package allows one WebSocket object per process, tied to the login it was made with. A fresh copy of the
+// package is loaded for each new connection (after closing the old one), so a reconnect or a new login works.
+function loadDS() {
+  for (const k of Object.keys(require.cache)) if (/[\\/]fyers-api-v3[\\/]/.test(k)) delete require.cache[k];
+  return require("fyers-api-v3").fyersDataSocket;
+}
+try { FyersDS = loadDS(); } catch (e) { FEED_LOAD_ERR = "fyers-api-v3 package not installed"; }
+const FEED = { sock: null, tok: null, state: env("FYERS_FEED") === "off" ? "off" : FyersDS ? "idle" : "unavailable", err: FEED_LOAD_ERR,
+  since: 0, connAt: 0, lastTick: 0, ticks: 0, retryAt: 0, fails: 0, subs: new Map(), pend: new Set(), last: new Map(), m1: new Map(), vol: new Map() };
+const FEED_MAX = 3000;
+const feedInfo = () => ({ state: FEED.state, symbols: FEED.subs.size, ticking: FEED.last.size, ticks: FEED.ticks,
+  lastTickAgo: FEED.lastTick ? Math.round((Date.now() - FEED.lastTick) / 1000) : null, error: FEED.err });
+function bestSession() {
+  return [...sessions.values()].filter(v => v.access && (!v.exp || Date.now() < v.exp - 60000)).sort((a, b) => b.seen - a.seen)[0] || null;
+}
+function feedClose() {
+  const s0 = FEED.sock; FEED.sock = null;
+  if (s0) try { s0.close(); } catch (e) {}
+}
+function feedEnsure() {
+  if (FEED.state === "off" || FEED.state === "unavailable") return;
+  const sess = bestSession();
+  if (!sess) { if (FEED.sock) { feedClose(); FEED.state = "idle"; } return; }
+  if (FEED.sock && FEED.tok === sess.access && (FEED.state === "live" || FEED.state === "connecting")) {
+    // connected but silent while a market is open: reconnect
+    if (FEED.state === "live" && anyOpen() && FEED.lastTick && Date.now() - FEED.lastTick > 180000 && FEED.subs.size) { FEED.err = "no prices for 3 minutes; reconnecting"; feedClose(); FEED.state = "closed"; }
+    else if (FEED.state === "connecting" && Date.now() - FEED.since > 45000) { FEED.err = "the WebSocket did not connect within 45 s"; feedClose(); FEED.state = "closed"; FEED.fails++; FEED.retryAt = Date.now() + Math.min(600000, 15000 * 2 ** Math.min(FEED.fails, 5)); }
+    else return;
+  }
+  if (Date.now() < FEED.retryAt && FEED.tok === sess.access) return;
+  feedClose();
+  FEED.tok = sess.access; FEED.state = "connecting"; FEED.since = Date.now();
+  let sk;
+  try { sk = new (loadDS())(APP_ID + ":" + sess.access, require("os").tmpdir(), false); }
+  catch (e) { FEED.err = "WebSocket could not start: " + e.message; FEED.state = "closed"; FEED.fails++; FEED.retryAt = Date.now() + 300000; return; }
+  FEED.sock = sk;
+  sk.on("connect", () => {
+    if (FEED.sock !== sk) return;
+    FEED.state = "live"; FEED.connAt = Date.now(); FEED.err = null; FEED.fails = 0;
+    const syms = [...FEED.subs.keys()]; for (const k of syms) FEED.subs.set(k, Date.now());   // anything older needs history again
+    try { sk.mode(sk.FullMode); } catch (e) {}
+    feedSendSubs(syms);
+    console.log("  live feed: WebSocket connected (" + syms.length + " symbols)");
+  });
+  sk.on("message", m => { if (FEED.sock === sk) feedTick(m); });
+  sk.on("error", e => { if (FEED.sock !== sk) return; FEED.err = typeof e === "string" ? e : (e && (e.message || e.msg || JSON.stringify(e))) || "WebSocket error"; });
+  sk.on("close", () => {
+    if (FEED.sock !== sk) return;
+    FEED.sock = null; FEED.state = "closed"; FEED.fails++;
+    FEED.retryAt = Date.now() + Math.min(600000, 10000 * 2 ** Math.min(FEED.fails, 6));
+    console.log("  live feed: WebSocket closed" + (FEED.err ? " (" + String(FEED.err).slice(0, 120) + ")" : "") + "; using normal requests until it reconnects");
+  });
+  try { sk.connect(); } catch (e) { FEED.err = e.message; FEED.state = "closed"; FEED.sock = null; FEED.fails++; FEED.retryAt = Date.now() + 120000; }
+}
+function feedSendSubs(syms) {
+  const sk = FEED.sock; if (!sk || FEED.state !== "live" || !syms.length) return;
+  for (let i = 0; i < syms.length; i += 100) { try { sk.subscribe(syms.slice(i, i + 100)); } catch (e) { FEED.err = "subscribe: " + e.message; } }
+}
+// ask for live prices of these symbols (kept for the day; at most FEED_MAX)
+function feedSub(list) {
+  if (FEED.state === "off" || FEED.state === "unavailable") return;
+  const add = [];
+  for (const t of list) if (t && !FEED.subs.has(t) && FEED.subs.size < FEED_MAX) { FEED.subs.set(t, Date.now()); add.push(t); }
+  if (add.length) feedSendSubs(add);
+}
+function feedTick(m) {
+  if (Array.isArray(m)) { m.forEach(feedTick); return; }
+  if (!m || typeof m !== "object" || !m.symbol || !(m.ltp > 0)) return;
+  const now = Date.now(), sym = m.symbol;
+  let ts = (+m.exch_feed_time || +m.last_traded_time || 0) * 1000;
+  if (!ts || Math.abs(ts - now) > 90000) ts = now;
+  FEED.lastTick = now; FEED.ticks++;
+  const prev = FEED.last.get(sym) || {};
+  FEED.last.set(sym, { ltp: m.ltp, open: m.open_price ?? prev.open, high: m.high_price ?? prev.high, low: m.low_price ?? prev.low,
+    prev: m.prev_close_price ?? prev.prev, chp: m.chp ?? prev.chp, vol: m.vol_traded_today ?? prev.vol, bid: m.bid_price ?? prev.bid, ask: m.ask_price ?? prev.ask, at: now });
+  const min = Math.floor(ts / 60000) * 60000;
+  let arr = FEED.m1.get(sym); if (!arr) { arr = []; FEED.m1.set(sym, arr); }
+  let dv = 0; const pv = FEED.vol.get(sym);
+  if (m.vol_traded_today != null) { if (pv != null && m.vol_traded_today >= pv) dv = m.vol_traded_today - pv; FEED.vol.set(sym, m.vol_traded_today); }
+  const b = arr[arr.length - 1];
+  if (b && b[0] === min) { if (m.ltp > b[2]) b[2] = m.ltp; if (m.ltp < b[3]) b[3] = m.ltp; b[4] = m.ltp; b[5] += dv; }
+  else if (!b || min > b[0]) { arr.push([min, m.ltp, m.ltp, m.ltp, m.ltp, dv]); if (arr.length > 1600) arr.splice(0, arr.length - 1500); }
+}
+// prices for this symbol are flowing (or the market is shut and the last ones are final)
+function feedHas(t, u) {
+  if (FEED.state !== "live" || !FEED.subs.has(t)) return false;
+  if (FEED.lastTick && Date.now() - FEED.lastTick > 180000 && anyOpen()) return false;              // the whole feed went quiet
+  const subAt = FEED.subs.get(t), x = FEED.last.get(t);
+  if (!x && Date.now() - subAt > 180000 && (!u || openNow(u))) return false;                        // never priced: not served by the feed
+  return true;
+}
+// live 1-minute bars since `from`, grouped into `want`-minute candles aligned to the session open
+function liveCandles(u, want, from) {
+  const arr = FEED.m1.get(u.fy) || [], out = []; let key = null, cur = null;
+  const open = u.open || 555, close = u.close || 930;
+  for (const b of arr) {
+    if (b[0] < from) continue;
+    const lt = b[0] + IST, dayStart = Math.floor(lt / 864e5) * 864e5 - IST, mod = Math.floor((lt % 864e5) / 60000);
+    if (mod < open || mod >= close) continue;
+    const start = dayStart + (open + Math.floor((mod - open) / want) * want) * 60000;
+    if (start !== key) { key = start; cur = [start, b[1], b[2], b[3], b[4], b[5]]; out.push(cur); }
+    else { if (b[2] > cur[2]) cur[2] = b[2]; if (b[3] < cur[3]) cur[3] = b[3]; cur[4] = b[4]; cur[5] += b[5]; }
+  }
+  return out;
+}
+setInterval(() => { try { feedEnsure(); } catch (e) { FEED.err = e.message; } }, 20000).unref();
 
 /* -------------------------------------------------------------- candles -- */
 const DAYS = { 1: 5, 3: 6, 5: 12, 15: 30, 30: 60, 60: 90, 240: 90 };
@@ -567,17 +744,39 @@ app.get("/api/candles", guard(async (req, res) => {
   const u = bySym(req.query.tkr);
   if (!u) return res.status(404).json({ error: "unknown symbol" });
   const want = DAYS[+req.query.interval] ? +req.query.interval : 5;
-  res.json(await candlesOf(u, want));
+  res.json(await candlesOf(u, want, req.query.hot === "1"));
 }));
-// market shut: the candles can't change, so ask Fyers at most every 30 minutes
-const candlesOf = (u, want) => cached(`c:${u.tkr}:${want}`, !openNow(u) ? 1800000 : want >= 60 ? 120000 : want >= 15 ? 45000 : 15000, async () => {
+/* With the live feed: history once per day (and again after a reconnect), joined to candles built from ticks.
+   Without it: history requests, at most every minute for the chart being looked at and every 10 minutes for the rest. */
+async function candlesOf(u, want, hot) {
+  feedSub([u.fy]);
+  if (feedHas(u.fy, u)) {
+    const subAt = FEED.subs.get(u.fy), key = `bf:${u.tkr}:${want}`, hit = cache.get(key);
+    // history is good if it was fetched after live prices started for this symbol, today
+    const fresh = hit && hit.val && hit.val.fetchedAt >= subAt && istDay(hit.val.fetchedAt) === istDay(Date.now());
+    let bf;
+    try { bf = await cached(key, fresh ? 864e5 : 0, () => restHistory(u, want)); }
+    catch (e) { if (hit && hit.val) bf = hit.val; else if (e.budget || /rate limit/i.test(e.message)) bf = { candles: [] }; else throw e; }   // no history allowed now: live candles only
+    const live = liveCandles(u, want, Math.floor(subAt / 60000) * 60000);
+    const out = bf.candles.slice();
+    for (const c of live) {                                 // join: a candle in both keeps the wider range and the live close
+      const i = out.length ? out.findIndex((x, k) => k >= out.length - 400 && x[0] === c[0]) : -1;
+      if (i >= 0) { const x = out[i]; out[i] = [x[0], x[1], Math.max(x[2], c[2]), Math.min(x[3], c[3]), c[4], x[5] + c[5]]; }
+      else if (!out.length || c[0] > out[out.length - 1][0]) out.push(c);
+    }
+    return { tkr: u.tkr, interval: want + "m", candles: out, feed: "live" };
+  }
+  const ttl = !openNow(u) ? 1800000 : want >= 15 ? 600000 : hot ? 60000 : 600000;
+  return cached(`c:${u.tkr}:${want}`, ttl, () => restHistory(u, want));
+}
+const restHistory = async (u, want) => {
     const j = await fy("/history", { symbol: u.fy, resolution: String(want), date_format: "1",
       range_from: istDay(Date.now() - DAYS[want] * 864e5), range_to: istDay(Date.now()), cont_flag: "1" });
     const candles = (j.candles || []).filter(c => c && c.length >= 5 && c[1] != null && c[4] != null)
       .map(c => [c[0] < 1e11 ? c[0] * 1000 : c[0], c[1], c[2], c[3], c[4], c[5] || 0])
       .sort((a, b) => a[0] - b[0]);
-    return { tkr: u.tkr, interval: want + "m", candles };
-  });
+    return { tkr: u.tkr, interval: want + "m", candles, fetchedAt: Date.now() };
+  };
 
 /* Daily candles for the daily EMAs (5 to 250 days and the 30-week average). About two years,
    fetched in two requests (Fyers allows one year of daily candles per request), kept for 12 hours:
@@ -602,8 +801,11 @@ app.get("/api/daily", guard(async (req, res) => {
 app.get("/api/quotes", guard(async (req, res) => {
   // `x` = option contracts the viewer has opened, quoted alongside the watchlist
   const extra = [...new Set(String(req.query.x || "").split(",").filter(s => OPT_RE.test(s) || SYM.byTicker.has(s)))].slice(0, 20);
-  const out = await cached("quotes:" + extra.join(","), anyOpen() ? 4000 : 600000, async () => {
-    const j = await fy("/quotes", { symbols: live().map(u => u.fy).concat(extra).join(",") });
+  feedEnsure(); feedSub(watched().map(u => u.fy).concat(extra));
+  const allLive = watched().every(u => feedHas(u.fy, u) && FEED.last.has(u.fy)) && extra.every(t => FEED.last.has(t));
+  let out;
+  try { out = await cached("quotes:" + extra.join(","), !anyOpen() || FEED.state === "live" ? 600000 : 60000, async () => {
+    const j = await fy("/quotes", { symbols: watched().map(u => u.fy).concat(extra).join(",") });
     const q = { __at: Date.now() };
     for (const d of j.d || []) {
       const u = UNIVERSE.find(x => x.fy === d.n) || (extra.includes(d.n) ? { tkr: d.n } : null), v = d.v;
@@ -613,9 +815,18 @@ app.get("/api/quotes", guard(async (req, res) => {
                    close: prev, chg: v.chp != null ? v.chp : (prev ? ((v.lp - prev) / prev) * 100 : 0), vol: v.volume || 0 };
     }
     return q;
-  });
+  }); } catch (e) { if (!allLive) throw e; out = { __at: 0 }; }
+  // live prices from the feed replace the requested ones
+  out = Object.assign({}, out); let at = out.__at || 0;
+  for (const u of watched().concat(extra.map(t => ({ tkr: t, fy: t })))) {
+    const x = FEED.state === "live" && FEED.last.get(u.fy); if (!x) continue;
+    const p0 = out[u.tkr] || {}, prev = x.prev > 0 ? x.prev : p0.close || null;
+    out[u.tkr] = { ltp: x.ltp, open: x.open || p0.open || null, high: x.high || p0.high || null, low: x.low || p0.low || null, close: prev,
+      chg: x.chp != null ? x.chp : prev ? (x.ltp - prev) / prev * 100 : p0.chg || 0, vol: x.vol != null ? x.vol : p0.vol || 0 };
+    if (x.at > at) at = x.at;
+  }
   const { __at, ...quotes } = out;
-  res.json({ ts: __at || Date.now(), quotes, delayed: false });
+  res.json({ ts: at || Date.now(), quotes, delayed: false, feed: FEED.state === "live" ? "live" : "requests" });
 }));
 
 /* ---------------------------------------------------------- option chain -- */
@@ -625,7 +836,8 @@ async function rawChain(u, epoch) {
   try { return await fy("/options-chain-v3", { ...p, greeks: "1" }); }
   catch (e) { if (e.message === NEED_LOGIN) throw e; return fy("/options-chain-v3", p); }
 }
-const chainOf = (u, epoch) => cached(`ch:${u.tkr}:${epoch || ""}`, openNow(u) ? 15000 : 900000, () => rawChain(u, epoch));
+// with the live feed the premiums near the price are live anyway, so the chain itself (OI, far strikes) is asked for every 5 minutes
+const chainOf = (u, epoch) => cached(`ch:${u.tkr}:${epoch || ""}`, !openNow(u) ? 900000 : FEED.state === "live" ? 300000 : 120000, () => rawChain(u, epoch));
 async function expiriesOf(u) {
   const j = await chainOf(u, "");
   const list = (j.data?.expiryData || []).map(e => ({ iso: isoOf(e.date), epoch: String(e.expiry) }))
@@ -654,7 +866,7 @@ async function chainData(u, expiry) {
   const j = await chainOf(u, pick === list[0] ? "" : pick.epoch);
 
   const iv = v => (v > 0 ? (v > 3 ? v / 100 : v) : null);   // percent or fraction, either way
-  let spot = null, prevClose = null; const by = new Map();
+  let spot = null, prevClose = null; const by = new Map();      // spot may be replaced by the live price below
   for (const e of j.data?.optionsChain || []) {
     if (e.option_type !== "CE" && e.option_type !== "PE") {
       if (e.ltp > 0) { spot = e.ltp; prevClose = e.ltpch != null ? e.ltp - e.ltpch : null; }
@@ -669,6 +881,14 @@ async function chainData(u, expiry) {
   }
   const rows = [...by.values()].filter(r => r.ce && r.pe).sort((a, b) => a.strike - b.strike);
   if (!rows.length || !spot) throw new Error("Fyers returned an empty option chain for " + u.name);
+  // live premiums for the strikes near the price (the chain itself is asked for at most once a minute)
+  if (FEED.state === "live") {
+    const near6 = rows.slice().sort((a, b) => Math.abs(a.strike - spot) - Math.abs(b.strike - spot)).slice(0, 12);
+    feedSub(near6.flatMap(r => [r.ce.sym, r.pe.sym]).filter(Boolean));
+    const lv = FEED.last.get(u.fy); if (lv && Date.now() - lv.at < 120000) spot = lv.ltp;
+    for (const r of rows) for (const k of ["ce", "pe"]) { const x = r[k].sym && FEED.last.get(r[k].sym);
+      if (x && Date.now() - x.at < 120000) Object.assign(r[k] = Object.assign({}, r[k]), { ltp: x.ltp, bid: x.bid || r[k].bid, ask: x.ask || r[k].ask, vol: x.vol != null ? x.vol : r[k].vol }); }
+  }
   const near = rows.slice().sort((a, b) => Math.abs(a.strike - spot) - Math.abs(b.strike - spot))
                    .slice(0, 7).map(r => r.strike).sort((a, b) => a - b);
   const gaps = near.slice(1).map((s, i) => s - near[i]).filter(g => g > 0).sort((a, b) => a - b);
@@ -748,6 +968,12 @@ async function scanCycle() {
       const day = istDay(Date.now());
       if (day !== SCAN.day) { SCAN.day = day; SCAN.signals = []; SCAN.pending = []; SCAN.opts.clear(); }
       const all = scanList(), first = !SCAN.at;
+      feedEnsure(); feedSub(all.map(u => u.fy));
+      const viaFeed = FEED.state === "live";
+      // without the live feed, scanning every instrument costs a request each, so do it only every 30 minutes
+      if (!viaFeed && !first && Date.now() - (SCAN.restAt || 0) < 30 * 60000) { SCAN.note = "Scanning every 30 minutes until the live feed connects (saves Fyers requests)"; return; }
+      if (!viaFeed) SCAN.restAt = Date.now();
+      SCAN.note = viaFeed ? null : "Scanning every 30 minutes until the live feed connects (saves Fyers requests)";
       const list = all.filter(u => first || openNow(u));
       if (!list.length) return;
       SCAN.total = list.length; SCAN.done = 0; SCAN.failed = 0; SCAN.emaBlocked = 0;
@@ -755,10 +981,10 @@ async function scanCycle() {
       const found = [], pend = [];
       for (const u of list) {
         // leave room for visitors' own requests: the scan uses at most about 100 a minute
-        while (RL.sent.filter(t => Date.now() - t < 60000).length >= 90 || Q.hi.length > 0 || Q.lo.length > 1 || Date.now() < RL.pauseUntil) await sleep(400);
+        while (RL.sent.filter(t => Date.now() - t < 60000).length >= RL.perMin * 0.5 || Q.hi.length > 0 || Q.lo.length > 1 || Date.now() < RL.pauseUntil) await sleep(400);
         let d;
         try { d = await candlesOf(u, 5); }
-        catch (e) { SCAN.failed++; SCAN.lastErr = u.sym + ": " + e.message; if (e.message === NEED_LOGIN) break; continue; }
+        catch (e) { SCAN.failed++; SCAN.lastErr = u.sym + ": " + e.message; if (e.message === NEED_LOGIN) break; if (e.budget) { SCAN.note = "Scan paused for now to stay within Fyers' daily request allowance"; break; } continue; }
         const t0 = Date.now();
         try {
           const b = EN.toBars(d.candles);
@@ -798,7 +1024,9 @@ async function scanCycle() {
         try { SCAN.opts.set(scanKey(s), await scanOption(u, s)); } catch (e) { SCAN.opts.set(scanKey(s), { err: e.message, at: Date.now() }); }
       }
       const live = SCAN.signals.filter(x => x.state === "ACTIVE").map(x => SCAN.opts.get(scanKey(x))).filter(o => o && o.sym).slice(0, 50);
-      if (live.length) try {
+      feedSub(live.map(o => o.sym));
+      for (const o of live) { const x = FEED.state === "live" && FEED.last.get(o.sym); if (x) { o.now = x.ltp; o.nowAt = x.at; } }
+      if (live.length && live.some(o => !(FEED.state === "live" && FEED.last.has(o.sym)))) try {
         const j = await fy("/quotes", { symbols: [...new Set(live.map(o => o.sym))].join(",") });
         for (const q of j.d || []) if (q && q.v && q.v.lp > 0) live.filter(o => o.sym === q.n).forEach(o => { o.now = q.v.lp; o.nowAt = Date.now(); });
       } catch (e) {}
@@ -814,7 +1042,7 @@ function scheduleScan() {
 app.get("/api/scan", guard(async (_req, res) => {
   if (!SCAN.at && !SCAN.running) scanCycle().catch(() => {});               // first visitor of the day starts it
   res.json({ at: SCAN.at, running: SCAN.running, total: SCAN.total, done: SCAN.done, failed: SCAN.failed, cycleMs: SCAN.cycleMs, cpuMs: SCAN.cpuMs,
-    instruments: scanList().length, engineOk: SCAN.engineOk, engineErr: SCAN.engineErr, lastErr: SCAN.lastErr,
+    instruments: scanList().length, engineOk: SCAN.engineOk, engineErr: SCAN.engineErr, lastErr: SCAN.lastErr, note: FEED.state === "live" && /until the live feed/.test(SCAN.note || "") ? null : SCAN.note || null, feed: FEED.state,
     signals: SCAN.signals.map(s => Object.assign({}, s, { opt: SCAN.opts.get(scanKey(s)) || null })), pending: SCAN.pending });
 }));
 
