@@ -245,6 +245,8 @@ The **Pro** tab is the first tab on Home. Everything else (Telegram, My trades, 
 7. **Contract:** ATM or 1 strike in the money, nearest weekly expiry with more than a day left, real lot size, checked for bid/ask spread, volume and OI.
 8. **Levels on the option premium:** entry zone, stop loss (from the chart's structure / ATR, converted to premium), Target 1/2/3, trailing stop. Reward:risk must be at least 1.5. The original entry and stop are never changed afterwards; trailing is shown separately.
 
+**Gap days.** On a day that opens 0.5% or more beyond yesterday's close *and* beyond yesterday's high (or low), and the gap is not filled, price stays beyond yesterday's extreme and the 5- and 15-minute trends and VWAP agree, today's own action leads: the 30-minute, 1-hour and daily charts (which can't see the gap yet) don't block the signal. If the gap starts filling, the normal rules apply again. The overnight gap is also no longer counted as volatility (it used to make a big gap day look "unusually volatile"). A **trend pull-back** entry was added: a dip to the 20 EMA or VWAP that holds, then a candle closing back beyond the previous candle.
+
 **Lists:** A. Top CE BUY, B. Top PE BUY, C. Watchlist (WATCH), D. No trade / avoid (with the reason), E. Active paper trades, F. Signal history, G. Backtest. One signal per symbol and direction at a time (no duplicates).
 
 **Market overview:** NIFTY 50, BANK NIFTY, FIN NIFTY, INDIA VIX, market trend, advance/decline (needs the live feed), sentiment and sector strength. The status label says **LIVE** (live feed ticking), **DELAYED** (prices from requests about every minute), **STALE** (no fresh prices: no new signals) or **CLOSED**.
@@ -256,6 +258,12 @@ The **Pro** tab is the first tab on Home. Everything else (Telegram, My trades, 
 **Optional settings on Render (Environment):** `PRO_THR_STRONG` (default 75), `PRO_THR_VERY` (85), `PRO_THR_WATCH` (65), `PRO_MIN_RR` (1.5). Nothing needs adding for it to work.
 
 **Saved state** (paper trades, history, log) is kept in `/tmp` on Render and is lost when Render redeploys or restarts the service.
+
+## Scalp tab changes (5 November 2026)
+
+- After Target 1 the stop moves to **break-even after costs** (entry plus estimated costs), so a scalp that reaches Target 1 and comes back ends at about 0R instead of a loss.
+- The stop must be at least 0.6 ATR and at least 2.5× the estimated round-trip cost; if that would need more than 1.5 ATR, the scalp is skipped (the move is too small to pay for the costs).
+- In a strong trend (ADX 30+), RSI up to 88 (down to 12 for puts) is allowed, so strong trend days are not filtered out.
 
 ## Phone notifications
 

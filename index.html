@@ -1193,6 +1193,7 @@ function rsi(v,p){p=p||14;const o=Array(v.length).fill(null);let g=0,l=0;
     if(i<=p){g+=u/p;l+=w/p;if(i===p)o[i]=l===0?100:100-100/(1+g/l);}
     else{g=(g*(p-1)+u)/p;l=(l*(p-1)+w)/p;o[i]=l===0?100:100-100/(1+g/l);}}return o;}
 function atr(b,p){p=p||14;const tr=b.map((x,i)=>i===0?x.h-x.l:
+  (i>=2&&x.day&&x.day!==b[i-1].day&&b[i-1].day===b[i-2].day)?x.h-x.l:   // first intraday candle: the overnight gap is not counted as volatility
   Math.max(x.h-x.l,Math.abs(x.h-b[i-1].c),Math.abs(x.l-b[i-1].c)));
   const o=Array(b.length).fill(null);let x=null;
   for(let i=0;i<b.length;i++){if(i<p-1)continue;
@@ -1687,19 +1688,23 @@ function scalpEngine(u, b){
       if(!pulled) continue;
       const ref=d>0?Math.max(b[i-1].h,b[i-2].h,b[i-3].h):Math.min(b[i-1].l,b[i-2].l,b[i-3].l);
       if(!(d*(x.c-x.o)>=0.3*A[i]&&d*(x.c-ref)>0)) continue;
-      if(!(R[i]!=null&&(d>0?R[i]>=55&&R[i]<=78:R[i]<=45&&R[i]>=22))) continue;
+      const hot=X[i]!=null&&X[i]>=30;   // a strong trend (ADX 30+) runs with RSI above 78 / below 22: don't filter it out
+      if(!(R[i]!=null&&(d>0?R[i]>=55&&R[i]<=(hot?88:78):R[i]<=45&&R[i]>=(hot?12:22)))) continue;
       if(!(X[i]!=null&&X[i]>=20)) continue;
       if(vw&&!(d*(x.c-vw[i])>0)) continue;
       const ext=d>0?Math.min(b[i].l,b[i-1].l,b[i-2].l):Math.max(b[i].h,b[i-1].h,b[i-2].h);
       const entry=x.c; let sl=ext-d*0.1*A[i], risk=d*(entry-sl);
       if(risk<=0||risk>1.2*A[i]) continue;
-      if(risk<0.4*A[i]){ risk=0.4*A[i]; sl=entry-d*risk; }
+      // the stop must be wide enough to survive normal noise and to be worth the costs (at least 2.5x the round-trip cost)
+      const floor=Math.max(0.6*A[i],2.5*cost(entry));
+      if(floor>1.5*A[i]) continue;          // too quiet: the costs would eat the move
+      if(risk<floor){ risk=floor; sl=entry-d*risk; }
       const s={ kind:"scalp", tkr:u.tkr, sym:u.sym, d, i, ts:x.ts, day:x.day, entry, sl, risk, cost:cost(entry),
         t1:entry+d*risk, t2:entry+d*1.5*risk, t3:entry+d*2*risk, atr:A[i],
         why:[`15-min trend ${d>0?"up":"down"}: EMA 20 ${d>0?"above":"below"} EMA 50`,
              `3-min pull-back to EMA 20, then a ${d>0?"green":"red"} candle broke the last three ${d>0?"highs":"lows"}`,
              `RSI ${R[i].toFixed(0)}, ADX ${X[i].toFixed(0)}${vw?`, ${d>0?"above":"below"} VWAP`:""}`,
-             `stop ${(risk/A[i]).toFixed(1)} ATR beyond the last three ${d>0?"lows":"highs"}; targets 1R / 1.5R / 2R; exit within 30 minutes`] };
+             `stop ${(risk/A[i]).toFixed(1)} ATR beyond the last three ${d>0?"lows":"highs"}; targets 1R / 1.5R / 2R; after Target 1 the stop moves to break-even after costs; exit within 30 minutes`] };
       s.res=scalpTrack(b,s,CL);
       out.push(s); busy=s.res.exit!=null?s.res.exit:n; break;
     }
@@ -1724,8 +1729,8 @@ function scalpTrack(b,s,CL){
   for(let j=s.i+1;j<b.length;j++){
     const x=b[j];
     if(x.day!==b[s.i].day) return fin("Closed at session end",j-1,b[j-1].c);
-    if(d>0?x.l<=stop:x.h>=stop) return fin(hit===0?"Stop loss":hit===1?"Back to entry":"Stopped at T1",j,stop);
-    if(hit<1&&(d>0?x.h>=s.t1:x.l<=s.t1)){ hit=1; stop=s.entry; }
+    if(d>0?x.l<=stop:x.h>=stop) return fin(hit===0?"Stop loss":hit===1?"Break-even stop":"Stopped at T1",j,stop);
+    if(hit<1&&(d>0?x.h>=s.t1:x.l<=s.t1)){ hit=1; stop=s.entry+d*s.cost; }   // break-even after costs, not a loss
     if(hit<2&&(d>0?x.h>=s.t2:x.l<=s.t2)){ hit=2; stop=s.t1; }
     if(d>0?x.h>=s.t3:x.l<=s.t3){ hit=3; return fin("Target 3",j,s.t3); }
     if(j<b.length-1){
@@ -1734,7 +1739,7 @@ function scalpTrack(b,s,CL){
     }
   }
   const lst=b[b.length-1];
-  return {done:false, how:hit?`T${hit} reached, stop at ${hit===1?"entry":"T1"}`:"Working", exit:null, px:lst.c, hit, stop, R:(d*(lst.c-s.entry)-s.cost)/s.risk,
+  return {done:false, how:hit?`T${hit} reached, stop at ${hit===1?"break-even":"T1"}`:"Working", exit:null, px:lst.c, hit, stop, R:(d*(lst.c-s.entry)-s.cost)/s.risk,
     left:Math.max(0,SC.maxBars-(b.length-1-s.i))};
 }
 async function loadScalp(force){
@@ -3194,7 +3199,8 @@ const PRO={
   minRR:1.5, riskMin:0.6, riskMax:2.0,                      // stop distance kept between 0.6 and 2 ATR
   start:{NSE:570, MCX:555}, lastNew:{NSE:885, MCX:1350},     // new signals 09:30-14:45 (NSE), 09:15-22:30 (MCX)
   exitT:{NSE:920, MCX:1400},                                  // open trades closed at 15:20 / 23:20
-  tfW:{5:2, 15:3, 30:3, 60:4, D:3},                          // multi-timeframe weights (sum 15)
+  tfW:{5:2, 15:3, 30:3, 60:4, D:3},
+  gapMin:0.005,                                               // gap-and-go day: open 0.5%+ beyond yesterday's close and high/low                          // multi-timeframe weights (sum 15)
 };
 const proExch=u=>u.seg==="MCX"||String(u.fy||u.tkr).startsWith("MCX")?"MCX":"NSE";
 function stochRsi(r,p){ p=p||14; const o=Array(r.length).fill(null);
@@ -3254,12 +3260,22 @@ function proTrend(P,i,D){
   const avgR=(()=>{ const d=P.days.slice(Math.max(0,x._d-10),x._d); return d.length>=3?d.reduce((a,y)=>a+(y.h-y.l),0)/d.length:null; })();
   const wild=(med&&A[i]>2.2*med)||(avgR&&dayR>2.5*avgR);
   const adx15=(()=>{ const T15=P.tf[15], k=closedAt(T15.b,15,tEnd); return k>=0?T15.I.adx[k]:null; })();
+  // gap-and-go day: opened beyond yesterday's high (low) by PRO.gapMin or more, the gap is not filled, price is still
+  // beyond yesterday's extreme, and the 5- and 15-minute trends (and VWAP) agree. The slower charts can't see such a
+  // day yet, so today's own action leads; the gap must keep holding or the signal is not given.
+  let gap=0, gapPct=null; const pv=fx.prev;
+  if(pv&&x._d!=null&&fx.i0!=null){ const o=P.b[fx.i0].o, gp=(o-pv.c)/pv.c, g=gp>=PRO.gapMin&&o>pv.h?1:gp<=-PRO.gapMin&&o<pv.l?-1:0;
+    if(g){ let lo=Infinity, hi=-Infinity; for(let j=fx.i0;j<=i;j++){ const y=P.b[j]; if(y.l<lo) lo=y.l; if(y.h>hi) hi=y.h; }
+      const holds=g>0?lo>pv.c&&x.c>pv.h:hi<pv.c&&x.c<pv.l;
+      const today=s[5]!=null&&s[5]*g>0.2&&s[15]!=null&&s[15]*g>0.2&&(v.vw==null||v.vw===g);
+      if(holds&&today){ gap=g; gapPct=gp*100; } } }
   let cls;
-  if(wild) cls="HIGH VOLATILITY";
+  if(gap&&!(avgR&&dayR>2.5*avgR)) cls=(s[5]*gap>=0.6&&s[15]*gap>=0.6)?(gap>0?"STRONG BULLISH":"STRONG BEARISH"):(gap>0?"BULLISH":"BEARISH");
+  else if(wild) cls="HIGH VOLATILITY";
   else if(Math.abs(T)<0.2||(adx15!=null&&adx15<18&&Math.abs(T)<0.45)) cls="SIDEWAYS";
   else if(T>=0.6&&up>=4) cls="STRONG BULLISH"; else if(T>0) cls="BULLISH";
   else if(T<=-0.6&&dn>=4) cls="STRONG BEARISH"; else cls="BEARISH";
-  return { cls, T, s, up, dn, adx15, wild:!!wild }; }
+  return { cls, T, s, up, dn, adx15, wild:!!wild&&!gap, gap, gapPct }; }
 const proDir=cls=>/BULLISH/.test(cls)?1:/BEARISH/.test(cls)?-1:0;
 /* Candlestick patterns at candle i (A = ATR). Patterns only add to a signal; they never make one alone. */
 function proCandles(b,i,A){ const x=b[i], p=b[i-1], q=b[i-2], out=new Set(); if(!p||!A) return out;
@@ -3298,6 +3314,13 @@ function proTriggers(P,i,d){
   const cs=proCandles(b,i,A), rej=d>0?PRO_BULL.some(k=>cs.has(k)):PRO_BEAR.some(k=>cs.has(k));
   const near=lv.filter(L=>L!=null&&(d>0?Math.abs(x.l-L)<=0.3*A&&x.c>L:Math.abs(x.h-L)<=0.3*A&&x.c<L));
   if(near.length&&rej&&Math.sign(x.c-x.o)===d) out.push({type:"BOUNCE", q:10, level:near[0], label:d>0?"bounce from support with a rejection candle":"rejection at resistance"});
+  // trend pullback: EMA 9 on the trend's side of EMA 20, a dip to EMA 20 or VWAP in the last 4 candles that held,
+  // then a candle closing back beyond the previous candle's extreme (the usual entry on a steady trend day)
+  if(P.t5.e9[i]!=null&&I.e20[i]!=null&&Math.sign(P.t5.e9[i]-I.e20[i])===d&&Math.sign(x.c-x.o)===d&&body>=0.3*A&&(d>0?x.c>p.h:x.c<p.l)){
+    let touch=null; for(let j=Math.max(fx.i0+1,i-4);j<i;j++){ const y=b[j], e=I.e20[j], w=proVol(P,j).vwap;
+      for(const L of [e,w]) if(L!=null&&(d>0?y.l<=L+0.2*A&&y.c>L-0.3*A:y.h>=L-0.2*A&&y.c<L+0.3*A)) touch=touch==null?L:(d>0?Math.min(touch,L):Math.max(touch,L)); }
+    const ext=d>0?Math.min(...b.slice(Math.max(fx.i0,i-4),i).map(y=>y.l)):Math.max(...b.slice(Math.max(fx.i0,i-4),i).map(y=>y.h));
+    if(touch!=null&&(d>0?ext>touch-0.6*A:ext<touch+0.6*A)) out.push({type:"PULLBACK", q:11, level:ext, label:`pull-back to EMA 20 / VWAP held, trend resumed`}); }
   if(P.t5.e9[i]!=null&&I.e20[i]!=null&&P.t5.e9[i-1]!=null&&I.e20[i-1]!=null&&Math.sign(P.t5.e9[i]-I.e20[i])===d&&Math.sign(P.t5.e9[i-1]-I.e20[i-1])===-d)
     out.push({type:"EMA", q:7, level:I.e20[i], label:`EMA 9 crossed ${d>0?"above":"below"} EMA 20`});
   if(I.st[i]&&I.st[i-1]&&I.st[i].dir===d&&I.st[i-1].dir===-d) out.push({type:"ST", q:7, level:I.st[i].band, label:`Supertrend turned ${d>0?"up":"down"}`});
@@ -3331,6 +3354,7 @@ function proScore(P,i,d,trigs,tr,ctx){
   parts.trend=mk.cls==="HIGH VOLATILITY"?0:md===d?(/STRONG/.test(mk.cls)?W.trend:W.trend*0.75):md===0?W.trend*0.3:0;
   why.push(`market ${mk.cls.toLowerCase()}${ctx.market&&ctx.marketName?" ("+ctx.marketName+")":""}`);
   let mtf=0; const agree=[]; for(const k in PRO.tfW){ const s=tr.s[k]; if(s!=null&&s*d>0.2){ mtf+=PRO.tfW[k]; agree.push(k==="D"?"daily":k+"m"); } }
+  if(tr.gap===d){ for(const k of ["30","60"]) if(!agree.includes(k+"m")){ mtf+=PRO.tfW[k]; agree.push(k+"m (gap holding)"); } }
   parts.mtf=mtf; why.push(`trend agrees on ${agree.join(", ")||"no timeframe"}`);
   const best=trigs.slice().sort((a,b2)=>b2.q-a.q)[0], cs=proCandles(P.b,i,A);
   let pa=best?best.q:0; if(trigs.length>1) pa+=2;
@@ -3372,16 +3396,18 @@ function proEval(P,i,ctx){
   if(!d) return {none:`${u.sym||u.tkr} is sideways`, tr};
   if(ctx.market&&md===-d) return {none:`${u.sym||u.tkr} trend (${tr.cls.toLowerCase()}) is against the market (${ctx.market.cls.toLowerCase()})`, tr};
   const trigs=proTriggers(P,i,d); if(!trigs.length) return {none:`${tr.cls.toLowerCase()}, waiting for a breakout, retest or bounce`, tr, d};
-  if(D){ const g=demaJudge(D,d,x.c); if(g.block) return {none:"against the daily EMAs: "+g.lines.slice(0,2).join("; "), tr, d}; }
-  // multi-timeframe confirmation: 1 hour and daily must not point the other way
-  if(tr.s[60]!=null&&tr.s[60]*d<-0.2) return {none:`1-hour trend points the other way`, tr, d};
-  if(tr.s.D!=null&&tr.s.D*d<-0.34) return {none:`daily trend points the other way`, tr, d};
+  const gapDay=tr.gap===d;
+  if(D&&!gapDay){ const g=demaJudge(D,d,x.c); if(g.block) return {none:"against the daily EMAs: "+g.lines.slice(0,2).join("; "), tr, d}; }
+  // multi-timeframe confirmation: 1 hour and daily must not point the other way (except on a gap-and-go day)
+  if(!gapDay&&tr.s[60]!=null&&tr.s[60]*d<-0.2) return {none:`1-hour trend points the other way`, tr, d};
+  if(!gapDay&&tr.s.D!=null&&tr.s.D*d<-0.34) return {none:`daily trend points the other way`, tr, d};
   const sc=proScore(P,i,d,trigs,tr,ctx), L=sc.levels;
   if(L.rr<PRO.minRR) return {none:`reward : risk ${L.rr.toFixed(2)} below ${PRO.minRR}`, tr, d, sc};
   // a trade needs every confirmation; missing one leaves the signal on the watchlist, with the reason
   const v=proVol(P,i), cap=[];
-  if(!(tr.s[15]!=null&&tr.s[15]*d>0.2&&tr.s[30]!=null&&tr.s[30]*d>0.2)) cap.push("15- and 30-minute trends do not both confirm");
-  if(tr.s[60]==null||tr.s[60]*d<=0) cap.push("1-hour trend not yet confirming");
+  if(!gapDay&&!(tr.s[15]!=null&&tr.s[15]*d>0.2&&tr.s[30]!=null&&tr.s[30]*d>0.2)) cap.push("15- and 30-minute trends do not both confirm");
+  if(!gapDay&&(tr.s[60]==null||tr.s[60]*d<=0)) cap.push("1-hour trend not yet confirming");
+  if(gapDay) sc.why.unshift(`gap-and-go day: opened ${Math.abs(tr.gapPct).toFixed(1)}% ${d>0?"above":"below"} yesterday's close and beyond yesterday's ${d>0?"high":"low"}; the gap is holding, so today's 5- and 15-minute trend leads`);
   if(v.rv==null) cap.push("volume not available"); else if(v.rv<1.2) cap.push(`volume not confirmed (${v.rv.toFixed(1)}x average)`);
   if(sc.parts.sr===0) cap.push("less than 1R of room to the next level");
   if(ctx.market&&md!==d) cap.push(`the market (${ctx.market.cls.toLowerCase()}) is not trending the same way`);
