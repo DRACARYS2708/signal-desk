@@ -230,6 +230,33 @@ Every signal is checked against the daily EMAs before it is shown: Strict, Other
 - The chart page has a "Daily EMAs" panel with each EMA's value, whether price is above or below it, the stage, and the score for a call and for a put.
 - If daily history isn't available (a new listing, or Fyers didn't answer), the card says "not checked" instead of guessing, and the signal is not dropped.
 
+## Pro tab: scored CE / PE signals (November 2026)
+
+The **Pro** tab is the first tab on Home. Everything else (Telegram, My trades, Strict / Other / Normal signals, BTST, Scalp, charts, Results) is unchanged.
+
+**What it does every 5 minutes (on the server, for the 9 watchlist symbols):**
+
+1. **Trend on five timeframes** (5m, 15m, 30m, 1 hour, daily) from EMA 9/20/50/200, Supertrend, higher-highs / lower-lows, RSI, MACD, Stochastic RSI and ADX. Each symbol gets one of six classes: STRONG BULLISH, BULLISH, SIDEWAYS, BEARISH, STRONG BEARISH, HIGH VOLATILITY.
+2. **Trigger on the 5-minute chart:** opening-range breakout, previous day high/low break, VWAP reclaim/loss, range breakout, breakout retest, support/resistance bounce, EMA pullback, Supertrend flip, plus candlestick patterns and divergence.
+3. **Option chain and OI** (one Fyers request per symbol): PCR, call/put OI walls, writing and unwinding near the price, long / short buildup.
+4. **Score out of 100:** trend 20, multi-timeframe 15, price action 15, volume 10, momentum 10, support/resistance 10, OI 15, breadth/sector 5. A part that has no data is shown as "n/a" and the score is rescaled; it is never guessed.
+5. **Grade:** 85+ VERY STRONG, 75–84 STRONG (tradable), 65–74 WATCH, below 65 NO TRADE.
+6. **Hard checks.** Even with a high score a signal stays at WATCH unless 15m and 30m both agree, the 1-hour agrees, volume is at least 1.2× normal, there is room to a support/resistance level, the OI agrees, and the overall market trend is not against it. It becomes NO TRADE if the 1-hour or daily trend is against it, or if the option chain's price and the chart's price disagree by more than 1% (data not reliable).
+7. **Contract:** ATM or 1 strike in the money, nearest weekly expiry with more than a day left, real lot size, checked for bid/ask spread, volume and OI.
+8. **Levels on the option premium:** entry zone, stop loss (from the chart's structure / ATR, converted to premium), Target 1/2/3, trailing stop. Reward:risk must be at least 1.5. The original entry and stop are never changed afterwards; trailing is shown separately.
+
+**Lists:** A. Top CE BUY, B. Top PE BUY, C. Watchlist (WATCH), D. No trade / avoid (with the reason), E. Active paper trades, F. Signal history, G. Backtest. One signal per symbol and direction at a time (no duplicates).
+
+**Market overview:** NIFTY 50, BANK NIFTY, FIN NIFTY, INDIA VIX, market trend, advance/decline (needs the live feed), sentiment and sector strength. The status label says **LIVE** (live feed ticking), **DELAYED** (prices from requests about every minute), **STALE** (no fresh prices: no new signals) or **CLOSED**.
+
+**Paper trading only.** Each STRONG / VERY STRONG signal opens a paper trade (no order is ever sent to Fyers). It is checked every 15 seconds: stop loss, Target 1 (stop moves to entry), Target 2 (stop moves to Target 1), Target 3, trend reversal / setup invalid, and the time exit at 15:20 (NSE) or 23:20 (MCX). Gaps through the stop are filled at the actual price, not the stop. Every signal, update and exit is written to an audit log (`/api/pro/log`).
+
+**Backtest (G).** Choose the number of sessions (default 25) and the threshold, then tap Run. It replays the same rules candle by candle with no look-ahead (each decision uses only candles already closed), and charges Fyers brokerage, STT, exchange, SEBI, stamp duty, GST and 0.5% slippage. It reports total trades, win rate, average win/loss, profit factor, max drawdown, expectancy, and results by setup, time of day, market condition and instrument. It needs your Fyers login, uses about 30 Fyers requests and is cached for the day. Limits: past option prices are not available from Fyers, so premiums are **estimated** (Black-Scholes with India VIX or recent volatility), and OI / breadth are not in the backtest (their parts are left out and the score rescaled). Treat it as a check of the rules, not a promise.
+
+**Optional settings on Render (Environment):** `PRO_THR_STRONG` (default 75), `PRO_THR_VERY` (85), `PRO_THR_WATCH` (65), `PRO_MIN_RR` (1.5). Nothing needs adding for it to work.
+
+**Saved state** (paper trades, history, log) is kept in `/tmp` on Render and is lost when Render redeploys or restarts the service.
+
 ## Phone notifications
 
 Tap **📱 Notify** at the top, choose what to be told about, and tap **Turn on** (allow notifications when the phone asks). Notifications arrive even with the site closed. They use the phone's own free browser notifications (Web Push): no app, no account, nothing paid, and nothing to add on Render (the keys are worked out from the Fyers secret).
