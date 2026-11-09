@@ -157,6 +157,61 @@ async function access() {
   throw new Error(NEED_LOGIN);
 }
 
+/* ------------------------------------------------- background login -- */
+/* Background work (8:00 AM outlook, scans, signals, notifications) must run with no browser open.
+   Fyers gives a "refresh token" with each login, valid for 15 days; with the account's 4-digit PIN it gives a
+   new day's access token (Fyers' official validate-refresh-token API). The PIN is read only from Render's
+   environment (FYERS_PIN) and never sent anywhere but Fyers. The refresh token is kept encrypted (AES-256-GCM,
+   key from the Fyers secret) in a file and in the owner's browser, so a server restart can recover it the next
+   time the site is opened. Only the account that first logs in (or FYERS_USER_ID, if set) is used in the background. */
+const PIN = env("FYERS_PIN"), OWNER_ID = env("FYERS_USER_ID").toUpperCase();
+const BGS = { access: null, exp: 0, error: null, seen: Date.now(), bg: true };
+const BG = { refresh: null, refreshExp: 0, fyId: OWNER_ID || null, state: "not set up", err: null, renewedAt: 0, renewing: null,
+  file: path.join(require("os").tmpdir(), "signal-desk-bg.json"), warnedDay: "" };
+const bgKey = crypto.createHash("sha256").update("signal-desk-bg|" + APP_ID + "|" + SECRET).digest();
+function bgSeal(o) { const iv = crypto.randomBytes(12), c = crypto.createCipheriv("aes-256-gcm", bgKey, iv);
+  const enc = Buffer.concat([c.update(JSON.stringify(o), "utf8"), c.final()]); return Buffer.concat([iv, c.getAuthTag(), enc]).toString("base64url"); }
+function bgOpen(t) { try { const b = Buffer.from(String(t), "base64url"), d = crypto.createDecipheriv("aes-256-gcm", bgKey, b.subarray(0, 12));
+  d.setAuthTag(b.subarray(12, 28)); return JSON.parse(Buffer.concat([d.update(b.subarray(28)), d.final()]).toString("utf8")); } catch (e) { return null; } }
+const fyIdOf = tok => { try { const j = JSON.parse(Buffer.from(tok.split(".")[1], "base64url").toString()); return String(j.fy_id || j.sub || "").toUpperCase() || null; } catch (e) { return null; } };
+const bgBlob = () => BG.refresh ? bgSeal({ r: BG.refresh, x: BG.refreshExp, f: BG.fyId }) : null;
+function bgSave() { try { require("fs").writeFileSync(BG.file, JSON.stringify({ blob: bgBlob(), a: BGS.access ? bgSeal({ a: BGS.access }) : null })); } catch (e) {} }
+function bgAdopt(refresh, refreshExp, fyId, accessTok) {       // a login (or a restored blob) of the owner's account
+  if (!refresh || !(refreshExp > Date.now())) return false;
+  if (BG.fyId && fyId && BG.fyId !== fyId) return false;      // another person's login is never used in the background
+  if (OWNER_ID && fyId && fyId !== OWNER_ID) return false;
+  BG.refresh = refresh; BG.refreshExp = refreshExp; if (fyId) BG.fyId = fyId;
+  if (accessTok && jwtExp(accessTok) > Date.now() + 60000) { BGS.access = accessTok; BGS.exp = jwtExp(accessTok); }
+  BG.state = PIN ? "ready" : "needs FYERS_PIN"; BG.err = null; bgSave(); return true; }
+try { const j = JSON.parse(require("fs").readFileSync(BG.file, "utf8")), o = j.blob && bgOpen(j.blob), a = j.a && bgOpen(j.a);
+  if (o) bgAdopt(o.r, o.x, o.f, a && a.a); } catch (e) {}
+async function bgRenew(force) {                                  // a fresh access token from the refresh token + PIN
+  if (BGS.access && Date.now() < BGS.exp - 30 * 60000 && !force) return true;
+  if (!BG.refresh) { BG.state = "needs one Fyers login"; return false; }
+  if (Date.now() > BG.refreshExp) { BG.refresh = null; BG.state = "needs one Fyers login (the 15-day refresh token ran out)"; bgSave(); return false; }
+  if (!PIN) { BG.state = "needs FYERS_PIN on Render"; return !!(BGS.access && Date.now() < BGS.exp - 60000); }
+  if (BG.renewing) return BG.renewing;
+  BG.renewing = (async () => {
+    try {
+      const r = await fetch(API + "/validate-refresh-token", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ grant_type: "refresh_token", appIdHash: APP_HASH, refresh_token: BG.refresh, pin: PIN }), signal: AbortSignal.timeout(20000) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.s !== "ok" || !j.access_token) {
+        const msg = j.message || ("Fyers answered HTTP " + r.status);
+        BG.err = msg; BG.state = "renewal failed: " + msg;
+        if (/pin/i.test(msg)) BG.state = "Fyers refused the PIN: check FYERS_PIN on Render";
+        else if (r.status === 401 || /refresh|expired|invalid token/i.test(msg)) { BG.refresh = null; BG.state = "needs one Fyers login (refresh token no longer accepted)"; bgSave(); }
+        return false; }
+      BGS.access = j.access_token; BGS.exp = jwtExp(j.access_token); BGS.error = null; BG.renewedAt = Date.now(); BG.err = null; BG.state = "ready";
+      bgSave(); setTimeout(feedEnsure, 300); return true;
+    } catch (e) { BG.err = e.message; BG.state = "renewal failed: " + e.message; return false; }
+    finally { BG.renewing = null; }
+  })();
+  return BG.renewing; }
+const bgValid = () => !!BGS.access && (!BGS.exp || Date.now() < BGS.exp - 60000);
+function bgStatus() { return { state: bgValid() ? "ready" : BG.state, pin: !!PIN, owner: BG.fyId ? BG.fyId.slice(0, 2) + "***" + BG.fyId.slice(-2) : null,
+  refreshDaysLeft: BG.refresh ? Math.max(0, Math.floor((BG.refreshExp - Date.now()) / 864e5)) : null, accessUntil: bgValid() ? BGS.exp : null, renewedAt: BG.renewedAt || null, err: BG.err }; }
+
 /* ------------------------------------------------------- Fyers requests -- */
 /* Fyers' free Standard plan allows 5 data requests a second, 50 a minute and 5,000 a day
    (quotes, option chain and history all count). Going over the per-minute limit more than
@@ -178,7 +233,7 @@ const BLOCK_MSG = "Fyers has paused this app's data requests for the rest of tod
 const USAGE_FILE = require("path").join(require("os").tmpdir(), "signal-desk-fyers-usage.json");
 try { const u = JSON.parse(require("fs").readFileSync(USAGE_FILE, "utf8"));       // survives a restart of the server process
   if (u.day === new Date(Date.now() + 19800000).toISOString().slice(0, 10)) { RL.day = u.day; RL.dayCount = u.count || 0; RL.limitedToday = u.limited || 0; RL.blockedDay = u.blocked || ""; }
-  RL.sent = (u.sent || []).filter(t => Date.now() - t < 60000); } catch (e) {}     // the last minute's requests still count after a restart
+  RL.sent = (u.sent || []).filter(t => Date.now() - t < 60000 && t <= Date.now()); } catch (e) {}     // the last minute's requests still count after a restart
 let usageSaveT = null;
 function saveUsage() { if (usageSaveT) return; usageSaveT = setTimeout(() => { usageSaveT = null;
   try { require("fs").writeFileSync(USAGE_FILE, JSON.stringify({ day: RL.day, count: RL.dayCount, limited: RL.limitedToday, blocked: RL.blockedDay, sent: RL.sent.filter(t => Date.now() - t < 60000) })); } catch (e) {} }, 1000); }
@@ -559,10 +614,11 @@ app.get("/auth/callback", async (req, res) => {
   try {
     const j = await exchangeCode(String(code));
     setAccess(j.access_token); setTimeout(feedEnsure, 500);
+    const owner = j.refresh_token && bgAdopt(j.refresh_token, Date.now() + 15 * 864e5 - 3600e3, fyIdOf(j.access_token), j.access_token);
     console.log(`  a visitor logged in with Fyers (${[...sessions.values()].filter(v => v.access).length} logged in now)`);
     // Keep the tokens in this browser too, so the site can wake the server
     // after it sleeps without another login.
-    const keep = JSON.stringify({ a: j.access_token }).replace(/</g, "\\u003c");
+    const keep = JSON.stringify(Object.assign({ a: j.access_token }, owner ? { r: bgBlob() } : {})).replace(/</g, "\\u003c");
     res.send(page("Logged in", `<p>Opening Signal Desk…</p><script>
       try{ localStorage.setItem("sd_fy", JSON.stringify(${keep})); }catch(e){}
       location.replace("/");</script>`));
@@ -575,7 +631,13 @@ app.post("/auth/logout", (_req, res) => { dropAccess(NEED_LOGIN); res.json({ ok:
    browser hands its token back; it is accepted only if Fyers still honours it. */
 app.post("/auth/restore", async (req, res) => {
   const a = typeof req.body?.a === "string" && req.body.a.length < 4000 ? req.body.a : "";
+  // the owner's browser also returns the encrypted refresh token, so background work restarts after a server restart
+  if (!BG.refresh && typeof req.body?.r === "string" && req.body.r.length < 4000) { const o = bgOpen(req.body.r); if (o) { bgAdopt(o.r, o.x, o.f); bgRenew(); } }
   try {
+    // the owner's day token ran out: a new one from the refresh token (only for the owner's own browser blob)
+    if (!hasAccess() && (!a || (jwtExp(a) && Date.now() > jwtExp(a) - 60000)) && typeof req.body?.r === "string") {
+      const o = bgOpen(req.body.r); if (o && o.r === BG.refresh && await bgRenew()) { setAccess(BGS.access); setTimeout(feedEnsure, 500); }
+    }
     if (!hasAccess()) {
       if (!a || (jwtExp(a) && Date.now() > jwtExp(a) - 60000)) throw new Error(NEED_LOGIN);
       setAccess(a);
@@ -583,11 +645,15 @@ app.post("/auth/restore", async (req, res) => {
       if (RL.blockedDay !== istDay(Date.now())) await fy("/quotes", { symbols: "NSE:NIFTY50-INDEX" });
       setTimeout(feedEnsure, 500);
     }
-    res.json({ ok: hasAccess(), a: auth.access });
+    res.json({ ok: hasAccess(), a: auth.access, r: BG.refresh && fyIdOf(auth.access || "") === BG.fyId ? bgBlob() : null });
   } catch (e) {
     // Only a clear "token rejected" answer from Fyers ends the login. If Fyers is
     // merely slow or unreachable, keep the token so the site recovers by itself.
-    if (e.message === NEED_LOGIN || !hasAccess()) { dropAccess(NEED_LOGIN); return res.json({ ok: false }); }
+    if (e.message === NEED_LOGIN || !hasAccess()) { dropAccess(NEED_LOGIN);
+      // the browser's day token was refused: the owner's browser can still use the background login
+      const o = typeof req.body?.r === "string" ? bgOpen(req.body.r) : null;
+      if (o && o.r === BG.refresh && (bgValid() || await bgRenew(true))) { setAccess(BGS.access); setTimeout(feedEnsure, 500); return res.json({ ok: true, a: auth.access, r: bgBlob() }); }
+      return res.json({ ok: false }); }
     res.json({ ok: true, a: auth.access, unverified: e.message });
   }
 });
@@ -665,6 +731,8 @@ const FEED_MAX = 3000;
 const feedInfo = () => ({ state: FEED.state, symbols: FEED.subs.size, ticking: FEED.last.size, ticks: FEED.ticks,
   lastTickAgo: FEED.lastTick ? Math.round((Date.now() - FEED.lastTick) / 1000) : null, error: FEED.err });
 function bestSession() {
+  if (bgValid()) { BGS.seen = Date.now(); return BGS; }
+  if (BG.refresh && PIN) bgRenew();                           // renews in the background; a visitor's login is used meanwhile
   return [...sessions.values()].filter(v => v.access && (!v.exp || Date.now() < v.exp - 60000)).sort((a, b) => b.seen - a.seen)[0] || null;
 }
 function feedClose() {
@@ -763,9 +831,25 @@ setInterval(() => { try { feedEnsure(); } catch (e) { FEED.err = e.message; } },
 const DAYS = { 1: 5, 3: 6, 5: 12, 15: 30, 30: 60, 60: 90, 240: 90 };
 
 /* Is this instrument's market open now (IST)? Slightly wider than the session so the last candle is caught. */
+/* Trading holidays 2026 (NSE / BSE equity and F&O). MCX: the morning session is shut on these days, the evening
+   session (from 17:00) is open except where listed. Add more with EXTRA_HOLIDAYS=2027-01-26,... on Render. */
+const NSE_HOL = new Set(["2026-01-26","2026-03-03","2026-03-26","2026-03-31","2026-04-03","2026-04-14","2026-05-01","2026-05-28","2026-06-26",
+  "2026-09-14","2026-10-02","2026-10-20","2026-11-10","2026-11-24","2026-12-25"].concat(env("EXTRA_HOLIDAYS").split(",").map(x => x.trim()).filter(x => /^\d{4}-\d\d-\d\d$/.test(x))));
+const MCX_EVE_SHUT = new Set(["2026-01-01","2026-01-26","2026-04-03","2026-10-02","2026-12-25"]);
+const HOL_NAME = { "2026-11-10": "Diwali (Balipratipada)", "2026-11-24": "Guru Nanak Jayanti", "2026-12-25": "Christmas" };
+const isMcx = u => u.seg === "MCX" || String(u.fy || "").startsWith("MCX");
+// MCX closes at 23:30 IST while the US is on summer time, 23:55 otherwise (2nd Sunday of March to 1st Sunday of November)
+function mcxClose(ms) { const d = new Date(ms + IST), y = d.getUTCFullYear();
+  const sun = (m, n) => { const f = new Date(Date.UTC(y, m, 1)).getUTCDay(); return Date.UTC(y, m, 1 + ((7 - f) % 7) + 7 * (n - 1)); };
+  return ms >= sun(2, 2) && ms < sun(10, 1) ? 1410 : 1435; }
+function sessionOf(u, ms) {                                     // [open, close] minutes IST for that day, or null when shut
+  const day = istDay(ms), wd = new Date(ms + IST).getUTCDay(); if (wd === 0 || wd === 6) return null;
+  if (isMcx(u)) { if (NSE_HOL.has(day)) return MCX_EVE_SHUT.has(day) ? null : [1020, mcxClose(ms)]; return [u.open || 540, mcxClose(ms)]; }
+  return NSE_HOL.has(day) ? null : [u.open || 555, u.close || 930]; }
+const tradingDay = ms => { const wd = new Date(ms + IST).getUTCDay(); return wd >= 1 && wd <= 5 && !NSE_HOL.has(istDay(ms)); };
 function openNow(u) {
-  const x = new Date(Date.now() + IST), wd = x.getUTCDay(), m = x.getUTCHours() * 60 + x.getUTCMinutes();
-  return wd >= 1 && wd <= 5 && m >= (u.open || 555) - 5 && m <= (u.close || 930) + 10;
+  const x = new Date(Date.now() + IST), m = x.getUTCHours() * 60 + x.getUTCMinutes(), s = sessionOf(u, Date.now());
+  return !!s && m >= s[0] - 5 && m <= s[1] + 10;
 }
 const anyOpen = () => UNIVERSE.some(u => u.fy && openNow(u));
 app.get("/api/candles", guard(async (req, res) => {
@@ -993,12 +1077,38 @@ function pushSend(kind, key, msg) {
   if (!PUSH.ok || PUSH.sent.has(key)) return; PUSH.sent.add(key);
   if (PUSH.sent.size > 5000) PUSH.sent = new Set([...PUSH.sent].slice(-2000));
   for (const x of [...PUSH.subs.values()]) {
-    if (!(x.prefs || {})[kind]) continue;
+    const pf = x.prefs || {}; if (kind === "report" ? pf.report === false : !pf[kind]) continue;
     webpush.sendNotification(x.sub, JSON.stringify(msg), { TTL: 900, urgency: "high" })
       .then(() => { x.okAt = Date.now(); x.fails = 0; })
       .catch(e => { if (e.statusCode === 404 || e.statusCode === 410) { PUSH.subs.delete(x.sub.endpoint); pushSave(); } else { x.fails = (x.fails || 0) + 1; x.err = e.message; } });
   }
 }
+/* ------------------------------------------------ Telegram alerts (optional) --
+   A Telegram bot of your own (free, made with @BotFather) can send every alert as a message too:
+   TELEGRAM_BOT_TOKEN = the bot's token, TELEGRAM_ALERT_CHAT_ID = your chat id (send /id to the bot to see it;
+   several ids separated by commas). Both only on Render, never in GitHub. */
+const TGA = { chats: env("TELEGRAM_ALERT_CHAT_ID").split(",").map(x => x.trim()).filter(x => /^-?\d{3,20}$/.test(x)),
+  kinds: new Set((env("TELEGRAM_ALERT_KINDS") || "pro,report").split(",").map(x => x.trim())), q: [], busy: false, sent: new Set(), err: null, okAt: 0, count: 0 };
+const tgEsc = t => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function tgSend(text, chats) {
+  const tok = env("TELEGRAM_BOT_TOKEN"); if (!tok) return;
+  for (const c of chats || TGA.chats) TGA.q.push({ c, text: String(text).slice(0, 4000) });
+  if (TGA.busy) return; TGA.busy = true;
+  (async () => { while (TGA.q.length) { const m = TGA.q.shift();
+      try { const r = await fetch(`${env("TELEGRAM_API_BASE") || "https://api.telegram.org"}/bot${tok}/sendMessage`, { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: m.c, text: m.text, parse_mode: "HTML", disable_web_page_preview: true }), signal: AbortSignal.timeout(15000) });
+        const j = await r.json().catch(() => ({}));
+        if (j.ok) { TGA.okAt = Date.now(); TGA.count++; TGA.err = null; }
+        else { TGA.err = j.description || ("HTTP " + r.status); if (j.parameters && j.parameters.retry_after) { TGA.q.unshift(m); await sleep(j.parameters.retry_after * 1000); continue; } }
+      } catch (e) { TGA.err = e.message; }
+      await sleep(1100); }                                         // Telegram allows about one message a second per chat
+    TGA.busy = false; })(); }
+/* One alert to phones (web push) and Telegram, once per key: a signal's later changes have their own keys. */
+function notify(kind, key, msg, text, tgKind) {
+  pushSend(kind, key, msg);
+  if (!TGA.chats.length || !TGA.kinds.has(tgKind || kind) || TGA.sent.has(key)) return;
+  TGA.sent.add(key); if (TGA.sent.size > 5000) TGA.sent = new Set([...TGA.sent].slice(-2000));
+  tgSend(text || `<b>${tgEsc(msg.title)}</b>\n${tgEsc(msg.body || "")}${BASE.startsWith("https") ? "\n" + BASE : ""}`); }
 app.get("/api/push/key", (_req, res) => res.json({ ok: PUSH.ok, key: PUSH.pub, error: PUSH.err }));
 app.post("/api/push/sub", (req, res) => {
   const sub = req.body && req.body.sub, p = (req.body && req.body.prefs) || {};
@@ -1006,7 +1116,7 @@ app.post("/api/push/sub", (req, res) => {
     return res.status(400).json({ error: "not a valid push subscription" });
   if (!PUSH.subs.has(sub.endpoint) && PUSH.subs.size >= 50) return res.status(429).json({ error: "too many devices" });
   PUSH.subs.set(sub.endpoint, { sub: { endpoint: sub.endpoint, keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) } },
-    prefs: { watch: p.watch !== false, fno: !!p.fno, tg: p.tg !== false }, at: Date.now() });
+    prefs: { watch: p.watch !== false, fno: !!p.fno, tg: p.tg !== false, report: p.report !== false }, at: Date.now() });
   pushSave(); res.json({ ok: true, devices: PUSH.subs.size });
 });
 app.post("/api/push/unsub", (req, res) => { const e = req.body && req.body.endpoint; if (e) { PUSH.subs.delete(String(e)); pushSave(); } res.json({ ok: true }); });
@@ -1016,12 +1126,24 @@ app.post("/api/push/test", (req, res) => {
   webpush.sendNotification(x.sub, JSON.stringify({ title: "Signal Desk", body: "Test notification: phone notifications are working.", tag: "test" }), { TTL: 60 })
     .then(() => res.json({ ok: true })).catch(e => res.status(502).json({ error: "the push service refused it: " + e.message }));
 });
-/* With phones signed up, stay awake on weekdays from 09:00 to 23:35 IST (Render's free plan sleeps after 15 minutes
-   without requests, and a sleeping server can't send anything). About 340 of the 750 free hours a month. */
+/* Staying awake. Render's free plan stops a server after 15 minutes without visits, and a stopped server can't
+   analyse or notify (it also forgets its saved files). KEEP_AWAKE on Render:
+     "always" (default once background login, phones or Telegram alerts are set up): a visit to itself every
+              10 minutes, day and night. One service uses about 744 of Render's 750 free hours a month, so this
+              is fine only if it is the only free service on the Render account.
+     "market": weekdays 07:30-24:00 IST only (about 380 hours; the background login must then be renewed by
+              opening the site once after each weekend, or the GitHub wake-up below keeps it going).
+     "off":    never.
+   The GitHub workflow .github/workflows/wake.yml (free, in your own repository) also visits the site before 8 AM
+   on weekdays, in case Render restarted it. */
+const KEEP = (env("KEEP_AWAKE") || "").toLowerCase();
 setInterval(() => {
-  if (!PUSH.subs.size || !BASE.startsWith("https")) return;
+  if (!BASE.startsWith("https") || KEEP === "off") return;
+  const wanted = !!(BG.refresh || PUSH.subs.size || (typeof TGA !== "undefined" && TGA.chats.length));
+  if (!wanted && KEEP !== "always" && KEEP !== "market") return;
   const x = new Date(Date.now() + IST), wd = x.getUTCDay(), m = x.getUTCHours() * 60 + x.getUTCMinutes();
-  if (wd >= 1 && wd <= 5 && m >= 535 && m <= 1415) fetch(BASE + "/healthz", { signal: AbortSignal.timeout(20000) }).catch(() => {});
+  if (KEEP === "market" && !(wd >= 1 && wd <= 5 && m >= 450)) return;
+  fetch(BASE + "/healthz", { signal: AbortSignal.timeout(20000) }).catch(() => {});
 }, 10 * 60000).unref();
 
 /* ------------------------------------------------------ all-F&O scanner -- */
@@ -1048,7 +1170,7 @@ function loadEngine() {
     const box = { S: { tf: 5, universe: [], chainCache: {}, ctx: {}, sigs: {}, bars: {}, quotes: {}, otr: {}, page: "", tab: "" },
       store: { get: (k, d) => d, set() {} }, localStorage: { getItem: () => null, setItem() {} }, document: {}, window: {}, C: {}, console };
     vm.createContext(box);
-    EN = vm.runInContext(src + "\n;({analyseTF,engine,engineNormal,engineTrend,engineORB,aggregate,toBars,bs,impliedVol,demaOf,demaJudge,PRO,proPrep,proEval,proScan,proTrack,proTrend,proVol,proGrade,proCharges});", box, { timeout: 5000 });
+    EN = vm.runInContext(src + "\n;({analyseTF,engine,engineNormal,engineTrend,engineORB,aggregate,toBars,bs,impliedVol,demaOf,demaJudge,PRO,proPrep,proEval,proScan,proTrack,proTrend,proVol,proGrade,proCharges,proTech});", box, { timeout: 5000 });
     SCAN.engineOk = true;
   } catch (e) { SCAN.engineErr = e.message; console.log("  scanner: rules not loaded — " + e.message); }
 }
@@ -1083,8 +1205,8 @@ async function scanOption(u, s) {               // the contract to buy, its prem
 }
 async function scanCycle() {
   if (!EN || SCAN.running) return;
-  const sess = [...sessions.values()].filter(v => v.access && (!v.exp || Date.now() < v.exp - 60000)).sort((a, b) => b.seen - a.seen)[0];
-  if (!sess || (Date.now() - sess.seen > 4 * 3600e3 && !PUSH.subs.size)) return;   // nobody has used the site for hours and no phone is signed up: don't spend their Fyers allowance
+  const sess = bestSession();
+  if (!sess || (!sess.bg && Date.now() - sess.seen > 4 * 3600e3 && !PUSH.subs.size && !TGA.chats.length)) return;   // nobody has used the site for hours and no phone is signed up: don't spend their Fyers allowance
   SCAN.running = true; SCAN.started = Date.now(); let cpu = 0;
   try {
     await visitor.run(sess, () => lane.run("low", async () => {
@@ -1179,7 +1301,12 @@ function scanNotify() {
 // run 25 s after every 5-minute candle closes (IST is a whole number of 5-minute steps from UTC)
 function scheduleScan() {
   const step = 300000, wait = step - (Date.now() % step) + 25000;
-  setTimeout(() => { scanCycle().catch(e => { SCAN.lastErr = e.message; }).then(() => proCycle()).catch(e => { PROS.err = e.message; }).finally(scheduleScan); }, wait).unref();
+  setTimeout(() => { scanCycle().catch(e => { SCAN.lastErr = e.message; }).finally(scheduleScan); }, wait).unref();
+}
+// the Pro engine has its own clock (it never waits for the all-F&O scan, which can take minutes without the live feed)
+function schedulePro() {
+  const step = 300000, wait = step - (Date.now() % step) + 20000;
+  setTimeout(() => { proCycle().catch(e => { PROS.err = e.message; }).finally(schedulePro); }, wait).unref();
 }
 app.get("/api/scan", guard(async (_req, res) => {
   if (!SCAN.at && !SCAN.running) scanCycle().catch(() => {});               // first visitor of the day starts it
@@ -1199,8 +1326,13 @@ app.get("/api/scan", guard(async (_req, res) => {
 const PROCFG = { strong: +env("PRO_THR_STRONG") || 75, veryStrong: +env("PRO_THR_VERY") || 85, watch: +env("PRO_THR_WATCH") || 65, minRR: +env("PRO_MIN_RR") || 1.5 };
 const PROS = { day: "", signals: [], avoid: [], seenKeys: new Set(), lastTs: new Map(), market: null, overview: null, at: 0, busy: false, err: null,
   paper: [], file: path.join(require("os").tmpdir(), "signal-desk-pro.json"), logFile: path.join(require("os").tmpdir(), "signal-desk-pro-log.jsonl"), bt: new Map() };
-try { const j = JSON.parse(require("fs").readFileSync(PROS.file, "utf8")); PROS.paper = j.paper || []; PROS.hist = j.hist || []; } catch (e) { PROS.hist = []; }
-const proSave = () => { try { require("fs").writeFileSync(PROS.file, JSON.stringify({ paper: PROS.paper.filter(t => Date.now() - t.created < 60 * 864e5), hist: PROS.hist.filter(s => Date.now() - s.created < 60 * 864e5) })); } catch (e) {} };
+try { const j = JSON.parse(require("fs").readFileSync(PROS.file, "utf8")); PROS.paper = j.paper || []; PROS.hist = j.hist || [];
+  PROS.signals = (j.signals || []).filter(x => istDay(x.at) === istDay(Date.now())); PROS.reports = j.reports || {}; PROS.btCalib = j.btCalib || null; PROS.val = j.val || null;
+  for (const x of PROS.signals) PROS.seenKeys.add(x.state === "WATCHLIST" ? x.key + "|W" : x.key); if (PROS.signals.length) PROS.day = istDay(Date.now()); } catch (e) { PROS.hist = []; }
+PROS.reports = PROS.reports || {};
+const proSave = () => { try { const live = new Set(PROS.signals.map(x => x.id));
+  require("fs").writeFileSync(PROS.file, JSON.stringify({ paper: PROS.paper.filter(t => Date.now() - t.created < 60 * 864e5), signals: PROS.signals,
+    hist: PROS.hist.filter(s => Date.now() - s.created < 60 * 864e5 && !live.has(s.id)).concat(PROS.signals), reports: PROS.reports, btCalib: PROS.btCalib, val: PROS.val || null })); } catch (e) {} };
 const proLog = (id, event, data) => { try { require("fs").appendFileSync(PROS.logFile, JSON.stringify({ at: new Date().toISOString(), id, event, data }) + "\n"); } catch (e) {} };
 const SECTORS = { "NSE:NIFTYIT-INDEX": "IT", "NSE:NIFTYBANK-INDEX": "Bank", "NSE:NIFTYPSUBANK-INDEX": "PSU bank", "NSE:NIFTYPVTBANK-INDEX": "Private bank", "NSE:FINNIFTY-INDEX": "Financial services",
   "NSE:NIFTYAUTO-INDEX": "Auto", "NSE:NIFTYPHARMA-INDEX": "Pharma", "NSE:NIFTYFMCG-INDEX": "FMCG", "NSE:NIFTYMETAL-INDEX": "Metal", "NSE:NIFTYENERGY-INDEX": "Energy",
@@ -1218,7 +1350,9 @@ const STOCK_SECTOR = (() => { const m = {}, add = (sec, list) => list.split(" ")
   add("NSE:NIFTYENERGY-INDEX", "RELIANCE ONGC NTPC POWERGRID BPCL IOC GAIL TATAPOWER ADANIGREEN");
   add("NSE:NIFTYREALTY-INDEX", "DLF GODREJPROP OBEROIRLTY PRESTIGE LODHA");
   add("NSE:NIFTYINFRA-INDEX", "LT ADANIPORTS ULTRACEMCO GRASIM BHARTIARTL"); return m; })();
-const OVERVIEW_SYMS = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:FINNIFTY-INDEX", "NSE:INDIAVIX-INDEX"];
+const OVERVIEW_BASE = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:FINNIFTY-INDEX", "NSE:INDIAVIX-INDEX"];
+const prioUnits = () => (typeof PRIORITY === "undefined" ? [] : PRIORITY).map(t => UNIVERSE.find(u => u.tkr === t && u.fy)).filter(Boolean);
+const OVERVIEW_SYMS_ = () => [...new Set(OVERVIEW_BASE.concat(prioUnits().map(u => u.fy)))];
 function proBreadth() {                          // advance / decline of F&O stocks, from the live feed
   if (FEED.state !== "live") return null;
   let adv = 0, dec = 0; for (const u of scanList()) if (u.seg === "EQ") { const x = FEED.last.get(u.fy); if (x && x.chp != null) { if (x.chp > 0.05) adv++; else if (x.chp < -0.05) dec++; } }
@@ -1241,7 +1375,9 @@ function oiCtx(ch) {
   const res = above.reduce((a, r) => !a || r.ce.oi > a.ce.oi ? r : a, null), sup = below.reduce((a, r) => !a || r.pe.oi > a.pe.oi ? r : a, null);
   const atm = near[0], bu = leg => leg && leg.chgOi != null && leg.chg != null ? (leg.chg > 0 && leg.chgOi > 0 ? "long build-up" : leg.chg > 0 && leg.chgOi < 0 ? "short covering" : leg.chg < 0 && leg.chgOi > 0 ? "short build-up" : leg.chg < 0 && leg.chgOi < 0 ? "long unwinding" : "no clear build-up") : "not known";
   const ceB = bu(atm && atm.ce), peB = bu(atm && atm.pe), L = n => (Math.abs(n) >= 1e5 ? (n / 1e5).toFixed(1) + "L" : String(Math.round(n)));
-  return { pcr, dCE, dPE, res: res && res.strike, sup: sup && sup.strike, ceB, peB, atm: atm && atm.strike,
+  // max pain: the expiry price at which option buyers together would get the least (writers pay the least)
+  let maxPain = null, best = Infinity; for (const k of rows) { let pay = 0; for (const r of rows) pay += (r.ce.oi || 0) * Math.max(0, k.strike - r.strike) + (r.pe.oi || 0) * Math.max(0, r.strike - k.strike); if (pay < best) { best = pay; maxPain = k.strike; } }
+  return { pcr, dCE, dPE, res: res && res.strike, sup: sup && sup.strike, ceB, peB, atm: atm && atm.strike, maxPain,
     wallFor: d => d > 0 ? (res && res.strike) : (sup && sup.strike),
     score: d => { let s = 0;
       if (pcr != null) s += d > 0 ? (pcr >= 1.2 ? 5 : pcr >= 1.0 ? 3 : pcr >= 0.8 ? 1 : 0) : (pcr <= 0.7 ? 5 : pcr <= 0.9 ? 3 : pcr <= 1.1 ? 1 : 0);
@@ -1250,7 +1386,7 @@ function oiCtx(ch) {
       const b = d > 0 ? ceB : peB; if (b === "long build-up" || b === "short covering") s += 3;
       return s; },
     text: d => `PCR ${pcr == null ? "—" : pcr.toFixed(2)}; near the money put OI ${dPE >= 0 ? "+" : ""}${L(dPE)} vs call OI ${dCE >= 0 ? "+" : ""}${L(dCE)} today (${dPE > dCE ? "put writing leads: supportive below" : "call writing leads: pressure above"}); `
-      + `most call OI at ${res ? res.strike : "—"} (resistance), most put OI at ${sup ? sup.strike : "—"} (support); ATM ${d > 0 ? "call" : "put"}: ${d > 0 ? ceB : peB}` }; }
+      + `most call OI at ${res ? res.strike : "—"} (resistance), most put OI at ${sup ? sup.strike : "—"} (support); max pain ${maxPain == null ? "—" : maxPain}; ATM ${d > 0 ? "call" : "put"}: ${d > 0 ? ceB : peB}` }; }
 /* The contract: at the money or one strike in the money (one out only when those are thin), liquid, with a tight spread. */
 function selectContract(ch, d, u) {
   const ty = d > 0 ? "CE" : "PE", k = ty === "CE" ? "ce" : "pe", spot = ch.spot, rows = ch.rows.slice().sort((a, b) => a.strike - b.strike);
@@ -1289,37 +1425,99 @@ function futFor(u) {                              // the near-month future of an
   if (u.seg !== "IDX") return null; const f = (FUTS.get(undKey(u)) || []).filter(x => x.exp * 1000 > Date.now() + 864e5).sort((a, b) => a.exp - b.exp)[0];
   return f ? { tkr: f.t, fy: f.t, name: f.t, seg: "FUT", open: u.open, close: u.close } : null; }
 const lastClosed = (b, m) => { let i = b.length - 1; while (i >= 0 && b[i].ts + m * 60000 > Date.now()) i--; return i; };
-async function proPrepLive(u) {
-  const c = await candlesOf(u, 5), b = EN.toBars(c.candles); if (b.length < 80) throw new Error("not enough 5-minute history");
-  let fut = null; const fu = futFor(u); if (fu) { try { fut = EN.toBars((await candlesOf(fu, 5)).candles); } catch (e) {} }
+async function proPrepLive(u, hot) {
+  const c = await candlesOf(u, 5, hot), b = EN.toBars(c.candles); if (b.length < 80) throw new Error("not enough 5-minute history");
+  let fut = null; const fu = futFor(u); if (fu) { try { fut = EN.toBars((await candlesOf(fu, 5, hot)).candles); } catch (e) {} }
   let D = null; try { D = EN.demaOf(EN.toBars((await dailyOf(u)).candles), b[b.length - 1].day); } catch (e) {}
   return { P: EN.proPrep(u, b, fut), D }; }
+const PRIORITY = (env("PRIORITY") || "NIFTY,SENSEX,CRUDEOIL,HDFCBANK").split(",").map(x => x.trim().toUpperCase()).filter(Boolean);
+const PRO_LIVE = new Set(["WAITING", "ACTIVE", "TARGET 1 HIT", "TARGET 2 HIT"]);
+const isLive = s => PRO_LIVE.has(s.state) && !s.ended;
+const PRO_LABEL = { WAITING: "CONFIRMED · AWAITING ENTRY", WATCHLIST: "WATCHLIST", ACTIVE: "ACTIVE", "TARGET 1 HIT": "TARGET 1 HIT", "TARGET 2 HIT": "TARGET 2 HIT",
+  "TARGET 3 HIT": "TARGET 3 HIT", "STOP LOSS HIT": "STOP LOSS HIT", "ENTRY MISSED": "ENTRY MISSED", CANCELLED: "CANCELLED", EXPIRED: "EXPIRED", EXITED: "EXITED", UPGRADED: "UPGRADED TO SIGNAL" };
+const proKind = sig => sig.priority || WATCH.has(sig.tkr) ? "watch" : "fno";
+const rs = v => v == null ? "—" : "₹" + (+(+v).toFixed(2)).toLocaleString("en-IN");
+function proAlertNew(sig) {
+  const c = sig.contract, p = sig.prem, h = sig.hist || {}, side = c.ty === "CE" ? "BUY CE" : "BUY PE", pc = v => v == null ? "—" : Math.round(v * 100) + "%";
+  const exitTxt = sig.exitMode === "T1" ? " (book all at Target 1)" : sig.exitMode === "T2" ? " (book all at Target 2)" : " (trail to Target 3)";
+  const L = [`<b>FINAL CONFIRMED SIGNAL</b>`, `INSTRUMENT: ${tgEsc(sig.sym)}`, `DIRECTION: ${side}`, `STRIKE PRICE: ${c.strike} ${c.ty} (${tgEsc(c.kind)})`, `EXPIRY: ${c.expiry}`,
+    `ENTRY RANGE: ${rs(p.entryLo)} – ${rs(p.entryMax)}`, `STOP LOSS: ${rs(p.sl)}`, `TARGET 1: ${rs(p.t1)}`, `TARGET 2: ${rs(p.t2)}`, `TARGET 3: ${rs(p.t3)}`, `EXIT PLAN: ${exitTxt.replace(/[()]/g, "").trim()} (the backtested exit)`,
+    `RISK-REWARD: 1 : ${p.rr.toFixed(1)}`, `CONFIDENCE SCORE: ${sig.score}/100 (${tgEsc(sig.grade)})`, `BACKTESTED STRATEGY: ${tgEsc(sig.strat || "—")}`,
+    `HISTORICAL WIN RATE: ${pc(h.win)} (backtest, out of sample ${h.from || ""} to ${h.to || ""}, estimated premiums)`, `PROFIT FACTOR: ${h.pf == null ? "—" : h.pf.toFixed(2)}`,
+    `NUMBER OF HISTORICAL TRADES: ${h.n || 0}${h.setupN ? ` (${h.setupN} with this setup)` : ""}`, `CURRENT MARKET TREND: ${tgEsc(sig.trend)} · market ${tgEsc(sig.marketTrend)}`,
+    `TECHNICAL CONFIRMATION: ${tgEsc((sig.why || []).slice(0, 4).join("; "))}`, `OPTIONS CHAIN CONFIRMATION: ${tgEsc(sig.oi)}`,
+    `REASON FOR ENTRY: ${tgEsc(sig.trigger)}`, `SIGNAL TIMESTAMP: ${new Date(sig.at + IST).toISOString().slice(0, 16).replace("T", " ")} IST`,
+    `Entry rule: ${tgEsc(sig.confirm)}`, `Invalid if: ${tgEsc(sig.invalidIf)}`, `Live record so far: ${tgEsc(sig.conf.text)}`, `<i>Paper-trading signal, not investment advice. Data: ${sig.data}.</i>`].join("\n");
+  notify(proKind(sig), "pro|" + sig.id + "|new", { title: `CONFIRMED: ${sig.sym} ${side} ${c.strike} (${sig.score}/100)`, tag: "pro-" + sig.id, url: "/",
+    body: `Entry ${rs(p.entryLo)}–${rs(p.entryMax)} · SL ${rs(p.sl)} · T1 ${rs(p.t1)} · backtest win ${pc(h.win)}, PF ${h.pf == null ? "—" : h.pf.toFixed(2)} (${h.n || 0} trades)` }, L, "pro"); }
+// a signal's status changes once and is said once (phones + Telegram); expiries and upgrades are silent
+function proSet(sig, state, why, px) {
+  if (sig.state === state) return; sig.state = state; sig.status = PRO_LABEL[state] || state; sig.ended = PRO_LIVE.has(state) ? null : Date.now();
+  sig.events.push({ at: Date.now(), what: sig.status + (why ? ": " + why : "") }); proLog(sig.id, "state", { state, why, px });
+  if (state === "EXPIRED" || state === "UPGRADED" || state === "WATCHLIST") return;
+  const c = sig.contract, name = `${sig.sym} ${c.strike} ${c.ty}`;
+  const body = state === "ACTIVE" ? `Entry confirmed at ${rs(px)}. SL ${rs(sig.prem.sl)} · T1 ${rs(sig.prem.t1)}` : `${why || ""}${px != null ? " · premium " + rs(px) : ""}`;
+  notify(proKind(sig), "pro|" + sig.id + "|" + state, { title: `${name} — ${sig.status}`, tag: "pro-" + sig.id, url: "/", body }, null, "pro"); }
+function proMarketTurn(a, b) {                     // an important reversal of the market's trend, said once per turn
+  if (!a || !b || !anyOpen()) return; const dir = x => /BULL/.test(x.cls) ? 1 : /BEAR/.test(x.cls) ? -1 : 0;
+  if (dir(a) && dir(b) && dir(a) !== dir(b) && Date.now() - (PROS.turnAt || 0) > 30 * 60000) { PROS.turnAt = Date.now();
+    notify("report", "turn|" + Date.now(), { title: `Market turned ${b.cls.toLowerCase()}`, tag: "market-turn", url: "/", body: `NIFTY ${b.nifty || ""} · BANK NIFTY ${b.bank || ""}. Was ${a.cls.toLowerCase()}.` }); } }
+// track record of a score band: closed paper trades (and the last backtest's out-of-sample trades); no number before 20 trades
+function calib(score) {
+  const band = score >= PROCFG.veryStrong ? "VERY STRONG" : score >= PROCFG.strong ? "STRONG" : "WATCH";
+  const lo = { "VERY STRONG": PROCFG.veryStrong, STRONG: PROCFG.strong, WATCH: PROCFG.watch }[band], hi = { "VERY STRONG": 101, STRONG: PROCFG.veryStrong, WATCH: PROCFG.strong }[band];
+  const pt = PROS.paper.filter(t => t.state === "CLOSED" && t.score >= lo && t.score < hi), n = pt.length, w = pt.filter(t => t.net > 0).length;
+  const bt = PROS.btCalib && PROS.btCalib[band];
+  const parts = [n >= 20 ? `${band} signals won ${Math.round(w / n * 100)}% of ${n} paper trades` : `${band}: ${n} paper trade${n === 1 ? "" : "s"} so far, too few to state a win rate`];
+  if (bt && bt.n >= 20) parts.push(`backtest (later sessions, not used for tuning): ${Math.round(bt.win * 100)}% of ${bt.n}`);
+  return { band, paper: n ? { n, win: w / n } : null, backtest: bt || null, text: parts.join("; ") }; }
+function setupWeak(setup) {
+  const t = PROS.paper.filter(x => x.state === "CLOSED" && x.setup === setup); if (t.length < 15) return null;
+  const gw = t.filter(x => x.net > 0).reduce((a, x) => a + x.net, 0), gl = -t.filter(x => x.net < 0).reduce((a, x) => a + x.net, 0), pf = gl ? gw / gl : 9;
+  return pf < 0.8 ? `${t.length} trades, profit factor ${pf.toFixed(2)}` : null; }
+function proGreeks(c, spot) {
+  if (!c.iv || !spot) return null; const g = EN.bs(spot, c.strike, c.T, c.iv, c.ty);
+  return { iv: c.iv * 100, delta: g.delta, gamma: g.gamma, theta: g.theta, vega: g.vega }; }
+const proTechText = (P, k, d) => { try { return EN.proTech ? EN.proTech(P, k, d) : null; } catch (e) { return null; } };
+// the option chain of the priority instruments, for the dashboard (strikes around the money, OI, change, IV, volume)
+function proChainKeep(u, ch, oc) {
+  PROS.chains = PROS.chains || {};
+  const rows = ch.rows.slice().sort((a, b) => Math.abs(a.strike - ch.spot) - Math.abs(b.strike - ch.spot)).slice(0, 13).sort((a, b) => a.strike - b.strike);
+  const T = Math.max(ch.daysOut / 365, 1 / (365 * 24)), leg = (r, ty) => { const L = r[ty.toLowerCase()]; const iv = L.iv || (EN.impliedVol(L.ltp, ch.spot, r.strike, T, ty) || null);
+    return { ltp: L.ltp, oi: L.oi, chgOi: L.chgOi, vol: L.vol, iv: iv ? iv * 100 : null, bid: L.bid, ask: L.ask }; };
+  PROS.chains[u.tkr] = { tkr: u.tkr, sym: u.label || u.name || u.sym, at: Date.now(), source: ch.source === "feed" ? "live feed (no OI)" : "Fyers option chain",
+    expiry: ch.expiry, spot: ch.spot, atm: ch.atm, pcr: oc ? oc.pcr : null, maxPain: oc ? oc.maxPain : null, res: oc ? oc.res : null, sup: oc ? oc.sup : null,
+    ceB: oc ? oc.ceB : null, peB: oc ? oc.peB : null, rows: rows.map(r => ({ strike: r.strike, ce: leg(r, "CE"), pe: leg(r, "PE") })) }; }
 async function proCycle() {
   if (!EN || !EN.proEval || PROS.busy) return;
   const sess = bestSession(); if (!sess) return;
   PROS.busy = true; const t0 = Date.now();
   try { await visitor.run(sess, () => lane.run("low", async () => {
     await ensureUniverse().catch(() => {});
-    feedSub(OVERVIEW_SYMS.concat(Object.keys(SECTORS)));
+    feedSub(OVERVIEW_SYMS_().concat(Object.keys(SECTORS)));
     const day = istDay(Date.now()); if (day !== PROS.day) { PROS.day = day; PROS.signals = []; PROS.seenKeys.clear(); PROS.lastTs.clear(); }
     Object.assign(EN.PRO.thr, { strong: PROCFG.strong, veryStrong: PROCFG.veryStrong, watch: PROCFG.watch }); EN.PRO.minRR = PROCFG.minRR;
     // market context
     const N = UNIVERSE.find(u => u.tkr === "NIFTY" && u.fy), BN = UNIVERSE.find(u => u.tkr === "BANKNIFTY" && u.fy);
     let mN = null, mB = null, prepN = null;
-    try { prepN = await proPrepLive(N); const i = lastClosed(prepN.P.b, 5); mN = { P: prepN.P, i, tr: EN.proTrend(prepN.P, i, prepN.D) }; } catch (e) { PROS.err = "NIFTY: " + e.message; }
-    try { const x = await proPrepLive(BN); const i = lastClosed(x.P.b, 5); mB = { tr: EN.proTrend(x.P, i, x.D) }; } catch (e) {}
-    const market = marketTrend(mN && mN.tr, mB && mB.tr); PROS.market = market;
+    try { prepN = await proPrepLive(N, true); const i = lastClosed(prepN.P.b, 5); mN = { P: prepN.P, i, tr: EN.proTrend(prepN.P, i, prepN.D) }; } catch (e) { PROS.err = "NIFTY: " + e.message; }
+    try { const x = await proPrepLive(BN, true); const i = lastClosed(x.P.b, 5); mB = { tr: EN.proTrend(x.P, i, x.D) }; } catch (e) {}
+    const market = marketTrend(mN && mN.tr, mB && mB.tr); proMarketTurn(PROS.market, market); PROS.market = market;
     const B = proBreadth();
     // which instruments: the watchlist, plus (with the live feed) F&O stocks moving most today and those with a scanner signal
-    const list = new Map(watched().filter(u => u.fo).map(u => [u.tkr, u]));
+    // the four priority instruments first, then the watchlist, then (with the live feed) the F&O stocks moving most
+    // today and those with a scanner signal: up to 60 instruments a round
+    const list = new Map(PRIORITY.map(t => UNIVERSE.find(u => u.tkr === t && u.fy) || null).filter(Boolean).map(u => [u.tkr, u]));
+    for (const u of watched().filter(u => u.fo)) if (!list.has(u.tkr)) list.set(u.tkr, u);
     if (FEED.state === "live") { const sl = scanList();
-      const movers = sl.filter(u => u.seg === "EQ").map(u => ({ u, x: FEED.last.get(u.fy) })).filter(z => z.x && z.x.chp != null).sort((a, b) => Math.abs(b.x.chp) - Math.abs(a.x.chp)).slice(0, 20).map(z => z.u);
+      const movers = sl.filter(u => u.seg === "EQ").map(u => ({ u, x: FEED.last.get(u.fy) })).filter(z => z.x && z.x.chp != null).sort((a, b) => Math.abs(b.x.chp) - Math.abs(a.x.chp)).slice(0, 35).map(z => z.u);
       const flagged = sl.filter(u => SCAN.signals.some(s => s.tkr === u.tkr && s.state === "ACTIVE"));
-      for (const u of movers.concat(flagged)) if (!list.has(u.tkr) && list.size < 45) list.set(u.tkr, u); }
+      for (const u of flagged.concat(movers)) if (!list.has(u.tkr) && list.size < 60) list.set(u.tkr, u); }
+    PROS.scanMap = PROS.scanMap || new Map();
     const avoid = []; let chains = 0;
     for (const u of list.values()) {
       if (!openNow(u)) continue;
-      let prep; try { prep = u.tkr === "NIFTY" && prepN ? prepN : await proPrepLive(u); } catch (e) { avoid.push({ tkr: u.tkr, sym: u.label || u.name || u.sym, why: "data not available: " + e.message }); continue; }
+      let prep; try { prep = u.tkr === "NIFTY" && prepN ? prepN : await proPrepLive(u, true); } catch (e) { avoid.push({ tkr: u.tkr, sym: u.label || u.name || u.sym, why: "data not available: " + e.message }); continue; }
       const P = prep.P, i = lastClosed(P.b, 5); if (i < 0) continue;
       if (Date.now() - (P.b[i].ts + 5 * 60000) > 12 * 60000) { avoid.push({ tkr: u.tkr, sym: u.label || u.name || u.sym, why: `prices stale (last closed candle ${new Date(P.b[i].ts + IST).toISOString().slice(11, 16)} IST)` }); continue; }
       const isIdx = u.seg === "IDX", mctx = u.seg === "MCX" ? null : market;
@@ -1331,13 +1529,16 @@ async function proCycle() {
         const base = { market: mctx, marketName: isIdx ? "NIFTY + BANK NIFTY" : "NIFTY 50 + BANK NIFTY", D: prep.D };
         let r = EN.proEval(P, k, base); last = r;
         if (r.none || r.score < PROCFG.watch - 8) continue;
-        const key = day + "|" + u.tkr + "|" + r.d + "|" + r.setup; if (PROS.seenKeys.has(key)) continue;
-        if (PROS.signals.some(s => s.tkr === u.tkr && s.d === r.d && s.state === "ACTIVE")) continue;
+        const key = day + "|" + u.tkr + "|" + r.d + "|" + r.setup;
+        if (PROS.seenKeys.has(key)) continue;                                        // this setup already gave a signal today
+        if (PROS.signals.some(s => s.tkr === u.tkr && s.d === r.d && isLive(s))) continue;   // one live signal per instrument and side
+        const watchOnly = !r.trade;
+        if (watchOnly && (PROS.seenKeys.has(key + "|W") || PROS.signals.some(s => s.tkr === u.tkr && s.d === r.d && s.state === "WATCHLIST" && Date.now() - s.at < 30 * 60000))) continue;
         // the option chain: essential for a trade (contract and premium); OI adds to the score when Fyers gives it
-        if (chains >= 12) { avoid.push({ tkr: u.tkr, sym: u.sym, why: "option chain not checked this round (request budget)" }); continue; }
+        if (chains >= 16) { avoid.push({ tkr: u.tkr, sym: u.sym, why: "option chain not checked this round (request budget)" }); continue; }
         let ch; try { chains++; ch = await chainData(u); if (ch.daysOut < 0.6 || (ch.daysOut < 1 && P.b[k].t > 810)) { const nx = (ch.expiries || [])[1]; if (nx) ch = await chainData(u, nx); } }
         catch (e) { avoid.push({ tkr: u.tkr, sym: u.sym, why: "option chain not available: " + e.message }); continue; }
-        const oc = oiCtx(ch); const bc = breadthCtx(B, u);
+        const oc = oiCtx(ch); const bc = breadthCtx(B, u); proChainKeep(u, ch, oc);
         r = EN.proEval(P, k, Object.assign({}, base, { oi: oc && Object.assign(oc, { wall: oc.wallFor(r.d) }), breadth: bc }));
         if (r.none) { avoid.push({ tkr: u.tkr, sym: u.sym, why: r.none }); continue; }
         if (r.score < PROCFG.watch) continue;
@@ -1345,57 +1546,285 @@ async function proCycle() {
         const c = selectContract(ch, r.d, u); if (c.reject) { avoid.push({ tkr: u.tkr, sym: u.sym, why: "no liquid contract: " + c.reject }); continue; }
         const prem = premLevels(c, r.L, ch.spot, r.d);
         if (prem.rr < 1.2) { avoid.push({ tkr: u.tkr, sym: u.sym, why: `premium reward : risk ${prem.rr.toFixed(2)} too low` }); continue; }
-        PROS.seenKeys.add(key);
-        const x = P.b[k], I = P.t5.I, vv = EN.proVol(P, k);
-        const sig = { id: crypto.randomBytes(5).toString("hex"), key, tkr: u.tkr, sym: u.label || u.name || u.sym, seg: u.seg, d: r.d, ty: r.ty, score: r.score, grade: r.grade,
-          parts: r.sc.parts, why: r.sc.why, miss: r.sc.miss, setup: r.setup, trigger: r.sc.best.label, candles: r.sc.candles,
+        // a setup that has lost money in live paper trading (15+ trades, profit factor under 0.8) needs a VERY STRONG score
+        const weak = setupWeak(r.setup); let trade = r.trade;
+        if (trade && weak && r.score < PROCFG.veryStrong) { trade = false; r.cap = (r.cap || []).concat([`the ${r.setup} setup is under-performing in paper trading (${weak}); needs ${PROCFG.veryStrong}+`]); }
+        // final confirmation: the strategy behind it must have passed the walk-forward test (backend only otherwise)
+        const gate = trade ? valGate(u, r) : null;
+        if (trade && !gate.ok) { trade = false; r.cap = (r.cap || []).concat(["not validated: " + gate.why]); avoid.push({ tkr: u.tkr, sym: u.sym, why: "not validated: " + gate.why }); }
+        // the same opportunity again soon after a signal on it ended: not repeated
+        if (trade && PROS.signals.some(z => z.tkr === u.tkr && z.d === r.d && z.ended && Date.now() - z.ended < 30 * 60000)) { trade = false; r.cap = (r.cap || []).concat(["a signal on this just ended"]); }
+        if (!trade && !r.trade) { /* a watch-level setup: kept in the backend log only */ }
+        PROS.seenKeys.add(trade ? key : key + "|W");
+        const x = P.b[k], I = P.t5.I, vv = EN.proVol(P, k), ex = proExchOf(u), sess = sessionOf(u, Date.now()) || [0, 930];
+        const endM = ex === "MCX" ? Math.min(1400, sess[1] - 15) : 920, hh = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+        const entryLo = Math.round(Math.max(prem.sl + 0.6 * (prem.entry - prem.sl), prem.entry * 0.97) * 20) / 20;
+        const dataSt = FEED.state === "live" && FEED.lastTick && Date.now() - FEED.lastTick < 15000 ? "LIVE" : "DELAYED";
+        const sig = { id: crypto.randomBytes(5).toString("hex"), key, tkr: u.tkr, sym: u.label || u.name || u.sym, seg: u.seg, ex, d: r.d, ty: r.ty, score: r.score, grade: r.grade,
+          parts: r.sc.parts, why: r.sc.why, miss: r.sc.miss, setup: r.setup, trigger: r.sc.best.label, candles: r.sc.candles, tech: proTechText(P, k, r.d),
           trend: r.tr.cls, marketTrend: mctx ? mctx.cls : "own trend (MCX)", tfs: r.tr.s, rsi: I.rsi[k], vwap: vv.vw == null ? "not available" : (vv.vw > 0 ? "above" : "below") + " VWAP" + (vv.src === "future" ? " (index future)" : ""), ema: `${x.c > I.e20[k] ? "above" : "below"} EMA 20, EMA 20 ${I.e20[k] > I.e50[k] ? "above" : "below"} EMA 50${I.e200[k] != null ? ", " + (x.c > I.e200[k] ? "above" : "below") + " EMA 200" : ""}`,
           created: x.ts + 5 * 60000, at: Date.now(), under: { entry: r.L.entry, zoneHi: r.L.zoneHi, sl: r.L.sl, t1: r.L.t1, t2: r.L.t2, t3: r.L.t3, rr: r.L.rr, invalid: r.L.invalid },
-          contract: c, prem, oi: oc ? oc.text(r.d) : "OI not available (chain from the live feed)", state: r.trade ? "ACTIVE" : "WATCH", cap: r.cap,
-          validity: `Valid until ${proExchOf(u) === "MCX" ? "23:20" : "15:20"} IST. Invalid if ${u.label || u.sym} closes a 5-minute candle ${r.d > 0 ? "below" : "above"} ${r.L.invalid.toFixed(2)} before Target 1, or the stop loss trades.` };
+          contract: c, prem: Object.assign({}, prem, { entryLo }), greeks: proGreeks(c, ch.spot), oi: oc ? oc.text(r.d) : "OI not available (chain from the live feed)", maxPain: oc ? oc.maxPain : null,
+          state: trade ? "WAITING" : "WATCHLIST", cap: r.cap, strat: gate && gate.ok ? gate.strat : null, hist: gate && gate.ok ? gate.hist : null, exitMode: gate && gate.ok ? gate.g.exit : "trail", data: dataSt, priority: PRIORITY.includes(u.tkr), conf: calib(r.score), events: [],
+          holding: `intraday: usually 15-90 minutes; exit by ${hh(endM)} IST at the latest`,
+          confirm: `Buy only while the ${c.strike} ${c.ty} premium is ₹${entryLo}-₹${prem.entryMax} and ${u.label || u.sym} holds ${r.d > 0 ? "above" : "below"} ${r.L.invalid.toFixed(2)}. Entry window: 20 minutes.`,
+          invalidIf: `${u.label || u.sym} closes a 5-minute candle ${r.d > 0 ? "below" : "above"} ${r.L.invalid.toFixed(2)}; the premium falls to ₹${prem.sl} before entry; the premium runs above ₹${Math.round((prem.entryMax + 0.3 * (prem.t1 - prem.entryMax)) * 20) / 20} before entry (entry missed - don't chase); ${hh(endM)} IST.`,
+          validity: `Entry window 20 minutes. Trade valid until ${hh(endM)} IST.` };
+        sig.status = PRO_LABEL[sig.state]; sig.events.push({ at: Date.now(), what: sig.state === "WAITING" ? "Signal published: waiting for entry confirmation" : "Watchlist: " + (sig.cap || []).join("; ") });
         PROS.signals.push(sig); PROS.hist.push(sig); proLog(sig.id, "signal", sig);
-        if (sig.state === "ACTIVE") paperOpen(sig, u);
-        const kind = WATCH.has(u.tkr) ? "watch" : r.score >= PROCFG.veryStrong ? "fno" : null;
-        if (kind && sig.state === "ACTIVE") pushSend(kind, "pro|" + sig.id, { title: `${sig.sym} — ${c.ty} BUY ${c.strike} (${sig.score}/100)`, tag: "pro-" + sig.id, url: "/",
-          body: `Buy up to ₹${prem.entryMax} · SL ₹${prem.sl} · T1 ₹${prem.t1} · ${sig.grade}` });
+        for (const w of PROS.signals) if (w.state === "WATCHLIST" && w.tkr === u.tkr && w.d === r.d && w !== sig && sig.state === "WAITING") proSet(w, "UPGRADED", "a full signal was given for this setup");
+        if (sig.state === "WAITING") proAlertNew(sig);
       }
       if (last && last.none) avoid.push({ tkr: u.tkr, sym: u.label || u.name || u.sym, why: last.none, trend: last.tr && last.tr.cls });
+      PROS.scanMap.set(u.tkr, { tkr: u.tkr, sym: u.label || u.name || u.sym, priority: PRIORITY.includes(u.tkr), px: P.b[i].c, at: P.b[i].ts + 5 * 60000,
+        trend: last && last.tr ? last.tr.cls : null, score: last && !last.none ? last.score : null, side: last && last.d ? (last.d > 0 ? "CE" : "PE") : null,
+        status: last ? (last.none ? last.none : last.trade ? "actionable" : (last.cap && last.cap.length ? "watch: " + last.cap[0] : "score " + last.score)) : "no new candle" });
     }
-    PROS.avoid = avoid; PROS.at = Date.now(); PROS.cycleMs = Date.now() - t0; proSave();
+    PROS.avoid = avoid; PROS.at = Date.now(); PROS.cycleMs = Date.now() - t0;
+    if (!PROS.whyDay || PROS.whyDay.day !== day) PROS.whyDay = { day, c: {} };
+    for (const a of avoid) { const k = String(a.why).replace(/[0-9][0-9.,:]*/g, "#").replace(/\s+/g, " ").slice(0, 70); PROS.whyDay.c[k] = (PROS.whyDay.c[k] || 0) + 1; }
+    proSave();
   })); } catch (e) { PROS.err = e.message; } finally { PROS.busy = false; }
 }
 const proExchOf = u => String(u.fy || u.tkr).startsWith("MCX") || u.seg === "MCX" ? "MCX" : String(u.fy || "").startsWith("BSE") ? "BSE" : "NSE";
-/* ---- paper trading: never a real order. Entry at the ask when the signal is given; exits on the option's premium. */
-function paperOpen(sig, u) {
-  const c = sig.contract, lot = c.lot || 1;
+/* ---- signal life and paper trading (never a real order).
+   WAITING FOR CONFIRMATION -> ACTIVE (paper buy) when the premium is inside the entry range and the underlying still
+   holds; ENTRY MISSED if the premium runs away first or 20 minutes pass; CANCELLED if the setup breaks or the premium
+   reaches the stop before entry; then TARGET 1 / 2 / 3 HIT, STOP LOSS HIT or EXITED; EXPIRED at the session's end. */
+function paperOpen(sig, px) {
+  const c = sig.contract, lot = c.lot || 1, u = UNIVERSE.find(z => z.tkr === sig.tkr) || bySym(sig.tkr) || { fy: sig.tkr };
   const t = { id: sig.id, sym: sig.sym, tkr: sig.tkr, contract: `${sig.sym} ${c.strike} ${c.ty}`, opt: c.sym, ty: c.ty, d: sig.d, ex: proExchOf(u), qty: lot, lots: 1,
-    created: Date.now(), entry: sig.prem.entry, sl: sig.prem.sl, t1: sig.prem.t1, t2: sig.prem.t2, t3: sig.prem.t3, invalid: sig.under.invalid, underTkr: sig.tkr,
-    state: "OPEN", hit: 0, trailSL: sig.prem.sl, now: sig.prem.entry, nowAt: Date.now(), events: [{ at: Date.now(), what: `Paper buy ${lot} qty at ₹${sig.prem.entry} (the ask)` }], score: sig.score, grade: sig.grade, setup: sig.setup };
-  PROS.paper.push(t); feedSub([c.sym]); proLog(t.id, "paper-open", t); }
+    created: Date.now(), entry: px, sl: sig.prem.sl, t1: sig.prem.t1, t2: sig.prem.t2, t3: sig.prem.t3, invalid: sig.under.invalid, underTkr: sig.tkr,
+    state: "OPEN", hit: 0, trailSL: sig.prem.sl, now: px, nowAt: Date.now(), exitMode: sig.exitMode || "trail", events: [{ at: Date.now(), what: `Paper buy ${lot} qty at ₹${px}` }], score: sig.score, grade: sig.grade, setup: sig.setup };
+  PROS.paper.push(t); feedSub([c.sym]); proLog(t.id, "paper-open", t); return t; }
 function paperClose(t, px, how) {
   t.state = "CLOSED"; t.exit = Math.round(px * 20) / 20; t.how = how; t.closed = Date.now();
   const buy = t.entry * (1 + EN.PRO.cost.slip / 2) * t.qty, sell = t.exit * (1 - EN.PRO.cost.slip / 2) * t.qty, ch = EN.proCharges(t.ex, buy, sell);
   t.gross = Math.round((sell - buy) * 100) / 100; t.charges = Math.round(ch.total * 100) / 100; t.net = Math.round((t.gross - ch.total) * 100) / 100;
-  t.events.push({ at: Date.now(), what: `Paper exit at ₹${t.exit}: ${how}. Net ₹${t.net} after ₹${t.charges} charges` }); proLog(t.id, "paper-close", { exit: t.exit, how, net: t.net });
-  pushSend(WATCH.has(t.tkr) ? "watch" : "fno", "paper|" + t.id + "|close", { title: `${t.contract} — ${how}`, tag: "pro-" + t.id, url: "/", body: `Exit ₹${t.exit} · paper P&L ₹${t.net} after charges` }); }
-// every 15 s: open paper trades against the live premium (stop first, then targets; stop moves after T1 / T2 are separate)
-function paperTick() { try {
-  const nowM = (() => { const x = new Date(Date.now() + IST); return x.getUTCHours() * 60 + x.getUTCMinutes(); })(); let ch = false;
-  for (const t of PROS.paper) { if (t.state !== "OPEN") continue;
-    if (istDay(t.created) !== istDay(Date.now())) { paperClose(t, t.now, "not closed in its session (closed at the last premium seen)"); ch = true; continue; }
-    const x = FEED.state === "live" && FEED.last.get(t.opt); if (x && x.at > t.nowAt - 1000) { t.now = x.ltp; t.nowAt = x.at; }
-    if (t.now <= t.trailSL) { paperClose(t, Math.min(t.now, t.trailSL), t.hit ? `trailed stop after Target ${t.hit}` : "stop loss"); ch = true; continue; }   // filled at the price seen (a gap past the stop costs more)
+  t.events.push({ at: Date.now(), what: `Paper exit at ₹${t.exit}: ${how}. Net ₹${t.net} after ₹${t.charges} charges` }); proLog(t.id, "paper-close", { exit: t.exit, how, net: t.net }); }
+const nowMin = () => { const x = new Date(Date.now() + IST); return x.getUTCHours() * 60 + x.getUTCMinutes(); };
+// premiums and underlying prices: live feed first; without it one quote request a minute for everything followed
+const PXQ = { at: 0, d: new Map() };
+function pxOf(sym) { const x = FEED.state === "live" && FEED.last.get(sym); if (x && Date.now() - x.at < 90000) return { px: x.ltp, at: x.at, src: "live" };
+  const q = PXQ.d.get(sym); return q && Date.now() - q.at < 150000 ? { px: q.px, at: q.at, src: "quote" } : null; }
+async function pxRefresh(syms) {
+  const need = [...new Set(syms.filter(Boolean))].filter(t => !(FEED.state === "live" && FEED.last.get(t) && Date.now() - FEED.last.get(t).at < 90000));
+  if (!need.length || Date.now() - PXQ.at < 55000) return; PXQ.at = Date.now();
+  const sess = bestSession(); if (!sess) return;
+  try { const j = await visitor.run(sess, () => fy("/quotes", { symbols: need.slice(0, 50).join(",") }));
+    for (const q of j.d || []) if (q && q.v && q.v.lp > 0) PXQ.d.set(q.n, { px: q.v.lp, at: Date.now() }); } catch (e) {} }
+const underFy = tkr => { const u = UNIVERSE.find(z => z.tkr === tkr && z.fy) || bySym(tkr); return u && u.fy; };
+function proLife() { try {
+  const nowM = nowMin(), today = istDay(Date.now()); let ch = false;
+  const live = PROS.signals.filter(s => isLive(s) || s.state === "WATCHLIST");
+  pxRefresh(live.flatMap(s => [s.contract && s.contract.sym, underFy(s.tkr)])).catch(() => {});
+  for (const sig of live) {
+    const endM = sig.ex === "MCX" ? 1400 : 920, p = pxOf(sig.contract.sym), lu = pxOf(underFy(sig.tkr));
+    if (p) { sig.now = p.px; sig.nowAt = p.at; sig.nowSrc = p.src; }
+    if (istDay(sig.at) !== today || nowM >= endM) {                       // the session is over for anything not entered
+      if (sig.state === "WAITING" || sig.state === "WATCHLIST") { proSet(sig, "EXPIRED", "session ended without an entry"); ch = true; continue; } }
+    if (sig.state === "WATCHLIST") continue;
+    if (sig.state === "WAITING") {
+      const P = sig.prem, runAway = P.entryMax + 0.3 * (P.t1 - P.entryMax);
+      const broke = lu && (sig.d > 0 ? lu.px < sig.under.invalid : lu.px > sig.under.invalid);
+      sig.inv = broke ? (sig.inv || 0) + 1 : 0;
+      if (sig.inv >= 2) { proSet(sig, "CANCELLED", `${sig.sym} went back through ${sig.under.invalid.toFixed(2)} before entry: setup invalid`); ch = true; continue; }
+      if (p && p.px <= P.sl) { proSet(sig, "CANCELLED", "the premium fell to the stop loss before entry", p.px); ch = true; continue; }
+      if (p && p.px > runAway) { proSet(sig, "ENTRY MISSED", `premium ran to ${rs(p.px)}, beyond the entry range: don't chase`, p.px); ch = true; continue; }
+      if (p && lu && p.px >= P.entryLo && p.px <= P.entryMax && !broke) { const t = paperOpen(sig, Math.round(p.px * 20) / 20); sig.paper = t.id; sig.entered = t.entry; proSet(sig, "ACTIVE", null, t.entry); ch = true; continue; }
+      if (Date.now() - sig.at > 20 * 60000) { proSet(sig, "ENTRY MISSED", "no entry inside the range within 20 minutes", p && p.px); ch = true; }
+      continue; }
+    // entered: follow the paper trade (stop first, then targets; after Target 1 the stop goes to entry, after Target 2 to Target 1)
+    const t = PROS.paper.find(z => z.id === sig.id && z.state === "OPEN"); if (!t) continue;
+    if (p && p.at > t.nowAt - 1000) { t.now = p.px; t.nowAt = p.at; }
+    const close = (px, how, st) => { paperClose(t, px, how); sig.exit = t.exit; sig.net = t.net;
+      if (sig.state === st) { sig.state = "_"; }                                     // e.g. TARGET 1 HIT again, now as the final exit
+      proSet(sig, st, `${how}; paper P&L ${rs(t.net)} after charges`, t.exit); sig.ended = Date.now(); ch = true; };
+    if (t.now <= t.trailSL) { close(Math.min(t.now, t.trailSL), t.hit ? `trailing stop after Target ${t.hit}` : "stop loss", t.hit ? "EXITED" : "STOP LOSS HIT"); continue; }
     const T = [t.t1, t.t2, t.t3]; while (t.hit < 3 && t.now >= T[t.hit]) { t.hit++; t.events.push({ at: Date.now(), what: `Target ${t.hit} ₹${T[t.hit - 1]} reached` });
-      t.trailSL = t.hit === 1 ? Math.max(t.trailSL, t.entry) : t.hit === 2 ? Math.max(t.trailSL, t.t1) : t.trailSL;
-      pushSend(WATCH.has(t.tkr) ? "watch" : "fno", "paper|" + t.id + "|t" + t.hit, { title: `${t.contract} — Target ${t.hit} reached`, tag: "pro-" + t.id, url: "/", body: `Premium ₹${t.now}. Suggested stop now ₹${t.trailSL}` }); ch = true; }
-    if (t.hit >= 3) { paperClose(t, t.t3, "Target 3"); continue; }
-    const u = UNIVERSE.find(z => z.tkr === t.underTkr) || bySym(t.underTkr), lu = u && FEED.last.get(u.fy);
-    if (t.hit === 0 && lu && (t.d > 0 ? lu.ltp < t.invalid : lu.ltp > t.invalid) && Date.now() - t.created > 5 * 60000) { t.invalidSeen = (t.invalidSeen || 0) + 1;
-      if (t.invalidSeen >= 20) { paperClose(t, t.now, "exit alert: setup invalid (price back through the trigger level)"); ch = true; continue; } } else t.invalidSeen = 0;
-    if (nowM >= (t.ex === "MCX" ? 1400 : 920)) { paperClose(t, t.now, "time exit"); ch = true; } }
+      t.trailSL = t.hit === 1 ? Math.max(t.trailSL, t.entry) : t.hit === 2 ? Math.max(t.trailSL, t.t1) : t.trailSL; sig.trail = t.trailSL;
+      const fin = t.exitMode === "T1" ? 1 : t.exitMode === "T2" ? 2 : 3;
+      if (t.hit < fin) { proSet(sig, "TARGET " + t.hit + " HIT", `premium ${rs(t.now)}; stop now ${rs(t.trailSL)}`, t.now); ch = true; } }
+    const fin = t.exitMode === "T1" ? 1 : t.exitMode === "T2" ? 2 : 3;
+    if (t.hit >= fin) { close(T[fin - 1], fin < 3 ? `Target ${fin}: the validated strategy books the whole trade here` : "Target 3", "TARGET " + fin + " HIT"); continue; }
+    if (t.hit === 0 && lu && (t.d > 0 ? lu.px < t.invalid : lu.px > t.invalid) && Date.now() - t.created > 5 * 60000) { t.invalidSeen = (t.invalidSeen || 0) + 1;
+      if (t.invalidSeen >= 20) { close(t.now, "exit alert: setup invalid (price back through the trigger level)", "EXITED"); continue; } } else t.invalidSeen = 0;
+    if (nowM >= endM || istDay(t.created) !== today) close(t.now, "time exit", "EXITED"); }
   if (ch) proSave();
-} catch (e) {} }
-setInterval(paperTick, 15000).unref();
+} catch (e) { PROS.lifeErr = e.message; } }
+setInterval(proLife, 15000).unref();
+// today's numbers for the dashboard and the end-of-day summary
+function proSummary(day) {
+  const sig = PROS.signals.filter(s => istDay(s.at) === day && s.state !== "WATCHLIST" && s.state !== "UPGRADED");
+  const cnt = st => sig.filter(s => s.state === st).length, closed = PROS.paper.filter(t => t.state === "CLOSED" && istDay(t.created) === day);
+  const won = closed.filter(t => t.net > 0).length, net = closed.reduce((a, t) => a + t.net, 0);
+  return { day, total: sig.length, ce: sig.filter(s => s.ty === "CE").length, pe: sig.filter(s => s.ty === "PE").length,
+    waiting: cnt("WAITING"), active: sig.filter(s => ["ACTIVE", "TARGET 1 HIT", "TARGET 2 HIT"].includes(s.state) && !s.ended).length,
+    t1: sig.filter(s => s.events.some(e => /^TARGET 1 HIT/.test(e.what)) || s.state === "TARGET 3 HIT").length, t3: cnt("TARGET 3 HIT"), sl: cnt("STOP LOSS HIT"),
+    exited: cnt("EXITED"), cancelled: cnt("CANCELLED"), missed: cnt("ENTRY MISSED"), expired: cnt("EXPIRED"),
+    watch: PROS.signals.filter(s => istDay(s.at) === day && s.state === "WATCHLIST").length,
+    closed: closed.length, won, winRate: closed.length ? won / closed.length : null, net: Math.round(net * 100) / 100 }; }
+function autoStatus() {
+  return { login: bgStatus(), keepAwake: KEEP || "auto", push: { ok: PUSH.ok, devices: PUSH.subs.size },
+    telegram: { bot: !!env("TELEGRAM_BOT_TOKEN"), chats: TGA.chats.length, sent: TGA.count, lastOk: TGA.okAt || null, err: TGA.err },
+    schedule: SCHED.last, tradingDay: tradingDay(Date.now()), holiday: NSE_HOL.has(istDay(Date.now())) ? (HOL_NAME[istDay(Date.now())] || "NSE holiday") : null }; }
+/* ============================================================ SCHEDULED REPORTS ==
+   Run by the server on its own clock (IST), so nothing needs the website open:
+   07:50 renew the Fyers login · 08:00 pre-market outlook · 09:16 opening analysis · 15:00 open positions
+   · 15:40 end-of-day summary · 23:58 MCX summary. A report missed while the server was asleep runs as soon as it
+   wakes, if it is still useful (the outlook until 09:15). Pre-market views are never entry signals. */
+const SCHED = { done: {}, last: {} };
+const EVENTS = [                                                   // dates from the RBI and the US Federal Reserve calendars
+  ["2026-12-04", "RBI policy decision (MPC 2-4 Dec)"], ["2027-02-05", "RBI policy decision (MPC 3-5 Feb)"],
+  ["2026-12-10", "US Fed decision (FOMC 8-9 Dec; about 00:30 IST on 10 Dec)"], ["2027-01-28", "US Fed decision (FOMC 26-27 Jan; about 00:30 IST)"],
+  ["2027-03-18", "US Fed decision (FOMC 16-17 Mar; about 23:30 IST on 17 Mar)"]]
+  .concat(env("EVENTS").split(";").map(x => x.split(/:(.+)/)).filter(x => /^\d{4}-\d\d-\d\d$/.test(x[0]) && x[1]).map(x => [x[0], x[1].trim()]))
+  .concat([...NSE_HOL].map(d => [d, "NSE holiday" + (HOL_NAME[d] ? ": " + HOL_NAME[d] : "") + (MCX_EVE_SHUT.has(d) ? " (MCX shut)" : " (MCX evening session open)")]));
+const fmt = v => v == null || !isFinite(v) ? "—" : (+v).toLocaleString("en-IN", { maximumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2 });
+const pct = v => v == null || !isFinite(v) ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+function sEMA(a, n) { const k = 2 / (n + 1), o = []; let e = null; a.forEach((v, i) => { e = i < n - 1 ? null : e == null ? a.slice(0, n).reduce((x, y) => x + y, 0) / n : v * k + e * (1 - k); o.push(e); }); return o; }
+const sSMA = (a, n) => a.map((_, i) => i < n - 1 ? null : a.slice(i - n + 1, i + 1).reduce((x, y) => x + y, 0) / n);
+function sRSI(c, n = 14) { let g = 0, l = 0; for (let i = 1; i <= n; i++) { const d = c[i] - c[i - 1]; if (d > 0) g += d; else l -= d; } g /= n; l /= n;
+  for (let i = n + 1; i < c.length; i++) { const d = c[i] - c[i - 1]; g = (g * (n - 1) + Math.max(d, 0)) / n; l = (l * (n - 1) + Math.max(-d, 0)) / n; } return l ? 100 - 100 / (1 + g / l) : 100; }
+// the previous session in detail, from Fyers daily candles: pattern, trend, momentum, volatility, levels, and a bias
+function dailyView(u, candles, nowMs) {
+  const today = istDay(nowMs); let b = candles.filter(c => istDay(c[0]) < today); if (b.length < 60) return { tkr: u.tkr, sym: u.name, err: "not enough daily history" };
+  const C = b.map(x => x[4]), n = b.length - 1, x = b[n], y = b[n - 1], [, o, h, l, c] = x, rng = h - l || 1, body = Math.abs(c - o);
+  const e20 = sEMA(C, 20)[n], e50 = sEMA(C, 50)[n], e200 = C.length >= 200 ? sEMA(C, 200)[n] : null, s20 = sSMA(C, 20)[n], s50 = sSMA(C, 50)[n], s200 = C.length >= 200 ? sSMA(C, 200)[n] : null;
+  const rsi = sRSI(C.slice(-120)), tr = b.slice(-15).map((z, i, a) => i ? Math.max(z[2] - z[3], Math.abs(z[2] - a[i - 1][4]), Math.abs(z[3] - a[i - 1][4])) : z[2] - z[3]).slice(1), atr = tr.reduce((a, v) => a + v, 0) / tr.length;
+  const lr = C.slice(-21).map((v, i, a) => i ? Math.log(v / a[i - 1]) : 0).slice(1), mu = lr.reduce((a, v) => a + v, 0) / lr.length, hv = Math.sqrt(lr.reduce((a, v) => a + (v - mu) ** 2, 0) / (lr.length - 1)) * Math.sqrt(252) * 100;
+  const roc = (c / C[n - 10] - 1) * 100, sd20 = Math.sqrt(C.slice(-20).reduce((a, v) => a + (v - s20) ** 2, 0) / 20), bbU = s20 + 2 * sd20, bbL = s20 - 2 * sd20;
+  const wk = ms => { const d = new Date(ms + IST); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); }, thisWk = wk(nowMs);
+  const prevW = b.filter(z => wk(z[0]) < thisWk), lastWk = prevW.length ? wk(prevW[prevW.length - 1][0]) : null, pw = prevW.filter(z => wk(z[0]) === lastWk);
+  const pwh = pw.length ? Math.max(...pw.map(z => z[2])) : null, pwl = pw.length ? Math.min(...pw.map(z => z[3])) : null;
+  const P = (h + l + c) / 3, R1 = 2 * P - l, S1 = 2 * P - h, R2 = P + (h - l), S2 = P - (h - l);
+  const pat = [];
+  if (body < 0.1 * rng) pat.push("doji (indecision)");
+  else if (body > 0.8 * rng) pat.push(c > o ? "bullish marubozu (strong buying all day)" : "bearish marubozu (strong selling all day)");
+  if (Math.min(o, c) - l > 2 * body && h - Math.max(o, c) < body) pat.push("hammer (buyers rejected lower prices)");
+  if (h - Math.max(o, c) > 2 * body && Math.min(o, c) - l < body) pat.push("shooting star (sellers rejected higher prices)");
+  if (c > o && y[4] < y[1] && c >= y[1] && o <= y[4]) pat.push("bullish engulfing");
+  if (c < o && y[4] > y[1] && c <= y[1] && o >= y[4]) pat.push("bearish engulfing");
+  if (h < y[2] && l > y[3]) pat.push("inside day (range contraction: breakout to come)");
+  if (h > y[2] && l < y[3]) pat.push("outside day (wide range)");
+  const loc = (c - l) / rng, chg = (c / y[4] - 1) * 100;
+  let sc = 0; const why = [];
+  const add = (v, t) => { sc += v; why.push(t); };
+  add(c > e20 ? 1 : -1, `close ${c > e20 ? "above" : "below"} EMA 20 (${fmt(e20)})`); add(e20 > e50 ? 1 : -1, `EMA 20 ${e20 > e50 ? "above" : "below"} EMA 50`);
+  if (e200) add(c > e200 ? 1 : -1, `${c > e200 ? "above" : "below"} EMA 200 (${fmt(e200)})`);
+  if (rsi >= 55) add(1, `RSI ${rsi.toFixed(0)} (bullish momentum)`); else if (rsi <= 45) add(-1, `RSI ${rsi.toFixed(0)} (bearish momentum)`); else why.push(`RSI ${rsi.toFixed(0)} (neutral)`);
+  if (loc >= 0.67) add(1, "closed near the day's high"); else if (loc <= 0.33) add(-1, "closed near the day's low"); else why.push("closed mid-range");
+  if (pat.some(p => /bullish|hammer/.test(p))) add(1, pat.find(p => /bullish|hammer/.test(p))); if (pat.some(p => /bearish|shooting/.test(p))) add(-1, pat.find(p => /bearish|shooting/.test(p)));
+  const bias = sc >= 2.5 ? "Bullish" : sc <= -2.5 ? "Bearish" : "Sideways";
+  const up = Math.max(h, R1), dn = Math.min(l, S1);
+  const setups = [`CE BUY setup if price closes a 15-minute candle above ${fmt(up)} (previous high / R1) with rising volume; first target ${fmt(Math.max(R2, up + atr * 0.5))}`,
+    `PE BUY setup if price closes a 15-minute candle below ${fmt(dn)} (previous low / S1) with rising volume; first target ${fmt(Math.min(S2, dn - atr * 0.5))}`];
+  if (bias === "Bearish") setups.reverse();
+  return { tkr: u.tkr, sym: u.name, day: istDay(x[0]), o, h, l, c, chg, pat, loc, bias, score: sc, why, rsi, atr, hv, roc, e20, e50, e200, s20, s50, s200, bbU, bbL,
+    bbPos: c > bbU ? "above the upper Bollinger band (stretched)" : c < bbL ? "below the lower Bollinger band (stretched)" : "inside the Bollinger bands",
+    pivots: { P, R1, R2, S1, S2 }, pdh: h, pdl: l, pwh, pwl, setups }; }
+const NEWS_RX = { global: /GIFT ?Nifty|Wall Street|Dow|Nasdaq|S&P 500|US stocks|US market|Asian (markets|shares|stocks)|Nikkei|Hang Seng|Kospi|global (cues|markets)/i,
+  flows: /\bFII|\bFPI|\bDII|foreign (investors|portfolio)|institutional (buying|selling)/i, crude: /crude|Brent|WTI|OPEC|oil prices|EIA/i,
+  policy: /\bRBI\b|repo rate|\bFed\b|Federal Reserve|inflation|\bCPI\b|\bGDP\b|budget|monetary policy/i, hdfc: /HDFC Bank/i };
+async function newsFor(hours) {
+  if (Date.now() - NEWS.at > 10 * 60000) { NEWS.busy = NEWS.busy || refreshNews().finally(() => { NEWS.busy = null; }); await NEWS.busy.catch(() => {}); }
+  const since = Date.now() - hours * 3600e3, items = NEWS.items.filter(it => !it.published || it.published >= since), out = {};
+  for (const [k, rx] of Object.entries(NEWS_RX)) out[k] = items.filter(it => rx.test(it.title)).slice(0, 5).map(it => ({ title: it.title, source: it.source, link: it.link, published: it.published }));
+  return out; }
+async function bgRun(fn) { const sess = bestSession(); if (!sess) throw new Error("no Fyers login available on the server"); return visitor.run(sess, () => lane.run("low", fn)); }
+async function morningOutlook() {
+  await bgRun(() => ensureUniverse());
+  const now = Date.now(), day = istDay(now), units = prioUnits(), views = [];
+  if (!units.length) throw new Error("instrument symbols not resolved yet (login)");
+  await bgRun(async () => {
+    for (const u of units) { try { views.push(dailyView(u, (await dailyOf(u)).candles, now)); } catch (e) { views.push({ tkr: u.tkr, sym: u.name, err: e.message }); } }
+    let vix = null; try { const v = (await dailyOf({ tkr: "INDIAVIX", fy: "NSE:INDIAVIX-INDEX" })).candles.filter(c => istDay(c[0]) < day); const a = v[v.length - 1], b0 = v[v.length - 2];
+      vix = { c: a[4], chg: (a[4] / b0[4] - 1) * 100, avg20: v.slice(-20).reduce((s0, z) => s0 + z[4], 0) / Math.min(20, v.length) }; } catch (e) { vix = { err: e.message }; }
+    const exp = [];
+    for (const u of units.filter(u => u.seg === "IDX")) { try { const e = (await expiriesOf(u))[0]; if (e && e.iso === day) exp.push(u.name); } catch (e) {} }
+    PROS.outlookTmp = { vix, exp }; });
+  const { vix, exp } = PROS.outlookTmp || {}; delete PROS.outlookTmp;
+  if (views.every(v => v.err)) throw Object.assign(new Error("no daily data from Fyers yet: " + views[0].err), { retry: true });
+  const news = await newsFor(18).catch(() => ({}));
+  const soon = EVENTS.filter(([d]) => d >= day && d <= istDay(now + 7 * 864e5)).sort();
+  const ok = views.filter(v => !v.err), bulls = ok.filter(v => v.bias === "Bullish").length, bears = ok.filter(v => v.bias === "Bearish").length;
+  const idx = ok.filter(v => v.tkr === "NIFTY" || v.tkr === "SENSEX"), idxScore = idx.reduce((a, v) => a + v.score, 0) / Math.max(1, idx.length);
+  const overall = idxScore >= 2.5 ? "Bullish" : idxScore <= -2.5 ? "Bearish" : "Sideways / undecided";
+  const vixNote = !vix || vix.err ? "India VIX not available" : `India VIX ${vix.c.toFixed(2)} (${pct(vix.chg)}; 20-day average ${vix.avg20.toFixed(1)})${vix.c > vix.avg20 * 1.15 ? ": fear rising, expect wider swings; option premiums richer" : vix.c < vix.avg20 * 0.85 ? ": calm, cheaper premiums, smaller moves" : ""}`;
+  const rep = { day, at: Date.now(), kind: "Pre-market outlook (not entry signals)", overall, vix, vixNote, expiry: exp || [], views, news, events: soon,
+    missing: "GIFT NIFTY, US and Asian index levels and FII/DII figures: no free source allowing automated use was found, so only the latest headlines on them are shown (with source and time).",
+    counts: { bulls, bears } };
+  PROS.reports.outlook = rep; proSave(); proLog("report", "outlook", { day, overall });
+  const line = v => v.err ? `${v.sym}: data not available (${v.err})` : `${v.sym}: ${v.bias.toUpperCase()} · close ${fmt(v.c)} (${pct(v.chg)}) · ${v.setups[0].split(" with")[0].replace(" setup", "")}`;
+  const tg = [`<b>8:00 AM outlook — ${day}</b>`, `<i>Pre-market view, not entry signals. Signals come only after the open, with confirmation.</i>`,
+    `Overall (NIFTY + SENSEX): <b>${overall}</b>`, tgEsc(vixNote), exp && exp.length ? `Expiry today: ${tgEsc(exp.join(", "))}` : null, "",
+    ...ok.map(v => `<b>${tgEsc(v.sym)}</b> ${v.bias} · ${fmt(v.c)} (${pct(v.chg)})\nPrevious day: ${tgEsc(v.pat.join(", ") || "normal candle")}, ${tgEsc(v.why.slice(0, 3).join("; "))}\nLevels: PDH ${fmt(v.pdh)} · PDL ${fmt(v.pdl)} · R1 ${fmt(v.pivots.R1)} · S1 ${fmt(v.pivots.S1)}${v.pwh ? ` · last week ${fmt(v.pwl)}-${fmt(v.pwh)}` : ""}\nWatch: ${tgEsc(v.setups[0])}`),
+    ...views.filter(v => v.err).map(v => `${tgEsc(v.sym)}: data not available`), "",
+    soon.length ? "<b>Events this week</b>\n" + soon.map(([d, t]) => `${d}: ${tgEsc(t)}`).join("\n") : null,
+    ...["global", "flows", "crude", "policy"].filter(k => news[k] && news[k].length).map(k => `<b>${{ global: "Global markets / GIFT NIFTY", flows: "FII / DII", crude: "Crude oil", policy: "Policy & economy" }[k]}</b>\n` + news[k].slice(0, 3).map(n => `• ${tgEsc(n.title)} (${tgEsc(n.source)}${n.published ? ", " + new Date(n.published + IST).toISOString().slice(11, 16) + " IST" : ""})`).join("\n")),
+    `<i>${tgEsc(rep.missing)}</i>`].filter(x => x != null).join("\n");
+  notify("report", "outlook|" + day, { title: `8:00 outlook: market ${overall.toLowerCase()}`, tag: "outlook", url: "/", body: ok.map(v => `${v.sym} ${v.bias.toLowerCase()}`).join(" · ") + (vix && vix.c ? ` · VIX ${vix.c.toFixed(1)}` : "") }, tg);
+  return rep; }
+async function openingReport() {
+  await bgRun(() => ensureUniverse());
+  const day = istDay(Date.now()), units = prioUnits().filter(u => openNow(u)); if (!units.length) return null;
+  let q = null; await bgRun(async () => { q = await fy("/quotes", { symbols: units.map(u => u.fy).concat("NSE:INDIAVIX-INDEX").join(",") }); });
+  const by = new Map((q.d || []).filter(x => x && x.v).map(x => [x.n, x.v])), ol = PROS.reports.outlook && PROS.reports.outlook.day === day ? PROS.reports.outlook : null;
+  const rows = units.map(u => { const v = by.get(u.fy) || {}, pc = v.prev_close_price, op = v.open_price, lp = v.lp, w = ol && ol.views.find(z => z.tkr === u.tkr);
+    const gap = pc && op ? (op / pc - 1) * 100 : null, pos = !w || w.err || lp == null ? "" : lp > w.pdh ? "above yesterday's high" : lp < w.pdl ? "below yesterday's low" : "inside yesterday's range";
+    return { tkr: u.tkr, sym: u.name, open: op, ltp: lp, prevClose: pc, gap, pos,
+      read: gap == null ? "no opening price yet" : Math.abs(gap) < 0.25 ? "flat open" : `${gap > 0 ? "gap-up" : "gap-down"} ${pct(gap)}${Math.abs(gap) >= 0.5 ? " (a gap-day rule applies if it holds)" : ""}` }; });
+  const vix = by.get("NSE:INDIAVIX-INDEX");
+  const rep = { day, at: Date.now(), rows, vix: vix ? { ltp: vix.lp, chp: vix.chp } : null, note: "The first 15 minutes set the opening range. Signals start after it, with confirmation." };
+  PROS.reports.opening = rep; proSave();
+  notify("report", "opening|" + day, { title: "Market open", tag: "opening", url: "/", body: rows.map(r => `${r.sym} ${fmt(r.ltp)} ${r.read}`).join(" · ") },
+    [`<b>Opening — ${day}</b>`, ...rows.map(r => `<b>${tgEsc(r.sym)}</b> ${fmt(r.ltp)} · ${tgEsc(r.read)}${r.pos ? " · " + tgEsc(r.pos) : ""}`), vix ? `India VIX ${fmt(vix.lp)} (${pct(vix.chp)})` : null, `<i>${rep.note}</i>`].filter(Boolean).join("\n"));
+  return rep; }
+function positionsNote(exLabel, filt) {
+  const open = PROS.signals.filter(s => isLive(s) && filt(s)); if (!open.length) return;
+  notify("report", "closing|" + exLabel + "|" + istDay(Date.now()), { title: `${exLabel}: ${open.length} signal${open.length > 1 ? "s" : ""} still open`, tag: "closing", url: "/",
+    body: open.map(s => `${s.sym} ${s.contract.strike} ${s.contract.ty} ${s.status}${s.now ? " " + rs(s.now) : ""}`).join(" · ") + `. Time exit ${exLabel === "NSE" ? "15:20" : "23:20"}.` }); }
+function eodReport(ex) {
+  const day = istDay(Date.now()), sm = proSummary(day), mine = PROS.signals.filter(s => istDay(s.at) === day && s.state !== "WATCHLIST" && s.state !== "UPGRADED" && (ex === "MCX" ? s.ex === "MCX" : s.ex !== "MCX"));
+  const why = Object.entries(PROS.whyDay && PROS.whyDay.day === day ? PROS.whyDay.c : {}).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const few = ex !== "MCX" && sm.total < 3;
+  const rep = { day, at: Date.now(), ex, summary: sm, signals: mine.map(s => ({ sym: s.sym, contract: `${s.contract.strike} ${s.contract.ty}`, status: s.status, score: s.score, entry: s.entered || null, exit: s.exit || null, net: s.net == null ? null : s.net })),
+    few, fewNote: few ? `Only ${sm.total} signal${sm.total === 1 ? "" : "s"} today: not enough setups met every check. Most common reasons: ${why.map(([k, n]) => `${k} (${n})`).join("; ") || "markets quiet"}.` : null };
+  if (ex === "MCX") PROS.reports.eodMcx = rep; else PROS.reports.eod = rep; proSave();
+  const lines = mine.map(s => `${tgEsc(s.sym)} ${s.contract.strike} ${s.contract.ty}: ${tgEsc(s.status)}${s.net != null ? " · " + rs(s.net) : ""}`);
+  notify("report", "eod|" + ex + "|" + day, { title: `${ex === "MCX" ? "MCX" : "Day"} summary: ${mine.length} signals`, tag: "eod", url: "/",
+    body: `${sm.closed} closed · won ${sm.won} · paper P&L ${rs(sm.net)}${few ? " · fewer than 3 good setups today" : ""}` },
+    [`<b>${ex === "MCX" ? "MCX" : "End-of-day"} summary — ${day}</b>`, `Signals ${mine.length} · active ${sm.active} · stop loss ${sm.sl} · Target 3 ${sm.t3} · cancelled ${sm.cancelled} · entry missed ${sm.missed} · expired ${sm.expired}`,
+      `Paper trades closed ${sm.closed}, won ${sm.won}${sm.winRate != null ? ` (${Math.round(sm.winRate * 100)}%)` : ""}, net ${rs(sm.net)} after charges`, ...lines, rep.fewNote ? tgEsc(rep.fewNote) : null].filter(Boolean).join("\n"));
+  return rep; }
+const bgValidOrVisitor = () => !!bestSession();
+async function schedRun(name, fn) {
+  const day = istDay(Date.now()); if (SCHED.done[name] === day) return; SCHED.done[name] = day;
+  try { await fn(); SCHED.last[name] = { at: Date.now(), ok: true }; }
+  catch (e) { SCHED.last[name] = { at: Date.now(), ok: false, err: e.message }; if (e.retry || /login|did not answer|rate limit/i.test(e.message)) SCHED.done[name] = null; } }
+let schedBusy = false;
+async function schedTick() {
+  if (schedBusy) return; schedBusy = true;
+  try {
+    const now = Date.now(), m = nowMin(), td = tradingDay(now), mcxDay = !!sessionOf({ seg: "MCX" }, now), day = istDay(now);
+    if ((td || mcxDay) && m >= 470 && SCHED.done.renew !== day) {                     // 07:50
+      SCHED.done.renew = day; const ok = await bgRenew(true);
+      SCHED.last.renew = { at: now, ok, state: BG.state };
+      if (!ok && !bgValid() && BG.warnedDay !== day) { BG.warnedDay = day;
+        notify("report", "login|" + day, { title: "Signal Desk needs one Fyers login", tag: "login", url: "/", body: `Background analysis can't run: ${BG.state}. Open the site and log in once; after that it renews itself for up to 15 days.` }); } }
+    if (td && m >= 480 && m < 555) await schedRun("outlook", morningOutlook);        // 08:00 (or on waking, until 09:15)
+    if (!td && mcxDay && m >= 480 && m < 600) await schedRun("holiday", async () => notify("report", "holiday|" + day, { title: `NSE closed today${HOL_NAME[day] ? " (" + HOL_NAME[day] + ")" : ""}`, tag: "outlook", url: "/", body: "Only the MCX evening session (from 17:00) is open. Crude oil signals resume then." }));
+    if ((td || mcxDay) && m >= 490 && m < 1380 && bgValidOrVisitor() && !VAL.busy && (!VAL.res || istDay(VAL.res.made) !== day) && Date.now() - (VAL.lastTry || 0) > 30 * 60000) {
+      VAL.lastTry = Date.now(); proValidate("daily 08:10 run").then(() => { SCHED.last.validate = { at: Date.now(), ok: !VAL.err, err: VAL.err }; }); }     // not awaited: it takes minutes
+    if (td && m >= 556 && m < 600) await schedRun("opening", openingReport);          // 09:16
+    if (td && m >= 900 && m < 915) await schedRun("closing", async () => positionsNote("NSE", s => s.ex !== "MCX"));
+    if (td && m >= 940 && m < 1080) await schedRun("eod", async () => eodReport("NSE"));   // 15:40
+    if (mcxDay && m >= 1405 && m < 1420) await schedRun("closingMcx", async () => positionsNote("MCX", s => s.ex === "MCX"));
+    if (mcxDay && m >= 1438) await schedRun("eodMcx", async () => { if (PROS.signals.some(s => s.ex === "MCX" && istDay(s.at) === day && s.state !== "WATCHLIST")) eodReport("MCX"); });
+  } finally { schedBusy = false; } }
+setInterval(() => { schedTick().catch(() => {}); }, 30000).unref();
+setTimeout(() => { schedTick().catch(() => {}); }, 15000).unref();
+app.get("/api/reports", guard(async (_req, res) => res.json({ reports: PROS.reports, auto: autoStatus() })));
 /* ---- market overview: indices, VIX, trend, breadth, sentiment, data status */
 function proOverview() {
   const q = t => { const x = FEED.state === "live" && FEED.last.get(t); return x ? { ltp: x.ltp, chp: x.chp, at: x.at } : (PROS.ovq && PROS.ovq.d[t]) || null; };
@@ -1403,20 +1832,26 @@ function proOverview() {
   const status = !nowOpen ? "CLOSED" : FEED.state === "live" && age != null && age < 15000 ? "LIVE" : FEED.state === "live" && age != null && age < 120000 ? "DELAYED" : FEED.state !== "live" && RL.dayCount ? "DELAYED" : "STALE";
   const B = proBreadth(), vix = q("NSE:INDIAVIX-INDEX"), m = PROS.market;
   const sent = !m ? null : (m.cls.includes("BULL") && (!B || B.ratio >= 1) && (!vix || vix.ltp < 18)) ? "Risk-on (bullish)" : (m.cls.includes("BEAR") && (!B || B.ratio <= 1)) ? "Risk-off (bearish)" : m.cls === "HIGH VOLATILITY" || (vix && vix.ltp >= 22) ? "Fearful / volatile" : "Mixed / cautious";
-  return { nifty: q("NSE:NIFTY50-INDEX"), bank: q("NSE:NIFTYBANK-INDEX"), fin: q("NSE:FINNIFTY-INDEX"), vix, market: m, breadth: B, sentiment: sent,
+  const prio = prioUnits().map(u => Object.assign({ tkr: u.tkr, sym: u.name, open: openNow(u) }, q(u.fy) || {}));
+  return { nifty: q("NSE:NIFTY50-INDEX"), bank: q("NSE:NIFTYBANK-INDEX"), fin: q("NSE:FINNIFTY-INDEX"), vix, prio, market: m, breadth: B, sentiment: sent,
     status, statusNote: status === "LIVE" ? "live WebSocket prices" : status === "DELAYED" ? (FEED.state === "live" ? "live feed slow" : "prices about every minute (live feed not connected)") : status === "STALE" ? "no fresh prices; no signals are given" : "markets closed",
     lastTick: FEED.lastTick || null, cycleAt: PROS.at || null }; }
 app.get("/api/pro", guard(async (_req, res) => {
   if (!PROS.at && !PROS.busy) proCycle().catch(() => {});
   // without the live feed: one quote request for the overview, at most every 2 minutes
-  if (FEED.state !== "live") try { const q = await cached("pro-ov", anyOpen() ? 120000 : 1800000, () => fy("/quotes", { symbols: OVERVIEW_SYMS.join(",") }));
+  if (FEED.state !== "live") try { const q = await cached("pro-ov", anyOpen() ? 120000 : 1800000, () => fy("/quotes", { symbols: OVERVIEW_SYMS_().join(",") }));
     PROS.ovq = { at: Date.now(), d: Object.fromEntries((q.d || []).filter(x => x && x.v && x.v.lp > 0).map(x => [x.n, { ltp: x.v.lp, chp: x.v.chp, at: Date.now() }])) }; } catch (e) {}
-  const today = istDay(Date.now()), sig = PROS.signals.filter(s => istDay(s.created) === today);
-  const byScore = (a, b) => b.score - a.score;
-  res.json({ cfg: PROCFG, weights: EN && EN.PRO ? EN.PRO.w : null, at: PROS.at, busy: PROS.busy, err: PROS.err, overview: proOverview(),
-    ce: sig.filter(s => s.ty === "CE" && s.state !== "WATCH").sort(byScore), pe: sig.filter(s => s.ty === "PE" && s.state !== "WATCH").sort(byScore),
-    watch: sig.filter(s => s.state === "WATCH").sort(byScore), avoid: PROS.avoid,
-    paper: PROS.paper.filter(t => t.state === "OPEN" || istDay(t.created) === today), history: PROS.paper.filter(t => t.state === "CLOSED").slice(-200).reverse() });
+  const today = istDay(Date.now()), sig = PROS.signals.filter(s => istDay(s.at) === today);
+  const byScore = (a, b) => b.score - a.score, isSig = s => s.state !== "WATCHLIST" && s.state !== "UPGRADED";
+  res.json({ cfg: PROCFG, weights: EN && EN.PRO ? EN.PRO.w : null, at: PROS.at, busy: PROS.busy, err: PROS.err, overview: proOverview(), priority: PRIORITY,
+    ce: sig.filter(s => s.ty === "CE" && isSig(s)).sort(byScore), pe: sig.filter(s => s.ty === "PE" && isSig(s)).sort(byScore),
+    watch: sig.filter(s => s.state === "WATCHLIST").sort(byScore), avoid: PROS.avoid, summary: proSummary(today),
+    chains: PROS.chains || {}, scanned: [...(PROS.scanMap || new Map()).values()].filter(x => istDay(x.at) === today || !anyOpen()).sort((a, b) => (b.priority - a.priority) || ((b.score || 0) - (a.score || 0))),
+    reports: { outlook: PROS.reports.outlook || null, opening: PROS.reports.opening || null, eod: PROS.reports.eod || null },
+    auto: autoStatus(),
+    paper: PROS.paper.filter(t => t.state === "OPEN" || istDay(t.created) === today), history: PROS.paper.filter(t => t.state === "CLOSED").slice(-300).reverse(),
+    signalsHist: PROS.hist.filter(s => s.state !== "WATCHLIST" && s.state !== "UPGRADED").slice(-400).reverse().map(s => ({ id: s.id, at: s.at, sym: s.sym, tkr: s.tkr, ty: s.ty, setup: s.setup, score: s.score, grade: s.grade,
+      contract: s.contract ? `${s.contract.strike} ${s.contract.ty}` : "", state: s.state, status: s.status, entry: s.entered || null, exit: s.exit || null, net: s.net == null ? null : s.net })) });
 }));
 app.get("/api/pro/log", guard(async (req, res) => {
   let lines = []; try { lines = require("fs").readFileSync(PROS.logFile, "utf8").trim().split("\n").slice(-500).map(l => JSON.parse(l)); } catch (e) {}
@@ -1424,8 +1859,12 @@ app.get("/api/pro/log", guard(async (req, res) => {
 
 /* ---- backtest: the same rules, candle by candle, on Fyers' history (no look-ahead) ---- */
 const restHistoryDays = async (u, res, days) => {
-  const j = await fy("/history", { symbol: u.fy, resolution: String(res), date_format: "1", range_from: istDay(Date.now() - days * 864e5), range_to: istDay(Date.now()), cont_flag: "1" });
-  return (j.candles || []).filter(c => c && c.length >= 5 && c[4] != null).map(c => [c[0] < 1e11 ? c[0] * 1000 : c[0], c[1], c[2], c[3], c[4], c[5] || 0]).sort((a, b) => a[0] - b[0]); };
+  const step = String(res) === "D" ? 365 : 95, out = new Map();
+  for (let end = 0; end < days; end += step) { const from = Math.min(days, end + step);
+    const j = await fy("/history", { symbol: u.fy, resolution: String(res), date_format: "1", range_from: istDay(Date.now() - from * 864e5), range_to: istDay(Date.now() - end * 864e5), cont_flag: "1" });
+    for (const c of j.candles || []) if (c && c.length >= 5 && c[4] != null) { const t = c[0] < 1e11 ? c[0] * 1000 : c[0]; out.set(t, [t, c[1], c[2], c[3], c[4], c[5] || 0]); }
+    if (!(j.candles || []).length && end > 0) break; }                       // no older data: stop asking
+  return [...out.values()].sort((a, b) => a[0] - b[0]); };
 function expiryDays(u, ts) {                      // days to the expiry a trader would use (estimate when the real calendar isn't known)
   const x = new Date(ts + IST), wd = x.getUTCDay(), weekly = { NIFTY: 2, SENSEX: 4 }[u.tkr];
   if (u.seg === "MCX") return 15;
@@ -1499,6 +1938,131 @@ app.get("/api/pro/backtest", guard(async (req, res) => {
   const r = await proBacktest(sessions, thr); PROS.bt.set(key, r); res.json(r); }));
 
 
+/* ====================================================== STRATEGY VALIDATION ==
+   The server's own walk-forward test, run every trading morning (08:10 IST) and after a restart. Nothing is
+   published live unless the strategy behind it passed here.
+   Data: up to VALIDATE_DAYS (default 180) calendar days of Fyers 5-minute candles for the priority instruments and
+   other liquid F&O names, index-future volume, daily candles, INDIA VIX.
+   Candidates: the live rules, candle by candle, no look-ahead (the same proScan the live engine uses).
+   Strategies tried, per group (index options, stock options, MCX): score threshold 70 / 75 / 80 / 85 x exit
+   (book all at Target 1, at Target 2, or trail to Target 3), and setups that lost on the training data are dropped.
+   Sessions are split by date: first 50% training (choose), next 25% validation (must pass: 8+ trades, profit factor
+   1.1+, net profit after costs), last 25% test (kept apart; must not lose: profit factor 1.0+ on 5+ trades).
+   Premiums: Fyers has no prices for expired option contracts, so premiums are estimated (Black-Scholes, INDIA VIX
+   or realised volatility, real days to expiry pattern). Every result says so. OI and breadth are not in the history. */
+const VAL = { busy: false, err: null, at: 0, res: null, progress: null };
+const VAL_LIST = (env("VALIDATE_LIST") || "NIFTY,SENSEX,CRUDEOIL,HDFCBANK,BANKNIFTY,RELIANCE,ICICIBANK,SBIN,INFY,AXISBANK,KOTAKBANK,BAJFINANCE,TCS").split(",").map(x => x.trim().toUpperCase()).filter(Boolean);
+const VAL_DAYS = Math.max(60, Math.min(365, +env("VALIDATE_DAYS") || 180));
+const groupOf = u => u.seg === "IDX" ? "index" : u.seg === "MCX" ? "mcx" : "stock";
+const GROUP_NAME = { index: "Index options", stock: "Stock options", mcx: "MCX options" };
+const tick = () => new Promise(r => setImmediate(r));
+function valStats(list) {                                            // on return % of the premium paid (lots differ between instruments)
+  const n = list.length, w = list.filter(t => t.ret > 0), gp = w.reduce((a, t) => a + t.ret, 0), gl = -list.filter(t => t.ret <= 0).reduce((a, t) => a + t.ret, 0);
+  let eq = 0, peak = 0, dd = 0, cw = 0, cl = 0, mw = 0, ml = 0;
+  for (const t of list) { eq += t.ret; peak = Math.max(peak, eq); dd = Math.max(dd, peak - eq); if (t.ret > 0) { cw++; cl = 0; } else { cl++; cw = 0; } mw = Math.max(mw, cw); ml = Math.max(ml, cl); }
+  return { n, wins: w.length, losses: n - w.length, win: n ? w.length / n : null, pf: gl > 0 ? gp / gl : gp > 0 ? 99 : null, exp: n ? eq / n : null, total: eq, maxDD: dd,
+    avgWin: w.length ? gp / w.length : null, avgLoss: n - w.length ? -gl / (n - w.length) : null, maxWinRun: mw, maxLossRun: ml,
+    netRs: list.reduce((a, t) => a + t.net, 0) }; }
+async function proValidate(reason) {
+  if (VAL.busy || !EN) return VAL.res; VAL.busy = true; VAL.err = null; const t0 = Date.now();
+  try { await bgRun(async () => {
+    await ensureUniverse(); await (SYM.busy || Promise.resolve());
+    const res = { made: Date.now(), reason, days: VAL_DAYS, instruments: [], notes: [], skipped: [], strategies: {}, groups: {} };
+    const N = UNIVERSE.find(u => u.tkr === "NIFTY" && u.fy), BN = UNIVERSE.find(u => u.tkr === "BANKNIFTY" && u.fy);
+    if (!N || !BN) throw new Error("NIFTY / BANK NIFTY symbols not resolved yet");
+    const load = async u => { const b = EN.toBars(await restHistoryDays(u, 5, VAL_DAYS)); let fut = null; const fu = futFor(u);
+      if (fu) { try { fut = EN.toBars(await restHistoryDays(fu, 5, VAL_DAYS)); } catch (e) { res.notes.push(`${u.name}: index-future volume not available`); } }
+      let daily = []; try { daily = EN.toBars((await dailyOf(u)).candles); } catch (e) {}
+      return { P: EN.proPrep(u, b, fut), daily }; };
+    VAL.progress = "loading NIFTY and BANK NIFTY"; const mN = await load(N), mB = await load(BN);
+    let vix = []; try { vix = EN.toBars(await restHistoryDays({ fy: "NSE:INDIAVIX-INDEX" }, "D", VAL_DAYS + 60)); } catch (e) { res.notes.push("INDIA VIX history not available; realised volatility used"); }
+    const nAt = new Map(mN.P.b.map((x, i) => [x.ts, i])), bAt = new Map(mB.P.b.map((x, i) => [x.ts, i])), mk = new Map();
+    const marketAt = ts => { if (mk.has(ts)) return mk.get(ts); const i = nAt.get(ts), j = bAt.get(ts); let v = null;
+      if (i != null) { const a = EN.proTrend(mN.P, i, EN.demaOf(mN.daily, mN.P.b[i].day)), b = j != null ? EN.proTrend(mB.P, j, EN.demaOf(mB.daily, mB.P.b[j].day)) : null; v = marketTrend(a, b); }
+      mk.set(ts, v); return v; };
+    const trades = [], thrMin = 70, saveThr = EN.PRO.thr.strong; EN.PRO.thr.strong = thrMin;
+    try {
+      for (const tkr of VAL_LIST) { const u = UNIVERSE.find(z => z.tkr === tkr && z.fy); if (!u || !u.fo) { res.skipped.push(`${tkr}: not available`); continue; }
+        VAL.progress = `testing ${u.name} (${res.instruments.length + 1} of ${VAL_LIST.length})`;
+        let L; try { L = tkr === "NIFTY" ? mN : tkr === "BANKNIFTY" ? mB : await load(u); } catch (e) { res.skipped.push(`${u.name}: ${e.message}`); continue; }
+        const P = L.P; if (P.b.length < 400) { res.skipped.push(`${u.name}: only ${P.b.length} candles`); continue; }
+        const days = P.days, sigs = [];
+        for (let k = 3; k < days.length; k += 4) {                 // four sessions at a time, letting the server answer pages in between
+          const from = days[k].i0, to = (days[k + 4] ? days[k + 4].i0 : P.b.length) - 1;
+          sigs.push(...EN.proScan(P, from, to, i => ({ market: u.seg === "MCX" ? null : marketAt(P.b[i].ts), D: EN.demaOf(L.daily, P.b[i].day) }), thrMin).filter(x => x.trade));
+          await tick(); }
+        let n = 0;
+        for (const sg of sigs) { const tr = EN.proTrack(P, sg); if (tr.state === "ACTIVE") continue;
+          const x = P.b[sg.i], ts = x.ts + 5 * 60000, step = u.step || 50, K = Math.round(sg.L.entry / step) * step, ty = sg.d > 0 ? "CE" : "PE";
+          const vx = vix.filter(v => v.day < x.day).pop(), rv = realizedVol(L.daily, x.day, 20), rvN = realizedVol(mN.daily, x.day, 20);
+          let iv = u.seg === "IDX" && vx ? vx.c / 100 * (u.tkr === "NIFTY" || !rv || !rvN ? 1 : Math.min(1.6, Math.max(0.8, rv / rvN))) : rv ? rv * 1.1 : null; if (!iv) continue;
+          iv = Math.min(1.2, Math.max(0.08, iv)); const dE = expiryDays(u, ts), T0 = dE / 365, pIn = EN.bs(sg.L.entry, K, T0, iv, ty).px; if (!(pIn > 0.5)) continue;
+          const lot = ((OPTS.get(undKey(u)) || [])[0] || [])[4] || u.lot || 1, ex = proExchOf(u);
+          const out = (exU, exI) => { const T1 = Math.max(T0 - (P.b[exI].ts + 5 * 60000 - ts) / (365 * 864e5), 1 / (365 * 24)), pOut = EN.bs(exU, K, T1, iv, ty).px;
+            const buy = pIn * (1 + EN.PRO.cost.slip / 2) * lot, sell = Math.max(0.05, pOut * (1 - EN.PRO.cost.slip / 2)) * lot, net = sell - buy - EN.proCharges(ex, buy, sell).total;
+            return { net: +net.toFixed(2), ret: net / (pIn * lot) }; };
+          const evJ = h => (tr.ev.find(e => e.what === "T" + h) || {}).j;
+          const ex3 = out(tr.exitPx, tr.exitI), ex1 = tr.hit >= 1 ? out(sg.L.t1, evJ(1)) : ex3, ex2 = tr.hit >= 2 ? out(sg.L.t2, evJ(2)) : ex3;
+          trades.push({ tkr, name: u.name, group: groupOf(u), day: x.day, tmin: x.t + 5, ty, setup: sg.setup, score: sg.score, cond: sg.tr.cls, expiryDay: dE < 1,
+            pIn: +pIn.toFixed(2), lot, hit: tr.hit, how: tr.how, ex: { T1: ex1, T2: ex2, trail: ex3 } }); n++; }
+        res.instruments.push({ tkr, name: u.name, group: groupOf(u), candles: P.b.length, sessions: days.length, from: days[0].day, to: days[days.length - 1].day, trades: n });
+        await tick(); }
+    } finally { EN.PRO.thr.strong = saveThr; }
+    // walk-forward split by date
+    const dates = [...new Set(trades.map(t => t.day).concat(mN.P.days.map(d => d.day)))].sort(), cut1 = dates[Math.floor(dates.length * 0.5)], cut2 = dates[Math.floor(dates.length * 0.75)];
+    res.split = { train: [dates[0], cut1], validation: [cut1, cut2], test: [cut2, dates[dates.length - 1]], sessions: dates.length };
+    const part = t => t.day < cut1 ? "train" : t.day < cut2 ? "validation" : "test";
+    const view = (list, thr, exit, drop) => list.filter(t => t.score >= thr && !(drop && drop.has(t.setup))).map(t => Object.assign({}, t, t.ex[exit]));
+    for (const g of ["index", "stock", "mcx"]) {
+      const all = trades.filter(t => t.group === g), tried = [];
+      if (!all.length) { res.groups[g] = { name: GROUP_NAME[g], approved: false, why: "no historical trades" }; continue; }
+      for (const thr of [70, 75, 80, 85]) for (const exit of ["T1", "T2", "trail"]) {
+        const tr0 = view(all.filter(t => part(t) === "train"), thr, exit), drop = new Set();
+        for (const st of new Set(tr0.map(t => t.setup))) { const z = valStats(tr0.filter(t => t.setup === st)); if (z.n >= 8 && z.pf < 0.9) drop.add(st); }
+        const tr = valStats(view(all.filter(t => part(t) === "train"), thr, exit, drop));
+        const obj = tr.n >= 15 && tr.exp != null ? tr.exp * Math.sqrt(tr.n) / (1 + tr.maxDD) : -Infinity;
+        tried.push({ thr, exit, drop: [...drop], train: tr, obj }); }
+      tried.sort((a, b) => b.obj - a.obj); const best = tried[0];
+      const drop = new Set(best.drop), va = valStats(view(all.filter(t => part(t) === "validation"), best.thr, best.exit, drop)), te = valStats(view(all.filter(t => part(t) === "test"), best.thr, best.exit, drop));
+      const oosList = view(all.filter(t => part(t) !== "train"), best.thr, best.exit, drop), oos = valStats(oosList);
+      const why = [];
+      if (!(best.obj > -Infinity)) why.push("fewer than 15 training trades");
+      else if (!(best.train.exp > 0)) why.push("no strategy made money on the training sessions");
+      if (va.n < 8) why.push(`only ${va.n} validation trades (8 needed)`); else { if (!(va.pf >= 1.1)) why.push(`validation profit factor ${va.pf == null ? "—" : va.pf.toFixed(2)} (1.1 needed)`); if (!(va.total > 0)) why.push("validation lost money"); }
+      if (te.n < 5) why.push(`only ${te.n} test trades (5 needed)`); else if (!(te.pf >= 1.0)) why.push(`test profit factor ${te.pf.toFixed(2)} (losing out of sample)`);
+      const byInst = {}; for (const t of oosList) (byInst[t.tkr] = byInst[t.tkr] || []).push(t);
+      const blocked = Object.entries(byInst).map(([k, v]) => [k, valStats(v)]).filter(([, z]) => z.n >= 6 && z.pf < 0.8).map(([k, z]) => ({ tkr: k, n: z.n, pf: z.pf }));
+      const group = (key, list) => Object.entries(list.reduce((m, t) => { const k = key(t); (m[k] = m[k] || []).push(t); return m; }, {})).map(([k, v]) => Object.assign({ k }, valStats(v)));
+      res.groups[g] = { name: GROUP_NAME[g], approved: !why.length, why, thr: best.thr, exit: best.exit, drop: best.drop, train: best.train, validation: va, test: te, oos, blocked,
+        tried: tried.slice(0, 12).map(z => ({ thr: z.thr, exit: z.exit, n: z.train.n, pf: z.train.pf, exp: z.train.exp })),
+        bySetup: group(t => t.setup, oosList), byCond: group(t => t.cond, oosList), byTime: group(t => t.tmin < 660 ? "09:30-11:00" : t.tmin < 780 ? "11:00-13:00" : t.tmin < 900 ? "13:00-15:00" : "evening (MCX)", oosList),
+        byExpiry: group(t => t.expiryDay ? "expiry day" : "other days", oosList), byInst: group(t => t.name, oosList), totalTrades: all.length }; }
+    res.trades = trades.length; res.ms = Date.now() - t0;
+    res.assumptions = ["Premiums are ESTIMATED: Fyers keeps no prices for expired option contracts, so the at-the-money option is priced with Black-Scholes (INDIA VIX for indices, scaled by each index's own volatility; 20-day realised volatility x 1.1 for stocks and MCX) at the usual days to expiry. Real fills can differ.",
+      "Option chain / OI and market breadth are not in Fyers' history: they are left out here (the live engine uses them as extra checks).",
+      "Costs on every trade: brokerage ₹20 x 2, STT / CTT, exchange, clearing, SEBI, stamp duty, GST and 0.5% slippage.",
+      "Results are in % of the premium paid per trade, so instruments with different lot sizes count equally; ₹ figures are per 1 lot.",
+      "Training chooses; validation must pass; the test period is reported as the honest out-of-sample result. Past results do not guarantee future results."];
+    VAL.res = res; VAL.at = Date.now(); PROS.val = res;
+    PROS.btCalib = null; proSave(); proLog("validation", "done", { groups: Object.fromEntries(Object.entries(res.groups).map(([k, v]) => [k, { approved: v.approved, thr: v.thr, exit: v.exit, why: v.why }])) });
+  }); } catch (e) { VAL.err = e.message; } finally { VAL.busy = false; VAL.progress = null; }
+  return VAL.res; }
+VAL.res = PROS.val || null; VAL.at = VAL.res ? VAL.res.made : 0;
+// the check a live signal must pass: its group's strategy approved, its setup not dropped, its score at the chosen threshold
+function valGate(u, r) {
+  const v = VAL.res; if (!v) return { ok: false, why: VAL.busy ? "strategy validation is still running" : "no strategy validation yet (needs the Fyers login; runs at 08:10)" };
+  if (Date.now() - v.made > 4 * 864e5) return { ok: false, why: "strategy validation is out of date" };
+  const g = v.groups[groupOf(u)]; if (!g || !g.approved) return { ok: false, why: `${GROUP_NAME[groupOf(u)]}: no strategy passed validation (${g && g.why ? g.why.join("; ") : "no data"})` };
+  if (g.drop.includes(r.setup)) return { ok: false, why: `the ${r.setup} setup lost money in training` };
+  if (r.score < g.thr) return { ok: false, why: `score ${r.score} below the validated threshold ${g.thr}` };
+  if (g.blocked.some(b => b.tkr === u.tkr)) return { ok: false, why: `${u.name} lost money out of sample with this strategy` };
+  const st = (g.bySetup || []).find(z => z.k === r.setup);
+  return { ok: true, g, strat: `${g.name}: score ${g.thr}+, ${g.exit === "trail" ? "trail to Target 3" : "book all at " + (g.exit === "T1" ? "Target 1" : "Target 2")}${g.drop.length ? ", without " + g.drop.join("/") : ""}`,
+    hist: { win: g.oos.win, pf: g.oos.pf, n: g.oos.n, exp: g.oos.exp, setupN: st ? st.n : 0, setupWin: st ? st.win : null, from: v.split.validation[0], to: v.split.test[1] } }; }
+app.get("/api/pro/validation", guard(async (req, res) => {
+  if (req.query.run && !VAL.busy && Date.now() - VAL.at > 3600e3) proValidate("asked from the page").catch(() => {});
+  res.json({ busy: VAL.busy, progress: VAL.progress, err: VAL.err, res: VAL.res && Object.assign({}, VAL.res) }); }));
+
 /* ------------------------------------------------------------- Telegram -- */
 /* Two free, permitted ways to read trade calls posted on Telegram:
    1. Public channels, from Telegram's own public web preview (t.me/s/<name>),
@@ -1565,7 +2129,7 @@ async function tgBotLoop() {
   TG.bot.enabled = true;
   for (;;) {
     try {
-      const r = await fetch(`https://api.telegram.org/bot${tok}/getUpdates?timeout=25&offset=${TG.bot.offset}&allowed_updates=${encodeURIComponent('["message","edited_message","channel_post","edited_channel_post"]')}`,
+      const r = await fetch(`${env("TELEGRAM_API_BASE") || "https://api.telegram.org"}/bot${tok}/getUpdates?timeout=25&offset=${TG.bot.offset}&allowed_updates=${encodeURIComponent('["message","edited_message","channel_post","edited_channel_post"]')}`,
         { signal: AbortSignal.timeout(35000) });
       const j = await r.json();
       if (!j.ok) { TG.bot.error = j.description || ("HTTP " + r.status); await sleep(60000); continue; }
@@ -1574,6 +2138,7 @@ async function tgBotLoop() {
         TG.bot.offset = u.update_id + 1;
         const m = u.message || u.edited_message || u.channel_post || u.edited_channel_post; if (!m || !m.chat) continue;
         const c = m.chat, id = String(c.id);
+        if (/^\/(start|id)\b/i.test(m.text || "")) tgSend(`This chat's id is <code>${id}</code>.\nTo get Signal Desk alerts here, add it on Render as TELEGRAM_ALERT_CHAT_ID${TGA.chats.includes(id) ? " (already set: alerts come here)" : ""}.`, [id]);
         TG.bot.chats.set(id, { id, title: c.title || c.username || id, type: c.type, username: c.username || null });
         const list = TG.bot.msgs.get(id) || [];
         const text = m.text || m.caption || "";
@@ -1735,6 +2300,6 @@ app.listen(PORT, () => {
   console.log("  redirect   : " + REDIRECT + "   (enter exactly this in the Fyers app)");
   console.log("  visitors   : each logs in with their own Fyers account");
   setTimeout(mastersFresh, 2000);
-  loadEngine(); scheduleScan(); tgBotLoop();                                // symbol lists load in the background
+  loadEngine(); scheduleScan(); schedulePro(); tgBotLoop();                                // symbol lists load in the background
   console.log("  password   : " + (SITE_PASSWORD ? "on — asked before the page opens" : "off — the site opens normally") + "\n");
 });

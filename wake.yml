@@ -1,0 +1,24 @@
+# Wakes the Signal Desk server on Render before the 8:00 AM IST outlook and keeps checking during market hours.
+# Free for public repositories. GitHub may start scheduled runs some minutes late, so the first one is at 07:20 IST.
+# Change SITE below if your Render address is different.
+name: wake-signal-desk
+on:
+  schedule:
+    - cron: "50 1 * * 1-5"        # 07:20 IST, Monday to Friday
+    - cron: "15 2 * * 1-5"        # 07:45 IST
+    - cron: "*/30 3-18 * * 1-5"   # every 30 minutes, 08:30 IST to 00:00 IST
+  workflow_dispatch: {}
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SITE: https://signal-desk-8jcn.onrender.com
+    steps:
+      - name: Visit the site (Render starts it if it was asleep)
+        run: |
+          for i in 1 2 3; do
+            if curl -fsS --max-time 90 "$SITE/healthz"; then exit 0; fi
+            sleep 20
+          done
+          echo "The site did not answer"; exit 1

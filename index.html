@@ -526,6 +526,7 @@ button.pick:hover{color:var(--onkey)}
 .hero>div:last-child{border-right:none}
 .hero span{text-transform:none;letter-spacing:0;font-size:13.5px;font-weight:600;color:var(--mid)}
 .hero b{font:700 32px/1.15 var(--d);letter-spacing:-.02em}
+.hero.ov b{font-size:clamp(19px,5.2vw,30px);overflow-wrap:anywhere}
 @media(max-width:560px){.hero{grid-template-columns:1fr 1fr}.hero>div:nth-child(2){border-right:none}.hero>div:nth-child(-n+2){border-bottom:1px solid var(--line)}}
 
 /* market groups: a coloured edge and icon instead of a tinted box */
@@ -739,7 +740,7 @@ table.rt th{text-transform:none;letter-spacing:0;font:600 13px var(--s)}
   <div id="scalpBody"></div>
 </div>
 <div class="xsec" id="fnoPage" hidden><h3 class="xsh">All F&amp;O — call / put buy signals on every instrument with options</h3><div id="fnoBody"></div></div>
-<div class="xsec" id="proPage" hidden><h3 class="xsh">Pro signals — CE / PE BUY, scored out of 100</h3><div id="proBody"></div></div>
+<div class="xsec" id="proPage" hidden><h3 class="xsh">Pro — final confirmed CE / PE signals</h3><div id="proBody"></div></div>
 <div class="xsec" id="tgPage" hidden><h3 class="xsh">Telegram signals — calls from your sources, checked against the market</h3><div id="tgBody"></div></div>
 <div class="xsec" id="minePage" hidden><h3 class="xsh">My trades — advice on the option you took</h3><div id="mineBody"></div></div>
 <div class="xsec" id="btstPage" hidden>
@@ -964,7 +965,9 @@ async function boot(){
         const r = await fetch(S.api+"/auth/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:kept});
         const j = await r.json();
         if(j.ok){ if(j.a) store.set("sd_fy", JSON.stringify({a:j.a, r:j.r||null})); st = await api("/api/status"); }
-        else { try{ localStorage.removeItem("sd_fy"); }catch(e){} }
+        else { let k=null; try{ k=JSON.parse(kept); }catch(e){}
+          if(k&&k.r) store.set("sd_fy", JSON.stringify({r:k.r}));      // keep the background login's key for the server
+          else { try{ localStorage.removeItem("sd_fy"); }catch(e){} } }
       }catch(e){}
     }
     if(!st.authenticated){
@@ -3095,10 +3098,11 @@ const npdf=x=>0.3989423*Math.exp(-x*x/2);
 function bs(Sp,K,T,sg,ty){
   T=Math.max(T,1/(365*24)); sg=Math.max(sg,0.005);
   const st=sg*Math.sqrt(T), d1=(Math.log(Sp/K)+(RF+sg*sg/2)*T)/st, d2=d1-st, df=Math.exp(-RF*T);
+  const gamma=npdf(d1)/(Sp*st), vega=Sp*npdf(d1)*Math.sqrt(T)/100;   // vega: premium change for 1 point of IV
   return ty==="CE"
-    ? {px:Math.max(Sp*ncdf(d1)-K*df*ncdf(d2),0), delta:ncdf(d1),
+    ? {px:Math.max(Sp*ncdf(d1)-K*df*ncdf(d2),0), delta:ncdf(d1), gamma, vega,
        theta:(-Sp*npdf(d1)*sg/(2*Math.sqrt(T))-RF*K*df*ncdf(d2))/365}
-    : {px:Math.max(K*df*ncdf(-d2)-Sp*ncdf(-d1),0), delta:ncdf(d1)-1,
+    : {px:Math.max(K*df*ncdf(-d2)-Sp*ncdf(-d1),0), delta:ncdf(d1)-1, gamma, vega,
        theta:(-Sp*npdf(d1)*sg/(2*Math.sqrt(T))+RF*K*df*ncdf(-d2))/365};
 }
 /** Implied vol from a live premium, by bisection. */
@@ -3222,6 +3226,10 @@ function proPrep(u, b5, fut){
   // day facts per candle: previous day's high / low / close and the first 15 minutes' range
   const days=[]; let cur=null;
   b5.forEach((x,k)=>{ if(!cur||cur.day!==x.day){ cur={day:x.day, i0:k, h:x.h, l:x.l, c:x.c}; days.push(cur); } else { cur.h=Math.max(cur.h,x.h); cur.l=Math.min(cur.l,x.l); cur.c=x.c; } x._d=days.length-1; });
+  // previous calendar week's high / low for each day (weeks start on Monday)
+  const wk=d=>{ const t=new Date(d+"T00:00:00Z"); t.setUTCDate(t.getUTCDate()-((t.getUTCDay()+6)%7)); return t.toISOString().slice(0,10); };
+  const W=new Map(); for(const D of days){ const k=wk(D.day), w=W.get(k); if(!w) W.set(k,{h:D.h,l:D.l}); else { w.h=Math.max(w.h,D.h); w.l=Math.min(w.l,D.l); } }
+  const keys=[...W.keys()].sort(); for(const D of days){ const k=wk(D.day), j=keys.indexOf(k); D.pw=j>0?W.get(keys[j-1]):null; }
   P.days=days; return P; }
 function proVol(P,i){             // relative volume and VWAP side at candle i (own, or the future's for an index)
   const I=P.t5.I, x=P.b[i];
@@ -3231,7 +3239,7 @@ function proVol(P,i){             // relative volume and VWAP side at candle i (
 function proDayFacts(P,i){ const x=P.b[i], D=P.days[x._d], prev=P.days[x._d-1]||null;
   const first=P.b.slice(D.i0,i+1), orBars=first.filter(y=>y.t<(P.u.open||555)+15);
   const orDone=first.some(y=>y.t>=(P.u.open||555)+15)||(orBars.length>=3&&i>D.i0+2);
-  return { prev, or:orDone&&orBars.length?{h:Math.max(...orBars.map(y=>y.h)), l:Math.min(...orBars.map(y=>y.l))}:null,
+  return { prev, pw:D.pw||null, or:orDone&&orBars.length?{h:Math.max(...orBars.map(y=>y.h)), l:Math.min(...orBars.map(y=>y.l))}:null,
     dayHi:Math.max(...first.slice(0,-1).map(y=>y.h).concat([-Infinity])), dayLo:Math.min(...first.slice(0,-1).map(y=>y.l).concat([Infinity])), i0:D.i0 }; }
 /* The trend on one timeframe at candle k: -1 .. +1 from price vs EMA 20, EMA 20 vs 50, Supertrend, MACD,
    higher highs / higher lows (or lower), and VWAP where there is volume. */
@@ -3301,6 +3309,7 @@ function proTriggers(P,i,d){
   const firstToday=(lvl)=>!b.slice(fx.i0,i).some(y=>d>0?y.c>lvl:y.c<lvl);
   if(fx.or&&x.t<(P.u.open||555)+225){ const L=d>0?fx.or.h:fx.or.l; if(crossed(L)&&firstToday(L)) out.push({type:"ORB", q:12, level:L, label:`opening range ${d>0?"high":"low"} broken (first 15 minutes)`}); }
   if(fx.prev){ const L=d>0?fx.prev.h:fx.prev.l; if(crossed(L)&&firstToday(L)) out.push({type:"PDHL", q:12, level:L, label:`previous day ${d>0?"high":"low"} broken`}); }
+  if(fx.pw){ const L=d>0?fx.pw.h:fx.pw.l; if(crossed(L)&&firstToday(L)) out.push({type:"PWHL", q:13, level:L, label:`previous week ${d>0?"high":"low"} broken`}); }
   if(v.vw===d&&pv.vw===-d&&body>=0.4*A&&Math.sign(x.c-x.o)===d) out.push({type:"VWAP", q:10, level:v.vwap, label:`${d>0?"reclaimed":"lost"} VWAP${v.src==="future"?" (on the index future)":""}`});
   const look=b.slice(Math.max(fx.i0,i-12),i); if(look.length>=6){ const L=d>0?Math.max(...look.map(y=>y.h)):Math.min(...look.map(y=>y.l));
     if(strong&&(d>0?x.c>L:x.c<L)) out.push({type:"RANGE", q:11, level:L, label:`intraday ${d>0?"resistance broken":"support broken"} with a strong candle`}); }
@@ -3340,13 +3349,27 @@ function proLevels(P,i,d,trig){
   if(!isFinite(sl)) sl=x.c-d*1.2*A;
   let risk=Math.abs(x.c-sl); risk=Math.min(PRO.riskMax*A,Math.max(PRO.riskMin*A,risk)); sl=x.c-d*risk;
   // opposing levels: previous day, today's extreme, recent swings (and OI walls, added live)
-  const opp=(d>0?[fx.prev&&fx.prev.h, isFinite(fx.dayHi)?fx.dayHi:null, ...P.t5.piv.H.filter(q=>q.at<=i&&q.k>=i-150).map(q=>q.px)]
-                 :[fx.prev&&fx.prev.l, isFinite(fx.dayLo)?fx.dayLo:null, ...P.t5.piv.L.filter(q=>q.at<=i&&q.k>=i-150).map(q=>q.px)])
+  const opp=(d>0?[fx.prev&&fx.prev.h, fx.pw&&fx.pw.h, isFinite(fx.dayHi)?fx.dayHi:null, ...P.t5.piv.H.filter(q=>q.at<=i&&q.k>=i-150).map(q=>q.px)]
+                 :[fx.prev&&fx.prev.l, fx.pw&&fx.pw.l, isFinite(fx.dayLo)?fx.dayLo:null, ...P.t5.piv.L.filter(q=>q.at<=i&&q.k>=i-150).map(q=>q.px)])
     .filter(v=>v!=null&&d*(v-x.c)>0.3*A).sort((a,b2)=>d*(a-b2));
   const t1=opp.find(v=>d*(v-x.c)>=PRO.minRR*risk)||x.c+d*PRO.minRR*risk;
   const t2=Math.max(d*(t1-x.c),2.5*risk)*d+x.c, t3=Math.max(d*(t2-x.c)+risk,3.5*risk)*d+x.c;
   return { entry:x.c, zoneHi:x.c+d*0.2*A, sl, t1, t2, t3, risk, A, opp, rr:Math.abs(t1-x.c)/risk,
     invalid:trig.level!=null&&isFinite(trig.level)?trig.level-d*0.1*A:sl }; }
+/* Extra technical facts for a signal's explanation (they don't change the score): simple moving averages,
+   Bollinger bands and their width, rate of change, ATR as % of price, and the previous week's range. */
+function proTech(P,i,d){ const b=P.b, x=b[i], C=b.slice(Math.max(0,i-220),i+1).map(y=>y.c), n=C.length;
+  const sma=k=>n>=k?C.slice(-k).reduce((a,v)=>a+v,0)/k:null, s20=sma(20), s50=sma(50), s200=sma(200);
+  const sd=s20!=null?Math.sqrt(C.slice(-20).reduce((a,v)=>a+(v-s20)**2,0)/20):null, bw=sd!=null?4*sd/s20*100:null;
+  const widths=[]; for(let k=Math.max(20,n-120);k<=n;k++){ const w=C.slice(k-20,k), m=w.reduce((a,v)=>a+v,0)/20; widths.push(4*Math.sqrt(w.reduce((a,v)=>a+(v-m)**2,0)/20)/m*100); }
+  const pctl=bw!=null&&widths.length>20?widths.filter(w=>w<=bw).length/widths.length:null, roc=n>12?(x.c/C[n-13]-1)*100:null, A=P.t5.I.atr[i], fx=proDayFacts(P,i);
+  const out=[];
+  out.push(`SMA 20/50/200 (5m): ${[s20,s50,s200].map((v,k)=>v==null?"—":(x.c>v?"above ":"below ")+[20,50,200][k]).join(", ")}`);
+  if(bw!=null) out.push(`Bollinger: ${x.c>s20+2*sd?"above the upper band":x.c<s20-2*sd?"below the lower band":"inside the bands"}, width ${bw.toFixed(2)}%${pctl!=null?(pctl<=0.15?" (squeeze: expansion likely)":pctl>=0.85?" (very wide: move may be stretched)":""):""}`);
+  if(roc!=null) out.push(`rate of change (1 hour) ${roc>=0?"+":""}${roc.toFixed(2)}%`);
+  if(A) out.push(`ATR ${(A/x.c*100).toFixed(2)}% of price`);
+  if(fx.pw) out.push(`previous week range ${fx.pw.l.toFixed(2)}-${fx.pw.h.toFixed(2)}`);
+  return out.join("; "); }
 /* The score out of 100. ctx: {market (trend of NIFTY / the market), D (daily EMAs), oi, breadth}. */
 function proScore(P,i,d,trigs,tr,ctx){
   const W=PRO.w, parts={}, why=[], miss=[], x=P.b[i], I=P.t5.I, A=I.atr[i], v=proVol(P,i);
@@ -3402,7 +3425,7 @@ function proEval(P,i,ctx){
   if(!gapDay&&tr.s[60]!=null&&tr.s[60]*d<-0.2) return {none:`1-hour trend points the other way`, tr, d};
   if(!gapDay&&tr.s.D!=null&&tr.s.D*d<-0.34) return {none:`daily trend points the other way`, tr, d};
   const sc=proScore(P,i,d,trigs,tr,ctx), L=sc.levels;
-  if(L.rr<PRO.minRR) return {none:`reward : risk ${L.rr.toFixed(2)} below ${PRO.minRR}`, tr, d, sc};
+  if(L.rr<PRO.minRR) return {none:`reward : risk ${(Math.floor(L.rr*100)/100).toFixed(2)} below ${PRO.minRR}`, tr, d, sc};
   // a trade needs every confirmation; missing one leaves the signal on the watchlist, with the reason
   const v=proVol(P,i), cap=[];
   if(!gapDay&&!(tr.s[15]!=null&&tr.s[15]*d>0.2&&tr.s[30]!=null&&tr.s[30]*d>0.2)) cap.push("15- and 30-minute trends do not both confirm");
@@ -4269,32 +4292,41 @@ function renderHome(){
 }
 
 /* ------------------------------------------------- PRO SIGNALS (dashboard) -- */
-const PROUI={ d:null, at:0, busy:false, err:null, bt:null, btBusy:false, btErr:null, sessions:+store.get("sd_bt_n","25")||25, thr:+store.get("sd_bt_thr","75")||75, open:{} };
+const PROUI={ d:null, at:0, busy:false, err:null, bt:null, btBusy:false, btErr:null, sessions:+store.get("sd_bt_n","25")||25, thr:+store.get("sd_bt_thr","75")||75, open:{},
+  val:null, valAt:0, chainT:store.get("sd_pro_chain",""), hf:{inst:"",day:"",setup:""} };
 async function loadPro(force){
   if(PROUI.busy||(!force&&Date.now()-PROUI.at<20000)) return; PROUI.busy=true;
   try{ PROUI.d=await api("/api/pro",60000); PROUI.err=null; PROUI.at=Date.now();
-    for(const s of PROUI.d.ce.concat(PROUI.d.pe)) alerts.fire("pro|"+s.id,`${s.sym} ${s.ty} BUY ${s.contract.strike} · ${s.score}/100 ${s.grade} · buy up to ₹${s.prem.entryMax}, SL ₹${s.prem.sl}, T1 ₹${s.prem.t1}`);
-    for(const t of PROUI.d.paper) if(t.state==="CLOSED") alerts.fire("prox|"+t.id,`${t.contract}: ${t.how} (paper P&L ₹${nf(t.net,0)})`); }
+    for(const s of PROUI.d.ce.concat(PROUI.d.pe)) alerts.fire("pro|"+s.id,`CONFIRMED: ${s.sym} BUY ${s.ty} ${s.contract.strike} · ${s.score}/100 · entry ₹${s.prem.entryLo}–₹${s.prem.entryMax}, SL ₹${s.prem.sl}, T1 ₹${s.prem.t1}`);
+    if(Date.now()-PROUI.valAt>120000||!PROUI.val){ try{ PROUI.val=await api("/api/pro/validation",30000); PROUI.valAt=Date.now(); }catch(e){} } }
   catch(e){ PROUI.err=e.message; } finally{ PROUI.busy=false; if(onHomeTab("pro")) renderPro(); if(S.page==="home") renderStrictSegs(); } }
+const PRO_ST_COL=st=>({"WAITING":C.key,"ACTIVE":C.up,"TARGET 1 HIT":C.up,"TARGET 2 HIT":C.up,"TARGET 3 HIT":C.up,"STOP LOSS HIT":C.dn,"CANCELLED":C.mid,"ENTRY MISSED":C.mid,"EXPIRED":C.mid,"EXITED":C.warn})[st]||C.mid;
+const pctx=v=>v==null?"—":Math.round(v*100)+"%", pfx=v=>v==null?"—":v>=99?"∞":v.toFixed(2);
 function proCard(s){
-  const c=s.contract, p=s.prem, u=s.under, col=s.ty==="CE"?C.up:C.dn, f2=v=>"₹"+nf(v,2), fu=v=>nf(v,2);
-  const exp=c.expiry?new Date(c.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}):"—";
+  const c=s.contract, p=s.prem, u=s.under, h=s.hist||{}, col=s.ty==="CE"?C.up:C.dn, f2=v=>"₹"+nf(v,2), fu=v=>nf(v,2), live=(["WAITING","ACTIVE","TARGET 1 HIT","TARGET 2 HIT"].includes(s.state)&&!s.ended);
+  const exp=c.expiry?new Date(c.expiry).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}):"—", g=s.greeks;
+  const exitTxt=s.exitMode==="T1"?"book all at Target 1":s.exitMode==="T2"?"book all at Target 2":"trail to Target 3";
   const tf=Object.entries(s.tfs||{}).map(([k,v])=>`${k==="D"?"daily":k+"m"} ${v==null?"—":v>0.2?"▲":v<-0.2?"▼":"■"}`).join(" · ");
   const parts=s.parts||{}, W=(PROUI.d&&PROUI.d.weights)||{}, bar=(k,l)=>parts[k]==null?`<div><span>${l}</span><b style="color:${C.mid}">n/a</b></div>`:`<div><span>${l}</span><b>${(+parts[k]).toFixed(0)}/${W[k]||"?"}</b></div>`;
-  const share=`${s.sym} – ${s.ty} BUY\nStrike: ${c.strike} ${c.ty} (${c.kind}) · Expiry ${exp}\nEntry: ${f2(p.entry)}–${f2(p.entryMax)}\nStop loss: ${f2(p.sl)}\nTarget 1: ${f2(p.t1)}\nTarget 2: ${f2(p.t2)}\nTarget 3: ${f2(p.t3)}\nSignal strength: ${s.score}/100 (${s.grade})`;
-  return `<div class="xcard" style="--xc:${col}"><div class="xh"><b class="xn">${esc(s.sym)} – ${s.ty} BUY</b><span class="chip" style="background:${col}">${c.strike} ${c.ty}</span>`+
-    `<span class="xst" style="color:${s.state==="WATCH"?C.warn:col}">${s.score}/100 · ${esc(s.grade)}</span></div>`+
-    `<div class="xsub">${esc(c.sym||"")} · ${esc(c.kind)} · expiry ${exp}${c.lot?" · lot "+c.lot:""} · signal ${hhmm(s.created)} IST${c.spread!=null?` · spread ${c.spread.toFixed(1)}%`:""}${c.oi?` · OI ${kf(c.oi)}`:""}${c.vol?` · volume ${kf(c.vol)}`:""}${c.iv?` · IV ${(c.iv*100).toFixed(1)}%`:""}</div>`+
-    `<div class="xlv"><div><span>Entry (premium)</span><b style="color:${C.key}">${f2(p.entry)} – ${f2(p.entryMax)}</b></div><div><span>Stop loss</span><b style="color:${C.dn}">${f2(p.sl)}</b></div>`+
-      `<div><span>Target 1 / 2 / 3</span><b>${f2(p.t1)} / ${fu(p.t2)} / ${fu(p.t3)}</b></div><div><span>Reward : risk</span><b>${p.rr.toFixed(1)} (premium) · ${u.rr.toFixed(1)} (chart)</b></div></div>`+
-    `<div class="xopt"><b>${esc(s.sym)} levels:</b> entry ${fu(u.entry)} (zone to ${fu(u.zoneHi)}), stop ${fu(u.sl)}, targets ${fu(u.t1)} / ${fu(u.t2)} / ${fu(u.t3)}. ${esc(s.validity||"")}</div>`+
-    `<div class="xlv"><div><span>Market trend</span><b>${esc(s.marketTrend)}</b></div><div><span>${esc(s.sym)} trend</span><b>${esc(s.trend)}</b></div><div><span>Timeframes</span><b style="font-size:13px">${tf}</b></div>`+
-      `<div><span>RSI · VWAP</span><b style="font-size:13px">${s.rsi==null?"—":s.rsi.toFixed(0)} · ${esc(s.vwap||"—")}</b></div><div><span>EMA</span><b style="font-size:13px">${esc(s.ema||"—")}</b></div></div>`+
-    `<div class="xopt"><b>Volume:</b> ${esc((s.why||[]).find(w=>/^volume/.test(w))||"—")} · <b>OI:</b> ${esc(s.oi)}</div>`+
-    (s.cap&&s.cap.length?`<div class="xres" style="color:${C.warn}">Watch only, not a trade yet: ${esc(s.cap.join("; "))}.</div>`:"")+
-    `<details class="xwhy"><summary>Why this signal · score breakdown</summary>${esc(s.trigger||"")}${s.candles&&s.candles.length?" · candle: "+esc(s.candles.join(", ")):""}<br>`+
+  const share=`FINAL CONFIRMED SIGNAL\nINSTRUMENT: ${s.sym}\nDIRECTION: BUY ${s.ty}\nSTRIKE PRICE: ${c.strike} ${c.ty}\nEXPIRY: ${exp}\nENTRY RANGE: ${f2(p.entryLo)} – ${f2(p.entryMax)}\nSTOP LOSS: ${f2(p.sl)}\nTARGET 1: ${f2(p.t1)}\nTARGET 2: ${f2(p.t2)}\nTARGET 3: ${f2(p.t3)} (${exitTxt})\nRISK-REWARD: 1 : ${p.rr.toFixed(1)}\nCONFIDENCE SCORE: ${s.score}/100\nBACKTESTED STRATEGY: ${s.strat||"—"}\nHISTORICAL WIN RATE: ${pctx(h.win)} (backtest, estimated premiums)\nPROFIT FACTOR: ${pfx(h.pf)}\nNUMBER OF HISTORICAL TRADES: ${h.n||0}\nCURRENT MARKET TREND: ${s.trend}\nSIGNAL TIMESTAMP: ${hhmm(s.at)} IST\nStatus: ${s.status}`;
+  const row=(k,v,st)=>`<div><span>${k}</span><b${st?` style="${st}"`:""}>${v}</b></div>`;
+  const nz=v=>v==null||v===""?"—":v;
+  return `<div class="xcard" style="--xc:${col}${live?"":";opacity:.82"}"><div class="xh"><b class="xn">${esc(s.sym)} – BUY ${s.ty}</b><span class="chip" style="background:${col}">${c.strike} ${c.ty}</span>`+
+    `<span class="xst" style="color:${PRO_ST_COL(s.state)}">${esc(s.status||s.state)}</span></div>`+
+    `<div class="xsub">FINAL CONFIRMED · ${s.score}/100 ${esc(s.grade)} · signal ${hhmm(s.at)} IST · expiry ${exp}${c.lot?" · lot "+c.lot:""} · ${esc(c.kind)}${c.spread!=null?` · spread ${c.spread.toFixed(1)}%`:""} ${s.data?" · data "+esc(s.data):""}</div>`+
+    `<div class="xlv">${row("Entry range",`${f2(p.entryLo)} – ${f2(p.entryMax)}`,`color:${C.key}`)}${row("Stop loss",f2(p.sl),`color:${C.dn}`)}${row("Target 1 / 2 / 3",`${f2(p.t1)} / ${fu(p.t2)} / ${fu(p.t3)}`)}${row("Risk : reward",`1 : ${p.rr.toFixed(1)} · ${exitTxt}`)}`+
+      `${s.now!=null?row("Premium now",`${f2(s.now)} <small style="color:${C.mid}">${s.nowAt?hhmm(s.nowAt):""} ${esc(s.nowSrc||"")}</small>`):""}${s.entered?row("Entered",f2(s.entered)):""}${s.exit!=null?row("Exit",`${f2(s.exit)}${s.net!=null?` · <span style="color:${s.net>=0?C.up:C.dn}">${s.net>=0?"+":"−"}₹${nf(Math.abs(s.net),0)} net</span>`:""}`):""}</div>`+
+    `<div class="xlv">${row("Backtested strategy",`<span style="font-size:13px">${esc(s.strat||"—")}</span>`)}${row("Historical win rate",`${pctx(h.win)} <small style="color:${C.mid}">backtest, out of sample</small>`)}${row("Profit factor",pfx(h.pf))}${row("Historical trades",`${h.n||0}${h.setupN?` (${h.setupN} this setup)`:""}`)}`+
+      `${row("Live (paper) record",`<span style="font-size:13px">${esc((s.conf&&s.conf.text)||"—")}</span>`)}</div>`+
+    `<div class="xopt"><b>Entry rule:</b> ${esc(nz(s.confirm))}<br><b>Invalid if:</b> ${esc(nz(s.invalidIf))}<br><b>Holding:</b> ${esc(nz(s.holding))}</div>`+
+    `<div class="xlv">${row("Market trend",esc(nz(s.marketTrend)))}${row(esc(s.sym)+" trend",esc(nz(s.trend)))}${row("Timeframes",`<span style="font-size:13px">${tf}</span>`)}${row("RSI · VWAP",`<span style="font-size:13px">${s.rsi==null?"—":s.rsi.toFixed(0)} · ${esc(s.vwap||"—")}</span>`)}`+
+      `${g?row("IV · Greeks",`<span style="font-size:13px">IV ${g.iv.toFixed(1)}% · Δ ${g.delta.toFixed(2)} · Γ ${g.gamma.toFixed(4)} · Θ ${g.theta.toFixed(2)}/day · vega ${g.vega.toFixed(2)}</span>`):""}</div>`+
+    `<div class="xopt"><b>Options chain:</b> ${esc(nz(s.oi))}${s.tech?`<br><b>Technicals:</b> ${esc(s.tech)}`:""}</div>`+
+    `<details class="xwhy"><summary>Reason for entry · score breakdown · status log</summary><b>${esc(s.trigger||"")}</b>${s.candles&&s.candles.length?" · candle: "+esc(s.candles.join(", ")):""}<br>`+
       `${(s.why||[]).map(w=>"✓ "+esc(w)).join("<br>")}${s.miss&&s.miss.length?`<br><i>Not available: ${esc(s.miss.join(", "))} (left out; the rest scaled to 100)</i>`:""}`+
-      `<div class="xlv" style="margin-top:8px">${bar("trend","Market trend")}${bar("mtf","Timeframes")}${bar("pa","Price action")}${bar("vol","Volume")}${bar("mom","Momentum")}${bar("sr","Room to S/R")}${bar("oi","Option chain / OI")}${bar("breadth","Breadth / sector")}</div></details>`+
+      `<div class="xlv" style="margin-top:8px">${bar("trend","Market trend")}${bar("mtf","Timeframes")}${bar("pa","Price action")}${bar("vol","Volume")}${bar("mom","Momentum")}${bar("sr","Room to S/R")}${bar("oi","Option chain / OI")}${bar("breadth","Breadth / sector")}</div>`+
+      `<div style="margin-top:8px">${(s.events||[]).map(e=>`${hhmm(e.at)} · ${esc(e.what)}`).join("<br>")}</div>`+
+      `<div style="margin-top:6px;color:${C.mid}">${esc(s.sym)} levels: trigger ${fu(u.entry)}, stop ${fu(u.sl)}, targets ${fu(u.t1)} / ${fu(u.t2)} / ${fu(u.t3)}, invalid beyond ${fu(u.invalid)}</div></details>`+
     `<div class="xact">${xCopyBtn(share)}<button class="btn xchart" data-tkr="${esc(s.tkr)}">View on chart</button></div></div>`; }
 function proPaperRow(t){ const pnl=(t.state==="CLOSED"?t.net:(t.now-t.entry)*t.qty), col=pnl>=0?C.up:C.dn;
   return `<tr><td>${esc(t.contract)}</td><td>${hhmm(t.created)}</td><td>₹${nf(t.entry,2)}</td><td>₹${nf(t.state==="CLOSED"?t.exit:t.now,2)}</td><td style="color:${col}">${pnl>=0?"+":"−"}₹${nf(Math.abs(pnl),0)}${t.state==="CLOSED"?" net":" (before charges)"}</td>`+
@@ -4310,35 +4342,83 @@ async function runBacktest(force){
   if(PROUI.btBusy) return; PROUI.btBusy=true; PROUI.btErr=null; renderPro();
   try{ PROUI.bt=await api(`/api/pro/backtest?sessions=${PROUI.sessions}&thr=${PROUI.thr}${force?"&force=1":""}`,600000); }catch(e){ PROUI.btErr=e.message; }
   PROUI.btBusy=false; renderPro(); }
+function proOutlookHtml(r){ if(!r) return "";
+  const v=r.views||[], colB=b=>b==="Bullish"?C.up:b==="Bearish"?C.dn:C.warn, open=nowIstMin()<570;
+  let h=`<details class="xwhy" ${open?"open":""} style="margin:10px 0"><summary><b>8:00 AM outlook — ${esc(r.day)}</b> · market <b style="color:${colB(r.overall.split(" ")[0])}">${esc(r.overall)}</b> · <i>pre-market view, not entry signals</i></summary>`;
+  h+=`<div class="sub">${esc(r.vixNote)}${r.expiry&&r.expiry.length?` · <b>expiry today: ${esc(r.expiry.join(", "))}</b>`:""} · made ${hhmm(r.at)} IST</div>`;
+  h+=`<div class="tblw"><table class="rt"><tr><th>Instrument</th><th>Bias</th><th>Prev. close</th><th>Previous day</th><th>Levels</th><th>Setups awaiting confirmation</th></tr>`+v.map(x=>x.err?`<tr><td>${esc(x.sym)}</td><td colspan="5">data not available: ${esc(x.err)}</td></tr>`:
+    `<tr><td><b>${esc(x.sym)}</b></td><td style="color:${colB(x.bias)}"><b>${x.bias}</b></td><td>${nf(x.c,2)} <small style="color:${x.chg>=0?C.up:C.dn}">${x.chg>=0?"+":""}${x.chg.toFixed(2)}%</small></td>`+
+    `<td style="font-size:12px">${esc(x.pat.join(", ")||"normal candle")}; ${esc(x.why.join("; "))}; RSI ${x.rsi.toFixed(0)}; ${esc(x.bbPos)}; 20-day HV ${x.hv.toFixed(1)}%</td>`+
+    `<td style="font-size:12px">PDH ${nf(x.pdh,2)} · PDL ${nf(x.pdl,2)}<br>R1 ${nf(x.pivots.R1,2)} · S1 ${nf(x.pivots.S1,2)}<br>R2 ${nf(x.pivots.R2,2)} · S2 ${nf(x.pivots.S2,2)}${x.pwh?`<br>last week ${nf(x.pwl,2)}–${nf(x.pwh,2)}`:""}<br>EMA 20/50/200 ${nf(x.e20,0)}/${nf(x.e50,0)}/${x.e200?nf(x.e200,0):"—"}</td>`+
+    `<td style="font-size:12px">${x.setups.map(esc).join("<br>")}</td></tr>`).join("")+`</table></div>`;
+  if(r.events&&r.events.length) h+=`<div class="sub"><b>Events (next 7 days):</b> ${r.events.map(([d,t])=>`${esc(d)}: ${esc(t)}`).join(" · ")}</div>`;
+  const N=r.news||{}, nm={global:"Global markets / GIFT NIFTY / US / Asia",flows:"FII / DII",crude:"Crude oil",policy:"RBI, Fed, economy",hdfc:"HDFC Bank"};
+  for(const k of Object.keys(nm)) if(N[k]&&N[k].length) h+=`<div class="sub"><b>${nm[k]}:</b> ${N[k].slice(0,3).map(n=>`<a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a> <small>(${esc(n.source)}${n.published?", "+hhmm(n.published):""})</small>`).join(" · ")}</div>`;
+  h+=`<div class="sub"><i>${esc(r.missing)}</i></div></details>`; return h; }
+function nowIstMin(){ const x=new Date(Date.now()+19800000); return x.getUTCHours()*60+x.getUTCMinutes(); }
+function proChainHtml(d){ const keys=Object.keys(d.chains||{}); if(!keys.length) return `<div class="none">The option chains are read when the instruments are analysed (market hours).</div>`;
+  const t=keys.includes(PROUI.chainT)?PROUI.chainT:(d.priority||[]).find(k=>keys.includes(k))||keys[0], ch=d.chains[t], L=n=>n==null?"—":Math.abs(n)>=1e5?(n/1e5).toFixed(1)+"L":nf(n,0);
+  let h=`<div class="mtrow" style="margin:6px 0">${keys.map(k=>`<button class="btn ${k===t?"pri":""} pchain" data-t="${esc(k)}">${esc(d.chains[k].sym)}</button>`).join("")}</div>`;
+  h+=`<div class="sub">${esc(ch.sym)} · spot ${nf(ch.spot,2)} · expiry ${esc(ch.expiry)} · PCR ${ch.pcr==null?"—":ch.pcr.toFixed(2)} · max pain ${ch.maxPain??"—"} · call wall ${ch.res??"—"} · put wall ${ch.sup??"—"} · ATM call ${esc(ch.ceB||"—")}, ATM put ${esc(ch.peB||"—")} · ${esc(ch.source)}, ${hhmm(ch.at)} IST</div>`;
+  h+=`<div class="tblw"><table class="rt"><tr><th>CE OI</th><th>CE ΔOI</th><th>CE vol</th><th>CE IV</th><th>CE LTP</th><th>Strike</th><th>PE LTP</th><th>PE IV</th><th>PE vol</th><th>PE ΔOI</th><th>PE OI</th></tr>`+
+    ch.rows.map(r=>`<tr${r.strike===ch.atm?` style="background:rgba(127,127,127,.15)"`:""}><td>${L(r.ce.oi)}</td><td style="color:${(r.ce.chgOi||0)>=0?C.up:C.dn}">${L(r.ce.chgOi)}</td><td>${L(r.ce.vol)}</td><td>${r.ce.iv==null?"—":r.ce.iv.toFixed(1)}</td><td>${nf(r.ce.ltp,2)}</td>`+
+      `<td><b>${r.strike}</b></td><td>${nf(r.pe.ltp,2)}</td><td>${r.pe.iv==null?"—":r.pe.iv.toFixed(1)}</td><td>${L(r.pe.vol)}</td><td style="color:${(r.pe.chgOi||0)>=0?C.up:C.dn}">${L(r.pe.chgOi)}</td><td>${L(r.pe.oi)}</td></tr>`).join("")+`</table></div>`;
+  return h; }
+function proValHtml(V){ const r=V&&V.res;
+  let h=`<div class="sub">Every trading morning (08:10 IST) the server re-tests the rules on up to 6 months of Fyers 5-minute history: training sessions choose the strategy, validation sessions must pass, the latest sessions are kept apart as the out-of-sample test. A signal is published only if its strategy passed.${V&&V.busy?` <b>Running now: ${esc(V.progress||"")}</b>`:""}${V&&V.err?` <span style="color:${C.dn}">Last run failed: ${esc(V.err)}</span>`:""}</div>`;
+  if(!r) return h+`<div class="none">No validation yet. It runs automatically once the server has a Fyers login. <button class="btn" id="valGo">Run it now</button></div>`;
+  h+=`<div class="sub">Run ${new Date(r.made).toLocaleString("en-IN")} · ${r.trades} historical trades · training ${esc(r.split.train.join(" to "))}, validation ${esc(r.split.validation.join(" to "))}, test ${esc(r.split.test.join(" to "))} · ${r.instruments.map(i=>esc(i.name)+" ("+i.trades+")").join(", ")}</div>`;
+  for(const [k,g] of Object.entries(r.groups)){ const st=z=>z?`${z.n} trades · win ${pctx(z.win)} · PF ${pfx(z.pf)} · avg ${z.exp==null?"—":(z.exp*100).toFixed(1)+"%"} of premium · max DD ${(z.maxDD*100).toFixed(0)}% · worst losing run ${z.maxLossRun}`:"—";
+    h+=`<div class="xcard" style="--xc:${g.approved?C.up:C.mid};margin:8px 0"><div class="xh"><b class="xn">${esc(g.name)}</b><span class="xst" style="color:${g.approved?C.up:C.dn}">${g.approved?"APPROVED":"NOT APPROVED"}</span></div>`;
+    if(g.thr==null){ h+=`<div class="xsub">${esc((g.why||[]).join("; "))}</div></div>`; continue; }
+    h+=`<div class="xsub">Strategy: score ${g.thr}+, ${g.exit==="trail"?"trail to Target 3":"book all at "+(g.exit==="T1"?"Target 1":"Target 2")}${g.drop.length?", without "+esc(g.drop.join(", ")):""}${g.approved?"":` · <span style="color:${C.dn}">${esc(g.why.join("; "))}</span>`}</div>`+
+      `<div class="sub">Training: ${st(g.train)}<br>Validation: ${st(g.validation)}<br><b>Test (out of sample): ${st(g.test)}</b><br>Validation + test together: ${st(g.oos)}${g.blocked.length?`<br>Blocked instruments: ${g.blocked.map(b=>esc(b.tkr)).join(", ")}`:""}</div>`;
+    const tbl=(rows,l)=>rows&&rows.length?`<div class="tblw"><table class="rt"><tr><th>${l}</th><th>Trades</th><th>Win</th><th>PF</th><th>Avg %</th></tr>${rows.map(z=>`<tr><td>${esc(z.k)}</td><td>${z.n}</td><td>${pctx(z.win)}</td><td>${pfx(z.pf)}</td><td>${z.exp==null?"—":(z.exp*100).toFixed(1)}</td></tr>`).join("")}</table></div>`:"";
+    h+=`<details class="xwhy"><summary>Out-of-sample detail: setup, market condition, time, expiry day, instrument · strategies tried</summary>${tbl(g.bySetup,"Setup")}${tbl(g.byCond,"Market condition")}${tbl(g.byTime,"Time of day")}${tbl(g.byExpiry,"Expiry")}${tbl(g.byInst,"Instrument")}`+
+      `<div class="sub">Tried on training (best first): ${g.tried.map(z=>`${z.thr}+/${z.exit}: ${z.n} tr, PF ${pfx(z.pf)}`).join(" · ")}</div></details></div>`; }
+  h+=`<details class="xwhy"><summary>Assumptions and limits</summary>${r.assumptions.map(a=>"• "+esc(a)).join("<br>")}${r.notes.length?"<br>"+r.notes.map(a=>"• "+esc(a)).join("<br>"):""}${r.skipped.length?"<br>Skipped: "+esc(r.skipped.join("; ")):""}</details>`;
+  return h; }
 function renderPro(){
   if(!onHomeTab("pro")) return; const el=document.getElementById("proBody"), d=PROUI.d;
-  if(!d){ el.innerHTML=`<div class="empty">${PROUI.err?"Could not load Pro signals: "+esc(PROUI.err):"Loading the market overview and Pro signals…"}</div>`; return; }
-  const o=d.overview, q=(x,l)=>`<div><span>${l}</span><b>${x?nf(x.ltp,2):"—"}</b><small style="color:${x&&x.chp!=null?(x.chp>=0?C.up:C.dn):C.mid}">${x&&x.chp!=null?(x.chp>=0?"+":"")+x.chp.toFixed(2)+"%":"not in the live feed"}</small></div>`;
-  const scol={LIVE:C.up, DELAYED:C.warn, STALE:C.dn, CLOSED:C.mid}[o.status]||C.mid, m=o.market;
-  let h=`<div class="bbar"><b style="color:${scol}">● ${o.status}</b> · ${esc(o.statusNote)}${o.lastTick?` · last price ${hhmm(o.lastTick)} IST`:""}${d.at?` · analysed ${hhmm(d.at)} IST (every 5 minutes)`:""}${d.busy?" · analysing now…":""}${d.err?` · <span style="color:${C.warn}">${esc(d.err)}</span>`:""}</div>`;
-  h+=`<div class="hero">${q(o.nifty,"NIFTY 50")}${q(o.bank,"BANK NIFTY")}${q(o.fin,"FIN NIFTY")}${q(o.vix,"INDIA VIX")}</div>`;
-  h+=`<div class="hero"><div><span>Market trend</span><b style="font-size:18px;color:${!m?C.mid:/BULL/.test(m.cls)?C.up:/BEAR/.test(m.cls)?C.dn:C.warn}">${m?esc(m.cls):"—"}</b><small>${m?`NIFTY ${esc((m.nifty||"").toLowerCase())}, BANK NIFTY ${esc((m.bank||"").toLowerCase())}`:"needs NIFTY data"}</small></div>`+
-    `<div><span>Advance / decline</span><b>${o.breadth?o.breadth.adv+" / "+o.breadth.dec:"—"}</b><small>${o.breadth?"ratio "+o.breadth.ratio.toFixed(2)+" (F&O stocks)":"needs the live feed"}</small></div>`+
-    `<div><span>Sentiment</span><b style="font-size:18px">${esc(o.sentiment||"—")}</b><small>trend + breadth + VIX</small></div>`+
-    `<div><span>Thresholds</span><b style="font-size:18px">${d.cfg.strong}+ trade</b><small>${d.cfg.veryStrong}+ very strong · ${d.cfg.watch}–${d.cfg.strong-1} watch · R:R ≥ ${d.cfg.minRR}</small></div></div>`;
-  if(o.breadth&&o.breadth.sectors.length){ const S3=o.breadth.sectors, sc=x=>`<span style="color:${x.chp>=0?C.up:C.dn}">${esc(x.name)} ${x.chp>=0?"+":""}${x.chp.toFixed(2)}%</span>`;
-    h+=`<div class="sub">Strongest sectors: ${S3.slice(0,3).map(sc).join(" · ")} — weakest: ${S3.slice(-3).reverse().map(sc).join(" · ")}</div>`; }
-  const sec=(t,list,empty)=>`<h3>${t} (${list.length})</h3>`+(list.length?`<div class="xgrid">${list.map(proCard).join("")}</div>`:`<div class="none">${empty}</div>`);
-  h+=sec("A. Top CE BUY opportunities",d.ce,"No CE BUY passes every check right now.")+sec("B. Top PE BUY opportunities",d.pe,"No PE BUY passes every check right now.");
-  if(!d.ce.length&&!d.pe.length) h+=`<div class="notrade"><b>NO TRADE</b><span>${m&&(m.cls==="SIDEWAYS"||m.cls==="HIGH VOLATILITY")?`The market is ${esc(m.cls.toLowerCase())}: directional option buys are avoided.`:"No instrument has every confirmation (trend on several timeframes, the market agreeing, a breakout, retest or bounce, volume, momentum, room to the next level and the option chain) at the same time."} Waiting is a decision too.</span></div>`;
-  h+=sec("C. Watchlist (score "+d.cfg.watch+"–"+(d.cfg.strong-1)+", or one confirmation missing)",d.watch,"Nothing close to a signal.");
-  h+=`<h3>D. No trade / avoid (${d.avoid.length})</h3>`+(d.avoid.length?`<div class="xstates">${d.avoid.map(a=>`<div><b>${esc(a.sym||a.tkr)}</b><span>${esc(a.why)}</span></div>`).join("")}</div>`:`<div class="none">Every analysed instrument is listed above.</div>`);
-  // paper trading
-  const open=d.paper.filter(t=>t.state==="OPEN"), hist=d.history;
-  h+=`<h3>E. Active trade monitor — paper trading (${open.length})</h3><div class="sub">Every signal of ${d.cfg.strong}+ is paper-traded for 1 lot at the ask: no real order is ever placed. Stop loss first, then targets; after Target 1 the suggested stop moves to the entry, after Target 2 to Target 1 (the original stop is kept as given).</div>`+
-    (open.length?`<div class="tblw"><table class="rt"><tr><th>Contract</th><th>Signal</th><th>Entry</th><th>Now</th><th>P&L</th><th>Stop (suggested)</th><th>Targets</th><th>Status</th></tr>${open.map(proPaperRow).join("")}</table></div>`:`<div class="none">No open paper trade.</div>`);
-  const tally=(()=>{ const n=hist.length, w=hist.filter(t=>t.net>0), l=hist.filter(t=>t.net<=0), gp=w.reduce((a,t)=>a+t.net,0), gl=-l.reduce((a,t)=>a+t.net,0);
-    let e=0,pk=0,dd=0; hist.slice().reverse().forEach(t=>{ e+=t.net; pk=Math.max(pk,e); dd=Math.max(dd,pk-e); }); return n?{trades:n,wins:w.length,losses:l.length,winRate:w.length/n*100,pf:gl>0?gp/gl:null,net:e,maxDD:dd}:null; })();
-  h+=`<h3>F. Signal history (paper results, kept on the server)</h3>`+proStatsHtml(tally,"Paper trading")+
-    (hist.length?`<div class="tblw"><table class="rt"><tr><th>Contract</th><th>Signal</th><th>Entry</th><th>Exit</th><th>Result</th><th>Stop</th><th>Targets</th><th>How it ended</th></tr>${hist.slice(0,60).map(proPaperRow).join("")}</table></div>`:"");
-  // backtest
+  if(!d){ el.innerHTML=`<div class="empty">${PROUI.err?"Could not load: "+esc(PROUI.err):"Loading confirmed signals…"}</div>`; return; }
+  const o=d.overview, a=d.auto||{}, q=(x,l)=>`<div><span>${l}</span><b>${x&&x.ltp!=null?nf(x.ltp,2):"—"}</b><small style="color:${x&&x.chp!=null?(x.chp>=0?C.up:C.dn):C.mid}">${x&&x.chp!=null?(x.chp>=0?"+":"")+x.chp.toFixed(2)+"%":x&&x.open===false?"market shut":"no price yet"}</small></div>`;
+  const scol={LIVE:C.up, DELAYED:C.warn, STALE:C.dn, CLOSED:C.mid}[o.status]||C.mid, m=o.market, lg=a.login||{};
+  let h=`<div class="bbar"><b style="color:${scol}">● ${o.status}</b> · ${esc(o.statusNote)}${o.lastTick?` · last price ${hhmm(o.lastTick)} IST`:""}${d.at?` · analysed ${hhmm(d.at)} IST`:""}${d.busy?" · analysing now…":""}</div>`;
+  h+=`<div class="bbar" style="font-size:13px">Background (works with this page closed): Fyers login <b style="color:${lg.state==="ready"?C.up:C.dn}">${esc(lg.state||"—")}</b>${lg.refreshDaysLeft!=null?` (renews itself for ${lg.refreshDaysLeft} more days)`:""}${!lg.pin?` · <span style="color:${C.warn}">add FYERS_PIN on Render for automatic renewal</span>`:""}`+
+    ` · phones ${a.push?a.push.devices:0} · Telegram ${a.telegram&&a.telegram.chats?"on":"off"}${a.holiday?` · <b>${esc(a.holiday)}</b>`:""}</div>`;
+  h+=proOutlookHtml(d.reports&&d.reports.outlook&&d.reports.outlook.day===new Date(Date.now()+19800000).toISOString().slice(0,10)?d.reports.outlook:null);
+  h+=`<h3>A. Market overview</h3><div class="hero ov">${(o.prio||[]).map(x=>q(x,esc(x.sym))).join("")}${q(o.vix,"INDIA VIX")}${q(o.bank,"BANK NIFTY")}</div>`;
+  h+=`<div class="hero"><div><span>Market trend</span><b style="font-size:18px;color:${!m?C.mid:/BULL/.test(m.cls)?C.up:/BEAR/.test(m.cls)?C.dn:C.warn}">${m?esc(m.cls):"—"}</b><small>${m?`NIFTY ${esc((m.nifty||"").toLowerCase())}, BANK NIFTY ${esc((m.bank||"").toLowerCase())}`:"after the open"}</small></div>`+
+    `<div><span>Advance / decline</span><b>${o.breadth?o.breadth.adv+" / "+o.breadth.dec:"—"}</b><small>${o.breadth?"ratio "+o.breadth.ratio.toFixed(2):"needs the live feed"}</small></div>`+
+    `<div><span>Sentiment</span><b style="font-size:18px">${esc(o.sentiment||"—")}</b><small>trend + breadth + VIX</small></div></div>`;
+  const sig=d.ce.concat(d.pe).sort((x,y)=>{ const L=s=>(["WAITING","ACTIVE","TARGET 1 HIT","TARGET 2 HIT"].includes(s.state)&&!s.ended)?1:0; return L(y)-L(x)||y.at-x.at; }), liveN=sig.filter(s=>(["WAITING","ACTIVE","TARGET 1 HIT","TARGET 2 HIT"].includes(s.state)&&!s.ended)).length;
+  h+=`<h3>B. Final confirmed signals today (${sig.length})</h3>`;
+  if(!liveN) h+=`<div class="notrade"><b>NO CONFIRMED TRADE – WAIT FOR THE NEXT OPPORTUNITY.</b><span>Signals appear here (and on your phone / Telegram) only after every check passes, including the strategy's walk-forward test. Preliminary analysis stays on the server.</span></div>`;
+  if(sig.length) h+=`<div class="xgrid">${sig.map(proCard).join("")}</div>`;
+  const sm=d.summary||{};
+  h+=`<h3>C. Today's summary</h3><div class="hero"><div><span>Signals</span><b>${sm.total||0}</b><small>${sm.ce||0} CE · ${sm.pe||0} PE</small></div><div><span>Active</span><b>${(sm.active||0)+(sm.waiting||0)}</b><small>${sm.waiting||0} awaiting entry</small></div>`+
+    `<div><span>Targets</span><b style="color:${C.up}">${sm.t1||0}</b><small>reached Target 1 · ${sm.t3||0} Target 3</small></div><div><span>Stop losses</span><b style="color:${C.dn}">${sm.sl||0}</b><small>${sm.cancelled||0} cancelled · ${sm.missed||0} missed · ${sm.expired||0} expired</small></div>`+
+    `<div><span>Win rate (closed)</span><b>${sm.winRate==null?"—":Math.round(sm.winRate*100)+"%"}</b><small>${sm.closed||0} closed · net ${sm.net>=0?"+":"−"}₹${nf(Math.abs(sm.net||0),0)} (paper)</small></div></div>`;
+  const eod=d.reports&&d.reports.eod; if(eod&&eod.day===sm.day&&eod.fewNote) h+=`<div class="sub">${esc(eod.fewNote)}</div>`;
+  h+=`<h3>D. Options analysis</h3>`+proChainHtml(d);
+  h+=`<h3>E. Strategy validation (walk-forward backtest)</h3>`+proValHtml(PROUI.val);
+  // history with filters
+  const H=d.signalsHist||[], f=PROUI.hf, insts=[...new Set(H.map(x=>x.sym))].sort(), setups=[...new Set(H.map(x=>x.setup))].sort();
+  const fl=H.filter(x=>(!f.inst||x.sym===f.inst)&&(!f.setup||x.setup===f.setup)&&(!f.day||new Date(x.at+19800000).toISOString().slice(0,10)===f.day));
+  const cl=fl.filter(x=>x.net!=null), w=cl.filter(x=>x.net>0), gp=w.reduce((a2,x)=>a2+x.net,0), gl=-cl.filter(x=>x.net<=0).reduce((a2,x)=>a2+x.net,0);
+  h+=`<h3>F. Signal history — live (paper) performance</h3><div class="sub">Every published signal and its actual outcome, followed on live premiums (paper trading, 1 lot, after charges). This is separate from the backtest above.</div>`+
+    `<div class="mtrow" style="margin:6px 0"><select id="hfI"><option value="">All instruments</option>${insts.map(x=>`<option${x===f.inst?" selected":""}>${esc(x)}</option>`).join("")}</select>`+
+    `<select id="hfS"><option value="">All setups</option>${setups.map(x=>`<option${x===f.setup?" selected":""}>${esc(x)}</option>`).join("")}</select><input id="hfD" type="date" value="${esc(f.day)}" style="width:auto;flex:0 0 auto"></div>`+
+    `<div class="sub">${fl.length} signals · ${cl.length} closed trades · won ${w.length}${cl.length?` (${Math.round(w.length/cl.length*100)}%)`:""} · profit factor ${gl>0?(gp/gl).toFixed(2):cl.length?"∞":"—"} · net ${gp-gl>=0?"+":"−"}₹${nf(Math.abs(gp-gl),0)}</div>`+
+    (fl.length?`<div class="tblw"><table class="rt"><tr><th>Date / time</th><th>Instrument</th><th>Contract</th><th>Setup</th><th>Score</th><th>Status</th><th>Entry</th><th>Exit</th><th>Net ₹</th></tr>${fl.slice(0,150).map(x=>`<tr><td>${new Date(x.at+19800000).toISOString().slice(0,16).replace("T"," ")}</td><td>${esc(x.sym)}</td><td>${esc(x.contract)}</td><td>${esc(x.setup)}</td><td>${x.score}</td><td style="color:${PRO_ST_COL(x.state)}">${esc(x.status||x.state)}</td><td>${x.entry==null?"—":nf(x.entry,2)}</td><td>${x.exit==null?"—":nf(x.exit,2)}</td><td style="color:${(x.net||0)>=0?C.up:C.dn}">${x.net==null?"—":(x.net>=0?"+":"−")+nf(Math.abs(x.net),0)}</td></tr>`).join("")}</table></div>`:`<div class="none">No published signals yet.</div>`);
+  // scanner
+  const sc=d.scanned||[];
+  h+=`<h3>G. Market scanner (${sc.length} instruments analysed)</h3><div class="sub">Checked after every 5-minute candle. Only a FINAL CONFIRMED signal is shown or sent; everything else stays here as "no confirmed trade".</div>`+
+    (sc.length?`<div class="tblw"><table class="rt"><tr><th>Instrument</th><th>Price</th><th>Trend</th><th>Last check</th><th>Result</th></tr>${sc.map(x=>{ const conf=sig.some(s2=>s2.tkr===x.tkr&&(["WAITING","ACTIVE","TARGET 1 HIT","TARGET 2 HIT"].includes(s2.state)&&!s2.ended));
+      return `<tr><td>${x.priority?"★ ":""}${esc(x.sym)}</td><td>${nf(x.px,2)}</td><td style="color:${/BULL/.test(x.trend||"")?C.up:/BEAR/.test(x.trend||"")?C.dn:C.mid}">${esc(x.trend||"—")}</td><td>${hhmm(x.at)}</td><td>${conf?`<b style="color:${C.up}">CONFIRMED SIGNAL</b>`:"no confirmed trade"}</td></tr>`; }).join("")}</table></div>`:`<div class="none">The scanner runs during market hours.</div>`);
+  h+=`<details class="xwhy" style="margin-top:12px"><summary>H. Quick backtest of the current rules (your choice of sessions and threshold)</summary>`;
   const bt=PROUI.bt;
-  h+=`<h3>G. Backtest on Fyers history (the same rules, candle by candle)</h3><div class="mtrow" style="margin:6px 0"><label>Sessions <input id="btN" type="number" min="5" max="60" value="${PROUI.sessions}" style="width:70px"></label>`+
+  h+=`<div class="mtrow" style="margin:6px 0"><label>Sessions <input id="btN" type="number" min="5" max="60" value="${PROUI.sessions}" style="width:70px"></label>`+
     `<label>Trade threshold <input id="btT" type="number" min="50" max="95" value="${PROUI.thr}" style="width:70px"></label><button class="btn pri" id="btGo">${PROUI.btBusy?"Running… (up to a minute)":"Run backtest"}</button></div>`+
     (PROUI.btErr?`<div class="none" style="color:${C.dn}">${esc(PROUI.btErr)}</div>`:"");
   if(bt){ h+=`<div class="sub">${esc(bt.from)} to ${esc(bt.to)} · ${bt.sessionsFound} sessions · ${bt.instruments.map(i=>esc(i.name)).join(", ")}${bt.skipped.length?` · skipped: ${esc(bt.skipped.slice(0,4).join("; "))}`:""}</div>`+
@@ -4349,11 +4429,15 @@ function renderPro(){
         bt.trades.map(t=>`<tr><td>${t.day}</td><td>${t.time}</td><td>${esc(t.name)} ${t.strike}</td><td>${t.ty}</td><td>${t.setup}</td><td>${t.score}</td><td>${nf(t.pIn,2)} → ${nf(t.pOut,2)}</td><td>${esc(t.how)}</td><td style="color:${t.net>=0?C.up:C.dn}">${t.net>=0?"+":"−"}${nf(Math.abs(t.net),0)}</td></tr>`).join("")+`</table></div></details>`+
       `<details class="xwhy"><summary>How the backtest works (assumptions)</summary>${bt.assumptions.map(a=>"• "+esc(a)).join("<br>")}${bt.notes.length?"<br>"+bt.notes.map(a=>"• "+esc(a)).join("<br>"):""}</details>`; }
   else h+=`<div class="none">Runs on your Fyers login: about 30 requests, once (results are kept for the day).</div>`;
-  h+=`<div class="sub" style="margin-top:14px">Rules-based analysis, not advice. Scores come from the chart, the market, volume, momentum, levels and (live) the option chain; any of them can be wrong. Paper trading only: this site never places orders.</div>`;
+  h+=`</details>`;
+  h+=`<div class="sub" style="margin-top:14px">Rules-based analysis, not investment advice. Backtests use estimated option premiums (Fyers keeps no prices for expired contracts); past results do not guarantee future results. Paper trading only: this site never places orders.</div>`;
   el.innerHTML=h; xWire(el);
   el.querySelectorAll(".xchart").forEach(b=>b.onclick=()=>{ if(S.universe.some(u=>u.tkr===b.dataset.tkr)) goChart(b.dataset.tkr); });
+  el.querySelectorAll(".pchain").forEach(b=>b.onclick=()=>{ PROUI.chainT=b.dataset.t; store.set("sd_pro_chain",b.dataset.t); renderPro(); });
+  const hf=(id,k)=>{ const x=document.getElementById(id); if(x) x.onchange=()=>{ PROUI.hf[k]=x.value; renderPro(); }; }; hf("hfI","inst"); hf("hfS","setup"); hf("hfD","day");
+  const vg=document.getElementById("valGo"); if(vg) vg.onclick=async()=>{ vg.disabled=true; try{ PROUI.val=await api("/api/pro/validation?run=1",30000); }catch(e){} renderPro(); };
   const n=document.getElementById("btN"), t=document.getElementById("btT");
-  document.getElementById("btGo").onclick=()=>{ PROUI.sessions=Math.max(5,Math.min(60,+n.value||25)); PROUI.thr=Math.max(50,Math.min(95,+t.value||75)); store.set("sd_bt_n",String(PROUI.sessions)); store.set("sd_bt_thr",String(PROUI.thr)); runBacktest(false); };
+  if(n) document.getElementById("btGo").onclick=()=>{ PROUI.sessions=Math.max(5,Math.min(60,+n.value||25)); PROUI.thr=Math.max(50,Math.min(95,+t.value||75)); store.set("sd_bt_n",String(PROUI.sessions)); store.set("sd_bt_thr",String(PROUI.thr)); runBacktest(false); };
 }
 
 /* -------------------------------------------- strict filter + results -- */
@@ -4987,7 +5071,7 @@ document.getElementById("themeBtn").textContent=document.documentElement.dataset
 
 /* ---- Phone notifications (Web Push): sent by the server when a new signal is posted, even with the site closed ---- */
 const PN={ on:store.get("sd_push_on","0")==="1", open:false, msg:"", busy:false,
-  prefs:(()=>{ try{ return Object.assign({watch:true,fno:false,tg:true},JSON.parse(store.get("sd_push_prefs","{}"))); }catch(e){ return {watch:true,fno:false,tg:true}; } })() };
+  prefs:(()=>{ try{ return Object.assign({watch:true,fno:false,tg:true,report:true},JSON.parse(store.get("sd_push_prefs","{}"))); }catch(e){ return {watch:true,fno:false,tg:true,report:true}; } })() };
 const b64u8=b=>{ const p="=".repeat((4-b.length%4)%4), r=atob((b+p).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from(r,c=>c.charCodeAt(0)); };
 const pushPost=(path,body)=>fetch(S.api+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(async r=>{ const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error||("HTTP "+r.status)); return j; });
 if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
@@ -5014,11 +5098,12 @@ function renderPush(){
   el.hidden=!PN.open; if(!PN.open) return;
   const ck=(k,l)=>`<label style="display:flex;gap:8px;align-items:center;margin:4px 0"><input type="checkbox" data-k="${k}" ${PN.prefs[k]?"checked":""}> ${l}</label>`;
   el.innerHTML=`<div class="mtform" style="margin:0 0 12px"><b>Phone notifications</b><span>A notification on this phone when a new signal is posted, even with the site closed. Free (the phone's own browser notifications); no app or account needed.</span>`+
-    ck("watch","New signals on my 9 symbols (NIFTY, BANK NIFTY, SENSEX, CRUDE OIL, NATURAL GAS, HDFC BANK, RELIANCE, ICICI BANK, SBIN), with Target 1 and end")+
-    ck("fno","Strict signals on any F&O stock, index or commodity")+ck("tg","New posts in the Telegram channels you follow")+
+    ck("watch","FINAL CONFIRMED signals on NIFTY, SENSEX, CRUDE OIL, HDFC BANK and my watchlist, with every status change (entry, targets, stop, cancelled, missed)")+
+    ck("report","Daily reports: 8:00 AM outlook, 9:16 opening, 15:40 summary, market reversals, login needed")+
+    ck("fno","Confirmed signals on other F&O stocks too (and the older Strict scanner)")+ck("tg","New posts in the Telegram channels you follow")+
     `<div class="mtrow" style="margin-top:8px"><button class="btn pri" id="pnOn">${PN.on?"Save choices":"Turn on"}</button>${PN.on?`<button class="btn" id="pnTest">Send a test</button><button class="btn" id="pnOff">Turn off</button>`:""}</div>`+
     `<div class="bmsg" id="pnMsg">${esc(PN.msg)}</div>`+
-    `<span style="margin-top:6px">Notifications need the server awake and logged in to Fyers: open the site once each trading morning (Fyers asks for a login every day). While a phone is signed up, the server keeps itself awake on weekdays 09:00–23:35 IST. iPhone: add the site to the home screen first and turn this on from there.</span></div>`;
+    `<span style="margin-top:6px">Notifications come from the server, with this site closed. With FYERS_PIN set on Render the server logs in to Fyers by itself each morning (one login on the site every 15 days) and keeps itself awake. iPhone: add the site to the home screen first and turn this on from there.</span></div>`;
   el.querySelectorAll("input[data-k]").forEach(c=>c.onchange=()=>{ PN.prefs[c.dataset.k]=c.checked; store.set("sd_push_prefs",JSON.stringify(PN.prefs)); });
   const say=t=>{ PN.msg=t; const m=document.getElementById("pnMsg"); if(m) m.textContent=t; };
   document.getElementById("pnOn").onclick=async()=>{ if(PN.busy) return; PN.busy=true; say("Setting up…");

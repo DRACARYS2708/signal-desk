@@ -230,6 +230,83 @@ Every signal is checked against the daily EMAs before it is shown: Strict, Other
 - The chart page has a "Daily EMAs" panel with each EMA's value, whether price is above or below it, the stage, and the score for a call and for a put.
 - If daily history isn't available (a new listing, or Fyers didn't answer), the card says "not checked" instead of guessing, and the signal is not dropped.
 
+## Background signals, 8 AM outlook and FINAL CONFIRMED signals (9 November 2026)
+
+**Everything now runs on the server.** Your browser can be closed; you don't need to be logged in on the site.
+
+### One-time setup on Render (Environment)
+| Setting | What to put | Needed? |
+|---|---|---|
+| `FYERS_PIN` | your 4-digit Fyers PIN | **Yes**, for automatic daily login |
+| `TELEGRAM_BOT_TOKEN` | your bot's token from @BotFather (free) | Optional: Telegram alerts |
+| `TELEGRAM_ALERT_CHAT_ID` | your chat id (send `/id` to your bot; it replies with the number) | Optional: Telegram alerts |
+| `FYERS_USER_ID` | your Fyers client id (e.g. XV01234) | Optional: only this account is used in the background |
+| `KEEP_AWAKE` | `always` (default), `market` or `off` | Optional |
+| `PRIORITY` | default `NIFTY,SENSEX,CRUDEOIL,HDFCBANK` | Optional |
+| `VALIDATE_DAYS` | days of history for the strategy test (default 180) | Optional |
+| `EXTRA_HOLIDAYS`, `EVENTS` | `2027-01-26,...` / `2027-02-01:Union Budget;...` | Optional |
+
+Then **log in with Fyers once** on the site. Fyers gives a "refresh token" valid for 15 days; with your PIN the server gets a new day's login every morning by itself (Fyers' official API). After 15 days (or if Render restarts the server and you haven't opened the site since), it asks for one login again: you get a phone / Telegram notice at 07:50.
+
+Never put the PIN, tokens or chat id in GitHub (the repository is public). They live only in Render's Environment.
+
+### Staying awake
+Render's free plan stops a server after 15 minutes without visits. The server now visits itself every 10 minutes (`KEEP_AWAKE=always`: about 744 of Render's 750 free monthly hours, so keep this the **only** free service on your Render account). As a backup, upload `.github/workflows/wake.yml` to your GitHub repository (Add file → Create new file, type the path `.github/workflows/wake.yml`, paste the content). GitHub then opens the site at 07:20, 07:45 and every 30 minutes on weekdays, free. GitHub pauses scheduled runs in repositories with no activity for 60 days; uploading a file restarts them.
+
+### The day, automatically (IST)
+- **07:50**: renews the Fyers login.
+- **08:00**: **pre-market outlook** for NIFTY 50, SENSEX, CRUDE OIL and HDFC BANK. It covers the previous day's candle pattern, trend, RSI, Bollinger bands, volatility, pivots, previous day and week high/low, India VIX, expiry today, the events calendar (RBI, Fed, holidays) and the latest headlines on GIFT NIFTY / US / Asia, FII/DII, crude and policy (with source and time). It ends with a bias (Bullish / Bearish / Sideways) and the setups to wait for. **These are not entry signals.**
+- **08:10**: **strategy validation** (below).
+- **09:16**: opening report (gap, position against yesterday's range, VIX).
+- **From 09:30, every 5 minutes** (25 s after each candle closes): analysis of the four priority instruments first, then the watchlist and up to 35 of the day's most active F&O stocks. Signal status is checked every 15 seconds.
+- **15:00**: open signals reminder. **15:40**: end-of-day summary. If there were fewer than 3 signals, it says so and gives the most common reasons. **23:58**: MCX summary.
+- **NSE holidays**: no NSE analysis. If MCX's evening session is open, crude oil is analysed from 17:00.
+
+### Strategy validation (the server's own backtest)
+Every trading morning the server re-tests the signal rules on up to 6 months of Fyers 5-minute history for NIFTY, SENSEX, CRUDE OIL, HDFC BANK, BANK NIFTY and 8 liquid F&O stocks:
+- Strategies tried per group (index options / stock options / MCX): score threshold 70, 75, 80 or 85, combined with three exits: book all at Target 1, book all at Target 2, or trail to Target 3. Setups that lost money in training are dropped.
+- **Walk-forward split by date:** the first 50% of sessions **train** (choose the strategy, ranked by risk-adjusted return). The next 25% **validate**: they need 8+ trades, profit factor 1.1+ and a net profit after costs. The last 25% are the **out-of-sample test**: 5+ trades and no loss.
+- Only a group whose strategy passed can publish signals, and only at that strategy's threshold and exit.
+- **Limits:** Fyers keeps no prices for expired option contracts, so premiums in the backtest are **estimated** with Black-Scholes (India VIX or realised volatility). OI and breadth are not in Fyers' history. Results are shown as % of the premium paid (and ₹ for 1 lot), clearly labelled as backtest, separate from live (paper) results.
+
+### FINAL CONFIRMED signals only
+A signal is published (dashboard, phone, Telegram) only after every check passes:
+1. The strategy passed validation.
+2. The market trend agrees.
+3. The 5m / 15m / 30m / 1h trends agree.
+4. There is a price-action trigger.
+5. Volume is 1.2× normal or more.
+6. Momentum agrees.
+7. There is room to the next level.
+8. The option chain / OI agrees.
+9. The chain and chart prices agree within 1%.
+10. A liquid contract with a tight spread is available.
+11. Reward : risk is acceptable.
+12. The premium is inside the entry range.
+
+The format is: instrument, direction, strike, expiry, entry range, stop loss, Targets 1/2/3, risk-reward, confidence score, backtested strategy, historical win rate, profit factor, number of historical trades, current trend, technical and options-chain confirmation, reason for entry, and timestamp. Watch-level setups and rejected ideas stay in the server's log and are not shown. With no confirmed signal the page says **NO CONFIRMED TRADE – WAIT FOR THE NEXT OPPORTUNITY.**
+
+**Signal status** (with one alert per change):
+- **CONFIRMED · AWAITING ENTRY**, then **ACTIVE** when the premium is inside the entry range.
+- **ENTRY MISSED** if the premium runs away first or 20 minutes pass (don't chase).
+- **CANCELLED** if the setup breaks before entry.
+- **TARGET 1 / 2 / 3 HIT**, **STOP LOSS HIT**, or **EXITED** (trailing stop, setup invalid, time exit).
+- **EXPIRED** at the session's end if never entered.
+
+Every signal and its outcome is kept (Signal history, filterable by instrument, date and setup).
+
+### Dashboard (Pro tab)
+- Background status.
+- 8:00 outlook.
+- A. Market overview: NIFTY, SENSEX, CRUDE OIL, HDFC BANK, India VIX, BANK NIFTY, trend, advance/decline, sentiment; data marked LIVE / DELAYED / STALE / CLOSED.
+- B. Final confirmed signals.
+- C. Today's summary.
+- D. Options analysis: strike-wise OI, OI change, volume, IV, PCR, max pain, call/put walls, build-up.
+- E. Strategy validation.
+- F. Signal history (live paper performance).
+- G. Market scanner.
+- H. Quick manual backtest.
+
 ## Pro tab: scored CE / PE signals (November 2026)
 
 The **Pro** tab is the first tab on Home. Everything else (Telegram, My trades, Strict / Other / Normal signals, BTST, Scalp, charts, Results) is unchanged.
