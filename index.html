@@ -2326,7 +2326,13 @@ async function mtEval(tr, force){
     let row=d.rows.find(r=>Math.abs(r.strike-tr.strike)<1e-6);
     if(!row&&!tr.expiry&&d.expiries&&d.expiries[1]){ const d2=await api(base+"&expiry="+d.expiries[1],20000); const r2=d2.rows.find(r=>Math.abs(r.strike-tr.strike)<1e-6); if(r2){ d=d2; row=r2; } }
     if(!row){ const ks=d.rows.map(r=>r.strike); throw new Error(`strike ${tr.strike} is not in the ${uni(tr.tkr).sym} option chain near the current price (strikes listed: ${nf(Math.min(...ks),0)} to ${nf(Math.max(...ks),0)}). Check the strike.`); }
-    const leg=tr.ty==="CE"?row.ce:row.pe; if(!leg||!(leg.ltp>0)) throw new Error("no traded price for this option yet");
+    let leg=tr.ty==="CE"?row.ce:row.pe;
+    // no trade yet in this contract: the middle of the live bid / ask, else the last price seen here, clearly labelled
+    if(leg&&!(leg.ltp>0)&&leg.bid>0&&leg.ask>0&&leg.ask>=leg.bid) leg=Object.assign({},leg,{ltp:+((leg.bid+leg.ask)/2).toFixed(2), est:"middle of bid "+nf(leg.bid,2)+" / ask "+nf(leg.ask,2)+" (no trade yet)"});
+    else if(leg&&!(leg.ltp>0)&&L.leg&&L.leg.ltp>0&&L.leg.sym===leg.sym) leg=Object.assign({},L.leg,{est:"last price seen at "+hhmm(L.chainAt||Date.now())+" (no newer price yet)"});
+    if(!leg||!(leg.ltp>0)) throw new Error(d.source==="feed"
+      ? "waiting for this option's first live price. Fyers' option-chain request is unavailable right now (paused for today or busy), so prices come from the live feed, which has just started sending this strike. Checking again automatically every 30 seconds."
+      : "no trade and no bid / ask quote in this option yet today (it may be a thinly traded strike). Checking again automatically every 30 seconds; check the strike and expiry if this stays.");
     if(!tr.expiry){ tr.expiry=d.expiry; mtSave(); }
     Object.assign(L,{d, leg, lot:d.lot||uni(tr.tkr).lot||null, chainAt:Date.now()});
   }catch(e){ L.err=e.message; }
@@ -2393,7 +2399,7 @@ function renderMine(){
     alerts.fire("mt|"+tr.id+"|"+a.act,`Your ${u.sym} ${tr.strike} ${tr.ty}: ${a.act} (now ₹${nf(a.ltp,2)}, ${up?"+":"−"}₹${nf(Math.abs(a.pnl),0)})`);
     return `<div class="xcard" style="--xc:${a.col}">${head}`+
       `<div class="mtadv" style="color:${a.col}">${a.act}</div>`+
-      `<div class="xlv"><div><span>Premium now</span><b>${f(a.ltp)}</b></div><div><span>Profit / loss</span><b style="color:${up?C.up:C.dn}">${up?"+":"−"}₹${nf(Math.abs(a.pnl),0)} (${a.pct>=0?"+":""}${a.pct.toFixed(1)}%)</b></div>`+
+      `<div class="xlv"><div><span>Premium now</span><b>${f(a.ltp)}</b>${L.leg&&L.leg.est?`<small style="color:${C.warn}">${esc(L.leg.est)}</small>`:""}</div><div><span>Profit / loss</span><b style="color:${up?C.up:C.dn}">${up?"+":"−"}₹${nf(Math.abs(a.pnl),0)} (${a.pct>=0?"+":""}${a.pct.toFixed(1)}%)</b></div>`+
         `<div><span>Stop loss (premium)</span><b style="color:${C.dn}">${f(a.slP)}</b></div><div><span>Target (premium)</span><b style="color:${C.up}">${f(a.tgP)}</b></div></div>`+
       `<div class="xopt">Stop and target come from ${esc(u.sym)} at ${px(a.uSL,u)} and ${px(a.uT,u)}${a.delta?` (premium estimated with delta ${a.delta.toFixed(2)}; actual premiums will differ)`:" (premium levels are simple −25% / +40% steps)"}.`+
         `${a.bid&&a.ask?` Bid ₹${nf(a.bid,2)} / ask ₹${nf(a.ask,2)}.`:""} Updated ${hms(L.chainAt)} IST.</div>`+
