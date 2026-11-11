@@ -185,12 +185,25 @@ function bgAdopt(refresh, refreshExp, fyId, accessTok) {       // a login (or a 
   BG.state = PIN ? "ready" : "needs FYERS_PIN"; BG.err = null; bgSave(); return true; }
 try { const j = JSON.parse(require("fs").readFileSync(BG.file, "utf8")), o = j.blob && bgOpen(j.blob), a = j.a && bgOpen(j.a);
   if (o) bgAdopt(o.r, o.x, o.f, a && a.a); } catch (e) {}
+/* Renewal is rationed so it can never loop: at most 6 a day, at least 20 minutes apart (unless forced at 07:50),
+   longer waits after each failure, and none at all after Fyers refuses the PIN (repeated wrong PINs can lock a
+   Fyers account) until the server restarts with a corrected FYERS_PIN. */
+function bgMayRenew(force) {
+  const now = Date.now(), day = istDay(now);
+  if (BG.capDay !== day) { BG.capDay = day; BG.today = 0; }
+  if (BG.pinBad) return "Fyers refused the PIN: correct FYERS_PIN on Render (the server then restarts)";
+  if (BG.today >= 6) return "renewed 6 times today already: waiting for tomorrow (or one login on the site)";
+  if (now < (BG.nextTry || 0)) return "waiting before the next renewal attempt";
+  if (!force && now - (BG.lastTry || 0) < 20 * 60000) return "renewed less than 20 minutes ago";
+  return null; }
 async function bgRenew(force) {                                  // a fresh access token from the refresh token + PIN
   if (BGS.access && Date.now() < BGS.exp - 30 * 60000 && !force) return true;
   if (!BG.refresh) { BG.state = "needs one Fyers login"; return false; }
+  if (BG.renewing) return BG.renewing;
+  const hold = bgMayRenew(force); if (hold) { BG.hold = hold; return !!(BGS.access && Date.now() < BGS.exp - 60000); }
   if (Date.now() > BG.refreshExp) { BG.refresh = null; BG.state = "needs one Fyers login (the 15-day refresh token ran out)"; bgSave(); return false; }
   if (!PIN) { BG.state = "needs FYERS_PIN on Render"; return !!(BGS.access && Date.now() < BGS.exp - 60000); }
-  if (BG.renewing) return BG.renewing;
+  BG.lastTry = Date.now(); BG.today++; BG.hold = null;
   BG.renewing = (async () => {
     try {
       const r = await fetch(API + "/validate-refresh-token", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -198,18 +211,19 @@ async function bgRenew(force) {                                  // a fresh acce
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j.s !== "ok" || !j.access_token) {
         const msg = j.message || ("Fyers answered HTTP " + r.status);
-        BG.err = msg; BG.state = "renewal failed: " + msg;
-        if (/pin/i.test(msg)) BG.state = "Fyers refused the PIN: check FYERS_PIN on Render";
+        BG.err = msg; BG.state = "renewal failed: " + msg; BG.fails = (BG.fails || 0) + 1; BG.nextTry = Date.now() + Math.min(120, 10 * 2 ** (BG.fails - 1)) * 60000;
+        if (/pin/i.test(msg)) { BG.pinBad = true; BG.state = "Fyers refused the PIN: check FYERS_PIN on Render"; }
+        if (r.status === 429 || /limit|too many/i.test(msg)) BG.nextTry = Date.now() + 120 * 60000;
         else if (r.status === 401 || /refresh|expired|invalid token/i.test(msg)) { BG.refresh = null; BG.state = "needs one Fyers login (refresh token no longer accepted)"; bgSave(); }
         return false; }
-      BGS.access = j.access_token; BGS.exp = jwtExp(j.access_token); BGS.error = null; BG.renewedAt = Date.now(); BG.err = null; BG.state = "ready";
+      BGS.access = j.access_token; BGS.exp = jwtExp(j.access_token); BGS.error = null; BG.renewedAt = Date.now(); BG.err = null; BG.state = "ready"; BG.fails = 0;
       bgSave(); setTimeout(feedEnsure, 300); return true;
-    } catch (e) { BG.err = e.message; BG.state = "renewal failed: " + e.message; return false; }
+    } catch (e) { BG.err = e.message; BG.state = "renewal failed: " + e.message; BG.fails = (BG.fails || 0) + 1; BG.nextTry = Date.now() + Math.min(120, 10 * 2 ** (BG.fails - 1)) * 60000; return false; }
     finally { BG.renewing = null; }
   })();
   return BG.renewing; }
 const bgValid = () => !!BGS.access && (!BGS.exp || Date.now() < BGS.exp - 60000);
-function bgStatus() { return { state: bgValid() ? "ready" : BG.state, pin: !!PIN, owner: BG.fyId ? BG.fyId.slice(0, 2) + "***" + BG.fyId.slice(-2) : null,
+function bgStatus() { return { state: bgValid() ? "ready" : BG.state, hold: BG.hold || null, renewalsToday: BG.capDay === istDay(Date.now()) ? BG.today : 0, pin: !!PIN, owner: BG.fyId ? BG.fyId.slice(0, 2) + "***" + BG.fyId.slice(-2) : null,
   refreshDaysLeft: BG.refresh ? Math.max(0, Math.floor((BG.refreshExp - Date.now()) / 864e5)) : null, accessUntil: bgValid() ? BGS.exp : null, renewedAt: BG.renewedAt || null, err: BG.err }; }
 
 /* ------------------------------------------------------- Fyers requests -- */
@@ -296,6 +310,15 @@ function rateLimited() {
   console.log("  Fyers said too many requests: pausing " + 65 * RL.strikes + " s" + (RL.blockedDay ? " (treating the app as blocked for today)" : ""));
 }
 const AUTH_CODES = [-8, -15, -16, -17];
+/* A record of Fyers calls (the last 400), so a block can be explained afterwards: /api/fyers-log on the site. */
+const FYLOG = { calls: [], blocks: [], file: path.join(require("os").tmpdir(), "signal-desk-fyers-log.json") };
+try { const j = JSON.parse(require("fs").readFileSync(FYLOG.file, "utf8")); FYLOG.blocks = j.blocks || []; FYLOG.calls = j.calls || []; } catch (e) {}
+function fyNote(pathname, params, status, j) {
+  const low = lane.getStore() === "low", x = { at: Date.now(), path: pathname, sym: String(params.symbol || params.symbols || "").slice(0, 40), lane: low ? "background" : "page",
+    bg: visitor.getStore && visitor.getStore() === BGS, http: status, s: j && j.s, code: j && j.code, lastMin: RL.sent.length };
+  FYLOG.calls.push(x); if (FYLOG.calls.length > 400) FYLOG.calls.splice(0, FYLOG.calls.length - 400);
+  if (status === 429 || (j && Number(j.code) === -429)) { FYLOG.blocks.push(Object.assign({ msg: j && j.message }, x)); FYLOG.blocks = FYLOG.blocks.slice(-50);
+    try { require("fs").writeFileSync(FYLOG.file, JSON.stringify({ blocks: FYLOG.blocks, calls: FYLOG.calls })); } catch (e) {} } }
 
 async function fy(pathname, params) {
   const tok = await access();
@@ -307,6 +330,7 @@ async function fy(pathname, params) {
   catch (e) { try { r = await once(); } catch (e2) { throw new Error("Fyers did not answer in time; try again shortly"); } }
   if (r.status >= 500) { try { r = await once(); } catch (e) {} }
   const j = await r.json().catch(() => null);
+  fyNote(pathname, params, r.status, j);
   if (j && (j.s === "ok" || j.s === "no_data")) { if (RL.strikes) RL.strikes = 0; if (RL.blockedDay) { RL.blockedDay = ""; saveUsage(); } return j; }
   const code = j ? Number(j.code) : 0;
   if (r.status === 401 || r.status === 403 || AUTH_CODES.includes(code)) {
@@ -1673,7 +1697,7 @@ function autoStatus() {
    07:50 renew the Fyers login · 08:00 pre-market outlook · 09:16 opening analysis · 15:00 open positions
    · 15:40 end-of-day summary · 23:58 MCX summary. A report missed while the server was asleep runs as soon as it
    wakes, if it is still useful (the outlook until 09:15). Pre-market views are never entry signals. */
-const SCHED = { done: {}, last: {} };
+const SCHED = { done: {}, last: {}, wait: {} };
 const EVENTS = [                                                   // dates from the RBI and the US Federal Reserve calendars
   ["2026-12-04", "RBI policy decision (MPC 2-4 Dec)"], ["2027-02-05", "RBI policy decision (MPC 3-5 Feb)"],
   ["2026-12-10", "US Fed decision (FOMC 8-9 Dec; about 00:30 IST on 10 Dec)"], ["2027-01-28", "US Fed decision (FOMC 26-27 Jan; about 00:30 IST)"],
@@ -1799,9 +1823,9 @@ function eodReport(ex) {
   return rep; }
 const bgValidOrVisitor = () => !!bestSession();
 async function schedRun(name, fn) {
-  const day = istDay(Date.now()); if (SCHED.done[name] === day) return; SCHED.done[name] = day;
+  const day = istDay(Date.now()); if (SCHED.done[name] === day || Date.now() < (SCHED.wait[name] || 0)) return; SCHED.done[name] = day;
   try { await fn(); SCHED.last[name] = { at: Date.now(), ok: true }; }
-  catch (e) { SCHED.last[name] = { at: Date.now(), ok: false, err: e.message }; if (e.retry || /login|did not answer|rate limit/i.test(e.message)) SCHED.done[name] = null; } }
+  catch (e) { SCHED.last[name] = { at: Date.now(), ok: false, err: e.message }; if (e.retry || /login|did not answer|rate limit/i.test(e.message)) { SCHED.done[name] = null; SCHED.wait[name] = Date.now() + 5 * 60000; } } }   // try again in 5 minutes, not sooner
 let schedBusy = false;
 async function schedTick() {
   if (schedBusy) return; schedBusy = true;
@@ -1824,6 +1848,11 @@ async function schedTick() {
   } finally { schedBusy = false; } }
 setInterval(() => { schedTick().catch(() => {}); }, 30000).unref();
 setTimeout(() => { schedTick().catch(() => {}); }, 15000).unref();
+app.get("/api/fyers-log", guard(async (_req, res) => {
+  const now = Date.now(), last = FYLOG.calls.filter(c => now - c.at < 3600e3), per = {};
+  for (const c of last) { const k = c.path + " · " + c.lane; per[k] = (per[k] || 0) + 1; }
+  res.json({ usage: { today: RL.dayCount, lastMinute: RL.sent.filter(t => now - t < 60000).length, perMinLimit: RL.perMin, blockedToday: RL.blockedDay === istDay(now), limitedToday: RL.limitedToday },
+    renewals: bgStatus(), lastHourByKind: per, blocks: FYLOG.blocks.slice(-20).reverse(), recent: FYLOG.calls.slice(-80).reverse() }); }));
 app.get("/api/reports", guard(async (_req, res) => res.json({ reports: PROS.reports, auto: autoStatus() })));
 /* ---- market overview: indices, VIX, trend, breadth, sentiment, data status */
 function proOverview() {

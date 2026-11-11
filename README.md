@@ -250,6 +250,8 @@ Then **log in with Fyers once** on the site. Fyers gives a "refresh token" valid
 
 Never put the PIN, tokens or chat id in GitHub (the repository is public). They live only in Render's Environment.
 
+**Renewal safety.** The automatic login renewal is rationed: at most 6 a day, 20+ minutes apart, longer waits after a failure, and it stops completely if Fyers refuses the PIN (repeated wrong PINs can lock a Fyers account). **Fyers request log:** open `/api/fyers-log` on the site (while logged in) to see the last 400 Fyers calls, which part of the app made them, and any "too many requests" answers.
+
 ### Staying awake
 Render's free plan stops a server after 15 minutes without visits. The server now visits itself every 10 minutes (`KEEP_AWAKE=always`: about 744 of Render's 750 free monthly hours, so keep this the **only** free service on your Render account). As a backup, upload `.github/workflows/wake.yml` to your GitHub repository (Add file → Create new file, type the path `.github/workflows/wake.yml`, paste the content). GitHub then opens the site at 07:20, 07:45 and every 30 minutes on weekdays, free. GitHub pauses scheduled runs in repositories with no activity for 60 days; uploading a file restarts them.
 
