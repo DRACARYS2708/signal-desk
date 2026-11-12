@@ -1306,7 +1306,9 @@ async function scanCycle() {
   } finally { SCAN.running = false; }
 }
 // phone notifications for new scan signals (only ones from the last 15 minutes), then for their Target 1 and their end
+/* The older scanner's signals never passed a walk-forward test: no phone alerts for them unless OLD_ALERTS=on. */
 function scanNotify() {
+  if ((env("OLD_ALERTS") || "").toLowerCase() !== "on") return;
   const f2 = v => v == null ? "—" : (v >= 1000 ? Math.round(v).toLocaleString("en-IN") : (+v.toFixed(2)).toString());
   const KIND = { strict: "Strict", other: "Other", normal: "Normal" };
   for (const s of SCAN.signals) {

@@ -1832,6 +1832,7 @@ function scalpBuild(){
 function renderScalp(){
   if(!onHomeTab("scalp")) return;
   const X=XS.scalp, el=document.getElementById("scalpBody");
+  if(oldGate(el)) return;
   if(!SCB.budget||SCB.edit){ if(!el.querySelector("#scBud")) scalpBudgetForm(el); return; }   // don't wipe what is being typed
   if(!Object.keys(X.bars).length){ el.innerHTML=`<div class="empty">${X.err?"Could not load 3-minute candles: "+esc(X.err):"Loading 3-minute candles…"}</div>`; return; }
   const {all, states, list}=scalpBuild(); X.shownAt=X.at;
@@ -2045,6 +2046,7 @@ async function btstOption(s){
 function renderBtst(){
   if(!onHomeTab("btst")) return;
   const X=XS.btst, el=document.getElementById("btstBody"); X.shownAt=X.at;
+  if(oldGate(el)) return;
   if(!Object.keys(X.bars).length){ el.innerHTML=`<div class="empty">${X.err?"Could not load hourly candles: "+esc(X.err):"Loading hourly candles…"}</div>`; return; }
   const nd=X.bars.NIFTY?dailyOf(X.bars.NIFTY.b):null;
   const stocks=S.universe.filter(u=>u.seg==="EQ"), all=[], watch=[];
@@ -2438,7 +2440,7 @@ async function loadFno(force){
   catch(e){ FN.err=e.message; }
   finally{ FN.busy=false; }
   if(FN.d) FN.d.signals.filter(s=>s.state==="ACTIVE"&&s.tab!=="normal").forEach(s=>{ const o=s.opt&&s.opt.strike?s.opt:null;
-    alerts.fire("fno|"+s.tkr+"|"+s.ts+"|"+s.side,`${s.sym}: BUY ${o?o.strike+" "+o.ty+" @ ₹"+o.buy:s.side==="BUY"?"CALL":"PUT"} (${s.tab})`); });
+    if(OLDS.on) alerts.fire("fno|"+s.tkr+"|"+s.ts+"|"+s.side,`${s.sym}: BUY ${o?o.strike+" "+o.ty+" @ ₹"+o.buy:s.side==="BUY"?"CALL":"PUT"} (${s.tab})`); });
   if(S.page==="home") renderStrictSegs();
   if(onHomeTab("fno")) renderFno();
 }
@@ -2452,6 +2454,7 @@ function fnoWhats(s){
 function renderFno(){
   if(!onHomeTab("fno")) return;
   const el=document.getElementById("fnoBody"), d=FN.d;
+  if(oldGate(el)) return;
   if(!d){ el.innerHTML=`<div class="empty">${FN.err?"Could not load the scan: "+esc(FN.err):"Loading the scan of all F&O instruments…"}</div>`; return; }
   if(!d.engineOk){ el.innerHTML=`<div class="empty">The server could not load the signal rules (${esc(d.engineErr||"unknown")}). The other tabs still work.</div>`; return; }
   const f2=v=>v==null||!isFinite(v)?"—":nf(v,v>=1000?1:2);
@@ -4276,6 +4279,7 @@ function renderHome(){
     document.getElementById("minePage").hidden=S.tab!=="mine";
     if(S.tab==="mine"&&!document.getElementById("mineBody").innerHTML) renderMine();
     ["homeTabNote","homeSigs","homeSigNote"].forEach(id=>document.getElementById(id).hidden=xs);
+    { const hb=document.getElementById("homeSigsBan"); if(hb) hb.hidden=xs; }
     document.getElementById("homeSigTitle").parentElement.hidden=xs;
     document.getElementById("scalpPage").hidden=S.tab!=="scalp"; document.getElementById("btstPage").hidden=S.tab!=="btst";
     if(S.tab==="scalp"){ if(XS.scalp.shownAt!==XS.scalp.at||!document.getElementById("scalpBody").innerHTML) renderScalp(); loadScalp(); }
@@ -4290,9 +4294,9 @@ function renderHome(){
     `<div><span>Instruments</span><b>${S.universe.filter(u=>u.seg!=="OPT").length}</b><small>indices, stocks, MCX</small></div>`;
   hero.querySelectorAll("button[data-t]").forEach(b=>b.onclick=()=>{ setTab(b.dataset.t); document.getElementById("homeSigTitle").scrollIntoView({behavior:"smooth",block:"start"}); });
   // sound / notification for every new strict or focus-list signal, whichever tab is open
-  vis.filter(x=>x.res.state==="ACTIVE"&&(tabOf(x)==="strict"||tabOf(x)==="other")).forEach(x=>
+  if(OLDS.on) vis.filter(x=>x.res.state==="ACTIVE"&&(tabOf(x)==="strict"||tabOf(x)==="other")).forEach(x=>
     alerts.fire(takeKey(x)+"|new",`New ${tabOf(x)} signal: ${x.sym} ${x.side==="BUY"?"BUY CALL (CE)":"BUY PUT (PE)"} · entry ${px(x.entry,uni(x.tkr))} · SL ${px(x.sl,uni(x.tkr))}`));
-  S.universe.forEach(u=>{ const pd=(S.sigs[u.tkr]||{}).pending; if(pd&&(pd.grade==="A"||isFocus(u.tkr)))
+  if(OLDS.on) S.universe.forEach(u=>{ const pd=(S.sigs[u.tkr]||{}).pending; if(pd&&(pd.grade==="A"||isFocus(u.tkr)))
     alerts.fire(u.tkr+"|"+pd.ts+"|wait",`${u.sym}: ${pd.d>0?"CALL":"PUT"} setup confirmed, waiting for entry at ${px(pd.entry,u)}`); });
   renderTrades();
 }
@@ -4745,6 +4749,7 @@ const alerts={ on:store.get("sd_alerts","0")==="1", seen:new Set(), t0:Date.now(
 function alertEvents(s,m){
   if(s.ema&&s.ema.missing&&!S.daily[s.tkr]&&!S.dailyTried[s.tkr]) return;     // wait for the daily EMA check
   const k=takeKey(s), txt=shareUpdate(s,m).replace(/\n/g," · ");
+  if(!OLDS.on) return;
   if(m.active) alerts.fire(k+"|new",`New signal: ${shareSignal(s,m).replace(/\n/g," · ")}`);
   for(let h=1;h<=Math.min(m.hit,3);h++) alerts.fire(k+"|t"+h,txt);
   if(m.active&&m.rev) alerts.fire(k+"|rev",txt);
@@ -4778,9 +4783,28 @@ function lateEntry(m){
     :moved>0?`Price has already moved ${moved.toFixed(1)}% past the original entry, so the entry is later and the risk is larger.`
     :`Price is ${Math.abs(moved).toFixed(1)}% better than the original entry.`};
 }
+/* The older signal rules (Strict / Other / Normal / Opening range, Scalp, BTST, all-F&O scan) never passed a
+   walk-forward test, and their recent signals lost. They are hidden and silent unless the viewer asks to study them;
+   the Pro tab (only strategies that passed the server's test) is the place for signals. */
+const OLDS={on:store.get("sd_old_sigs","0")==="1"};
+function oldToggle(on){ OLDS.on=on; store.set("sd_old_sigs",on?"1":"0");
+  ["homeSigs","scalpBody","btstBody","fnoBody"].forEach(id=>{ const e=document.getElementById(id); if(e) e.innerHTML=""; });
+  FN.shownAt=-1; XS.scalp.shownAt=-1; XS.btst.shownAt=-1; renderHome(); if(onHomeTab("fno")) renderFno(); if(onHomeTab("scalp")) renderScalp(); if(onHomeTab("btst")) renderBtst(); }
+function oldGate(el){
+  const banId=el.id+"Ban"; let ban=document.getElementById(banId);
+  if(OLDS.on){                                   // a warning above the list, outside it so a re-render keeps it
+    if(!ban){ ban=document.createElement("div"); ban.id=banId; el.parentElement.insertBefore(ban,el);
+      ban.innerHTML=`<div class="notrade" style="margin-bottom:12px"><b>UNTESTED SIGNALS — FOR STUDY ONLY, NOT FOR TRADING</b><span>These older rules have not passed the walk-forward backtest. Trade only FINAL CONFIRMED signals from the Pro tab.</span><button class="btn oldOff" style="margin-top:8px">Hide them again</button></div>`;
+      ban.querySelector(".oldOff").onclick=()=>oldToggle(false); }
+    return false; }
+  if(ban) ban.remove();
+  el.innerHTML=`<div class="notrade"><b>Older, untested signals are hidden</b><span>The Strict, Other, Normal, Opening-range, Scalp, BTST and all-F&amp;O signals come from rules that have never passed a walk-forward backtest, and their recent signals failed. They no longer show or alert. Use the <b>Pro</b> tab: it publishes a signal only after the strategy behind it passed the server's test on months of history, and says NO CONFIRMED TRADE otherwise.</span>`+
+    `<button class="btn oldOn" style="margin-top:8px">Show them anyway (study only, not for trading)</button></div>`;
+  el.querySelector(".oldOn").onclick=()=>oldToggle(true);
+  return true; }
 function renderTrades(){
   if(S.page!=="home") return;
-  const el=document.getElementById("homeSigs"), list=homeShown();
+  const el=document.getElementById("homeSigs"); if(oldGate(el)) return; const list=homeShown();
   const models=list.map(s=>({s,m:tradeModel(s)})), nLive=models.filter(x=>x.m.active).length;
   document.getElementById("homeSigTitle").textContent=({strict:"Strict signals",other:"Other signals",normal:"Normal signals",active:"All active signals",today:"All signals today"}[S.tab]||"Signals")+" ("+nLive+" active)";
   document.getElementById("homeTabNote").textContent=S.tab==="active"?"Every signal still running now, from the Strict, Other (focus list) and Normal tabs. Tap a tab above to go back."
